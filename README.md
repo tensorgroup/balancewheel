@@ -21,6 +21,9 @@ real work. Code will be extracted here once the design stops moving. Until then 
 repo holds the architecture, the decision log, and the extraction roadmap.
 
 - [docs/architecture.md](docs/architecture.md) — the full design write-up
+- [docs/reference-implementation.md](docs/reference-implementation.md) — the working
+  example with the software and models named, the configuration that matters, and the
+  verification checklist
 - [docs/roadmap.md](docs/roadmap.md) — extraction criteria and plan
 
 ## The core ideas (one screen)
