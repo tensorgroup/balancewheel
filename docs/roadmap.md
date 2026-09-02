@@ -17,7 +17,9 @@ commands, launchd sync, local dashboard). Goals of this phase:
 
 1. Design unchanged for ~a month of real use.
 2. The primary stealth model has graduated or been replaced — no interface may
-   reference a preview model id.
+   reference a preview model id. *(Met 2026-09-02: the stealth seat model was retired
+   by the provider and re-pinned to its graduated catalog id in one line per component.
+   See reference-implementation.md.)*
 3. Clean-room rewrite: no personal paths, secrets layout, private sources, or
    employer/project references. Migration of existing files is forbidden (privacy
    firewall).

@@ -34,8 +34,9 @@ seat.sh [-r] [-d dir] "prompt"     # -r resumes this directory's saved session
 ```
 
 Wrapper responsibilities: self-source credentials, absolutize the target dir, run the
-CLI from a scratch directory (vendors extract temp native libs into cwd — never let
-that litter a checkout), recover and persist the session id per target directory, and
+CLI with `TMPDIR` pointed at a private scratch directory (vendors extract temp native
+libs into `$TMPDIR`, and some agent sandboxes set that to the checkout — never let
+it litter one), recover and persist the session id per target directory, and
 append a usage event to the metrics log. That's the whole integration surface — no
 SDKs, no proxies.
 

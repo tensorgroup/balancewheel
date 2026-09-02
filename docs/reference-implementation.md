@@ -3,7 +3,8 @@
 *The concrete stack behind [architecture.md](architecture.md), with the software and
 models named and the configuration that matters. Not a dump of the private setup —
 a rebuild guide: each section names the tool, the settings that took debugging to
-get right, and the traps. Written 2026-08-26 against the versions noted.*
+get right, and the traps. Written 2026-08-26 against the versions noted; updated
+2026-09-02 when the stealth seat model graduated (see the OpenCode section).*
 
 ## The cast
 
@@ -11,13 +12,13 @@ get right, and the traps. Written 2026-08-26 against the versions noted.*
 |---|---|---|---|
 | Moderator / primary | Claude Code (CLI) | Claude (Fable/Opus tier) | Anthropic subscription |
 | Code-review seat ("sol") | Codex CLI ≥0.149 | `gpt-5.6-sol`, high reasoning | ChatGPT subscription (CLI OAuth) |
-| Planning-lead seat ("ox") | OpenCode ≥1.18 | `stealth/ox-alpha` via OpenRouter | OpenRouter API key |
+| Planning-lead seat ("ox") | OpenCode ≥1.18 | `z-ai/glm-5.3-flash` via OpenRouter (was `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
 | Blind one-shot fallback | plain HTTPS (`chat/completions`) | same OpenRouter model | OpenRouter API key |
 
 Why these: each vendor's *own* CLI gives the seat repo exploration, native session
 storage, and subscription billing — no proxy, no prompt translation. Roles were
-assigned from logged dispute outcomes (see architecture.md); the stealth model is a
-config detail, not an interface commitment.
+assigned from logged dispute outcomes (see architecture.md); the seat model is a
+config detail, not an interface commitment — which paid off within a week (below).
 
 ## Seat: Codex CLI (`gpt-5.6-sol`)
 
@@ -37,17 +38,33 @@ Invocation and traps:
   Session id appears on stderr as `session id: <uuid>` — capture it for resumes.
 - Resume: `codex exec resume <uuid> "<prompt>"` — accepts **no `-p`/`-C`**; replicate
   the profile via `-c key=value` overrides and `cd` to the target first.
-- Run from a scratch directory: the Rust binary extracts multi-MB temp `.dylib`s into
-  its *cwd* (target dir is what `-C` points at, cwd can be anywhere).
+- Set `TMPDIR` to a private scratch dir: the Rust binary extracts multi-MB temp
+  `.dylib`s into `$TMPDIR` — *not* cwd, as first assumed. Some agent sandboxes point
+  `TMPDIR` at the project checkout, which litters it with `.<hash>-00000000.dylib`
+  files; found 2026-09-02 after the wrappers had been "running from a scratch dir"
+  for a week. Derive the scratch from the real system temp dir
+  (`getconf DARWIN_USER_TEMP_DIR` on macOS), export it as `TMPDIR`, remove on exit.
 - Auth survives ChatGPT-app removal (CLI holds its own OAuth in `~/.codex/auth.json`),
   but the desktop app manages `config.toml` — expect churn there; keep your profile in
   its own file.
 
-## Seat: OpenCode (`stealth/ox-alpha` via OpenRouter)
+## Seat: OpenCode (`z-ai/glm-5.3-flash` via OpenRouter)
 
-Config — **`~/.config/opencode/opencode.jsonc`**. Two things stealth/preview models
-need that catalog models don't: an explicit provider `apiKey` (env-substituted) and a
-hand-registered model entry (they're absent from models.dev):
+**The stealth-model lesson, lived (2026-09-02):** the seat originally ran on
+`stealth/ox-alpha`, a free preview. OpenRouter ended the test period one week after
+setup; every call then returned a 404 that also revealed the model's identity (ZAI's
+GLM-5.3 Flash). Because the id was pinned in exactly one config line per component,
+re-pinning to the graduated catalog model took minutes; the logged seat history and
+policy carried over unchanged since the underlying model did not change. Two
+operational notes: the successor is paid, so the OpenRouter account must hold
+credits (a $0 balance fails identically to a missing model), and a per-key spend cap
+is the cost control — at $0.075/M input, $0.25/M output a repo-aware review round is
+about two cents.
+
+Config — **`~/.config/opencode/opencode.jsonc`**. An explicit provider `apiKey`
+(env-substituted) is required; the explicit model entry was mandatory for the stealth
+model (absent from models.dev) and is kept for the catalog model so reasoning,
+tool-calling, and limits stay pinned rather than inherited:
 
 ```jsonc
 {
@@ -55,9 +72,9 @@ hand-registered model entry (they're absent from models.dev):
     "openrouter": {
       "options": { "apiKey": "{env:OPENROUTER_API_KEY}" },
       "models": {
-        "stealth/ox-alpha": {
+        "z-ai/glm-5.3-flash": {
           "reasoning": true, "tool_call": true,
-          "limit": { "context": 1048576, "output": 131072 }  // from /api/v1/models
+          "limit": { "context": 1310720, "output": 131072 }  // from /api/v1/models
         }
       }
     }
@@ -65,7 +82,7 @@ hand-registered model entry (they're absent from models.dev):
   "agent": {
     "ox": {
       "mode": "primary",
-      "model": "openrouter/stealth/ox-alpha",
+      "model": "openrouter/z-ai/glm-5.3-flash",
       "prompt": "<reviewer system prompt: read-only, evidence-first, severity-ranked>",
       "permission": {
         "edit": "deny",
@@ -90,7 +107,8 @@ The env var must be **exported** — an unexported shell variable yields
 ## Seat wrappers (the whole integration surface)
 
 One ~60-line shell script per seat, uniform interface `seat.sh [-r] [-d dir] "prompt"`:
-self-source credentials → absolutize `-d` → `cd` to a scratch dir → run the CLI →
+self-source credentials → absolutize `-d` → make a private scratch dir under the
+system temp root and export it as `TMPDIR` → run the CLI from it →
 persist session id per target directory (tsv) → append a `usage` event to the metrics
 JSONL → exit with the CLI's status. The moderator (Claude Code) drives seats through
 slash-command instructions that carry the panel protocol and the mandatory
