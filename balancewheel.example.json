@@ -1,0 +1,24 @@
+{
+  "_comment": "Replace these rows with your seats. Seat names are yours; model ids are data and are expected to change. Copy to ~/.config/balancewheel/config.json.",
+  "schema_version": 1,
+  "seats": {
+    "sol":   {"runtime": "codex",       "model": "gpt-5.6-sol",   "effort": "high",   "roles": ["review"],
+              "policy": "why this seat has these roles; the evidence cited; what would change them"},
+    "ox":    {"runtime": "pi",          "model": "openrouter/z-ai/glm-5.3-flash", "effort": "medium",
+              "roles": ["plan", "review", "decision"],
+              "provider": {"reasoning": true, "contextWindow": 1310720, "maxTokens": 131072}},
+    "fable": {"runtime": "claude-code", "model": "claude-fable-5-1",
+              "roles": ["design", "plan", "review", "debug", "decision"]},
+    "gem":   {"runtime": "agy",         "model": "gemini-3.1-pro-high", "roles": ["review"]},
+    "kimi":  {"runtime": "kimi",        "model": "kimi-code/k3", "roles": ["plan", "review"], "enabled": false}
+  },
+  "state_dir": "~/.local/state/balancewheel",
+  "metrics_log": "~/.local/state/balancewheel/metrics.jsonl",
+  "commands_dir": "~/.claude/commands",
+  "bin_dir": "~/.local/bin",
+  "watches": {
+    "bloat_total": 30, "bloat_per_seat": 8, "bloat_min_seats": 3,
+    "skim_min_seats": 3, "skim_min_findings": 15,
+    "redundant_min_panels": 5, "redundant_window_panels": 10
+  }
+}

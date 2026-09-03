@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "seats": {
+    "alpha": {"runtime": "codex", "model": "vendor/model-a", "effort": "high", "roles": ["review"]},
+    "beta":  {"runtime": "pi", "model": "router/vendor/model-b", "effort": "medium",
+              "roles": ["plan", "review", "decision"],
+              "provider": {"reasoning": true, "contextWindow": 200000, "maxTokens": 32000}},
+    "gamma": {"runtime": "claude-code", "model": "vendor/model-c", "roles": ["design", "plan", "review", "debug", "decision"]},
+    "delta": {"runtime": "agy", "model": "vendor/model-d-high", "roles": ["review"]},
+    "omega": {"runtime": "kimi", "model": "vendor/model-e", "roles": ["review"], "enabled": false}
+  },
+  "state_dir": "/work/state/balancewheel"
+}
