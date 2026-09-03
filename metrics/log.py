@@ -24,7 +24,7 @@ SEVERITIES = ("critical", "major", "minor", "nit")
 VERDICTS = ("confirmed", "refuted", "partial", "dropped")
 DETAIL_REQUIRED = ("seat", "group", "title", "severity", "verdict")
 DISPUTE_REQUIRED = ("summary", "challenger", "proposals", "winner", "reason")
-REJECT = (ValueError, TypeError, AttributeError, KeyError)  # anything malformed input can raise inside validation
+REJECT = (ValueError, TypeError)  # malformed input; TypeError still covers a shape validation missed
 
 
 def compute_counts(findings_detail):
@@ -102,6 +102,27 @@ def check_counts(given, computed, seats, force):
     return findings, ("count_mismatch: " + "; ".join(mismatches)) if mismatches else ""
 
 
+def merge_findings_patch(existing, given):
+    """A findings-only amend on a panel with no findings_detail has nothing to reconcile against;
+    merge the patch over the panel's existing normalised counts (per seat, per key) instead of
+    replacing the whole per-seat map, so seats the patch doesn't mention keep their counts."""
+    if not isinstance(given, dict):
+        _fail("findings must be an object keyed by seat")
+    merged = {s: dict(c) for s, c in existing.items()}
+    for s, counts in given.items():
+        if not isinstance(counts, dict):
+            _fail(f"findings.{s} must be an object")
+        target = dict(merged.get(s) or {k: None for k in store.COUNT_KEYS})
+        for k, v in counts.items():
+            if k not in store.COUNT_KEYS:
+                _fail(f"findings.{s}.{k}: unknown key")
+            if not _is_count(v):
+                _fail(f"findings.{s}.{k} must be an integer")
+            target[k] = v
+        merged[s] = target
+    return merged
+
+
 def validate_panel(rec, config, force):
     if not isinstance(rec, dict):
         _fail("panel record must be a JSON object")
@@ -116,6 +137,10 @@ def validate_panel(rec, config, force):
         _fail("immediate_agreement must be true or false")
     if rec.get("rounds") is not None and not _is_count(rec["rounds"]):
         _fail("rounds must be an integer")
+    for k in ("findings_raw", "findings_after_triage"):
+        v = rec.get(k)
+        if v is not None and not (_is_count(v) and v >= 0):
+            _fail(f"{k} must be a non-negative integer")
     seats_in = rec["seats"]
     if not isinstance(seats_in, (list, dict)) or not seats_in:
         _fail("seats must be a non-empty list or object")
@@ -143,8 +168,12 @@ def validate_panel(rec, config, force):
         for k in DISPUTE_REQUIRED:
             if k not in d:
                 _fail(f"disputes[{i}] missing {k}")
-        if not isinstance(d["proposals"], dict):
-            _fail(f"disputes[{i}].proposals must be an object keyed by seat")
+        for k in ("summary", "challenger", "winner", "reason"):
+            if not isinstance(d[k], str):
+                _fail(f"disputes[{i}].{k} must be a string")
+        if not isinstance(d["proposals"], dict) or not all(
+                isinstance(pk, str) and isinstance(pv, str) for pk, pv in d["proposals"].items()):
+            _fail(f"disputes[{i}].proposals must be an object of string seat -> string proposal")
     findings, mismatch_note = check_counts(rec["findings"], compute_counts(fd), seats, force)
     notes = rec.get("notes", "") or ""
     if not isinstance(notes, str):
@@ -171,10 +200,13 @@ def run_check(path, config, only_panel=None):
     with store.locked(path):  # read-then-append must be atomic across concurrent `check`/`panel` runs
         data = store.load(path)
         existing = {w["id"]: w["status"] for w in data["watches"]}
-        # Watches written by older loggers carry ids from a different formula (or none) and may hold a
-        # truncated target. A panel-scoped watch is the same watch if the kind matches and one target
-        # is a prefix of the other, so those never get re-created.
-        legacy = [(w["kind"], w["target"]) for w in data["watches"] if w["kind"] != "redundant-seat"]
+        # Watches written by an OLDER logger (no panel_id — the id-formula/panel_id era postdates
+        # them) carry ids from a different formula and may hold a truncated target. A panel-scoped
+        # watch is the same watch if the kind matches and one target is a prefix of the other, so
+        # those never get re-created. A modern watch already carries panel_id and is already keyed
+        # by id, so it must NOT suppress a legitimate watch on a later panel with the same target.
+        legacy = [(w["kind"], w["target"]) for w in data["watches"]
+                  if w["kind"] != "redundant-seat" and w["panel_id"] is None]
 
         def seen_before(w):
             return any(k == w["kind"] and (t.startswith(w["target"]) or w["target"].startswith(t))
@@ -184,10 +216,18 @@ def run_check(path, config, only_panel=None):
         if only_panel:
             candidates = [w for w in candidates if w.get("panel_id") == only_panel or w["kind"] == "redundant-seat"]
         for w in candidates:
-            if w["id"] not in existing:
-                if w["kind"] != "redundant-seat" and seen_before(w):
-                    continue
+            if w["kind"] == "redundant-seat":
+                # should_refire is the gate; it already accounts for open watches and the
+                # post-dismissal cooldown, so an existing exact id is the only other reason to skip.
                 if not watchmod.should_refire(w, data, config):
+                    continue
+                if w["id"] in existing:
+                    continue
+                store.append(path, w)
+                new.append(w)
+                existing[w["id"]] = w["status"]
+            elif w["id"] not in existing:
+                if seen_before(w):
                     continue
                 store.append(path, w)
                 new.append(w)
@@ -245,18 +285,16 @@ def cmd_watches(args, config):
 
 def cmd_resolve(args, config):
     path = store.log_path(config)
-    known = {w["id"] for w in store.load(path)["watches"]}
-    if args.id not in known:
-        die(f"unknown watch id {args.id}")
-    store.append(path, {"type": "watch-update", "watch_id": args.id, "status": args.status, "note": args.note})
+    with store.locked(path):  # read-then-append must be atomic across concurrent resolve/check runs
+        known = {w["id"] for w in store.load(path)["watches"]}
+        if args.id not in known:
+            die(f"unknown watch id {args.id}")
+        store.append(path, {"type": "watch-update", "watch_id": args.id, "status": args.status, "note": args.note})
     print(f"watch {args.id} → {args.status}")
 
 
 def cmd_amend(args, config):
     path = store.log_path(config)
-    panels = {p["id"]: p for p in store.load(path)["panels"]}
-    if args.panel_id not in panels:
-        die(f"unknown panel id {args.panel_id}")
     try:
         patch = json.load(sys.stdin)
     except json.JSONDecodeError as e:
@@ -267,23 +305,32 @@ def cmd_amend(args, config):
     bad = set(patch) - allowed
     if bad:
         die(f"amend may only set {sorted(allowed)}; got {sorted(bad)}")
-    seats = list(panels[args.panel_id]["seats"])
-    try:
-        if "findings_detail" in patch:
-            validate_detail(patch["findings_detail"], seats)
-            computed = compute_counts(patch["findings_detail"])
-            given = patch.get("findings", {})
-            patch["findings"], note = check_counts(given, computed, seats, args.force)
-            if note:
-                patch["notes"] = ((patch.get("notes") or panels[args.panel_id]["notes"] or "") + " | " + note).strip(" |")
-        elif "findings" in patch and panels[args.panel_id]["findings_detail"]:
-            computed = compute_counts(panels[args.panel_id]["findings_detail"])
-            patch["findings"], note = check_counts(patch["findings"], computed, seats, args.force)
-            if note:
-                patch["notes"] = ((patch.get("notes") or panels[args.panel_id]["notes"] or "") + " | " + note).strip(" |")
-    except REJECT as e:
-        die(f"amend rejected: {e}")
-    store.append(path, dict(patch, type="panel-amend", panel_id=args.panel_id))
+    for k in ("findings_raw", "findings_after_triage"):
+        if k in patch and patch[k] is not None and not (_is_count(patch[k]) and patch[k] >= 0):
+            die(f"amend {k} must be a non-negative integer")
+    with store.locked(path):  # load -> validate -> append must be atomic; run_check locks separately, after
+        panels = {p["id"]: p for p in store.load(path)["panels"]}
+        if args.panel_id not in panels:
+            die(f"unknown panel id {args.panel_id}")
+        seats = list(panels[args.panel_id]["seats"])
+        try:
+            if "findings_detail" in patch:
+                validate_detail(patch["findings_detail"], seats)
+                computed = compute_counts(patch["findings_detail"])
+                given = patch.get("findings", {})
+                patch["findings"], note = check_counts(given, computed, seats, args.force)
+                if note:
+                    patch["notes"] = ((patch.get("notes") or panels[args.panel_id]["notes"] or "") + " | " + note).strip(" |")
+            elif "findings" in patch and panels[args.panel_id]["findings_detail"]:
+                computed = compute_counts(panels[args.panel_id]["findings_detail"])
+                patch["findings"], note = check_counts(patch["findings"], computed, seats, args.force)
+                if note:
+                    patch["notes"] = ((patch.get("notes") or panels[args.panel_id]["notes"] or "") + " | " + note).strip(" |")
+            elif "findings" in patch:
+                patch["findings"] = merge_findings_patch(panels[args.panel_id]["findings"], patch["findings"])
+        except REJECT as e:
+            die(f"amend rejected: {e}")
+        store.append(path, dict(patch, type="panel-amend", panel_id=args.panel_id))
     print(f"panel {args.panel_id} amended")
     run_check(path, config, only_panel=args.panel_id)
 

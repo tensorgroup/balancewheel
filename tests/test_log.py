@@ -97,6 +97,7 @@ class Cli(unittest.TestCase):
             self.assertEqual(len(d["watches"]), 1)
             wid = d["watches"][0]["id"]
             r = run(["check"], env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual(len(store.load(env["BALANCEWHEEL_METRICS_LOG"])["watches"]), 1)  # deduped
             r = run(["resolve", wid, "--note", "sample held"], env=env)
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -142,6 +143,9 @@ class Cli(unittest.TestCase):
             env = {"BALANCEWHEEL_METRICS_LOG": os.path.join(tmp, "m.jsonl")}
             for bad in (record(kind="nope"), record(target=""), record(findings={"alpha": {"total": "2"}}),
                         record(disputes=[{"summary": 1, "challenger": "alpha", "proposals": "x", "winner": "alpha", "reason": "r"}]),
+                        record(disputes=[{"summary": "s", "challenger": "alpha", "proposals": {"alpha": "x"},
+                                          "winner": ["alpha"], "reason": "r"}]),
+                        record(findings_raw=-1),
                         {"target": "t"}, [1, 2]):
                 r = run(["panel"], stdin=json.dumps(bad), env=env)
                 self.assertEqual(r.returncode, 2, f"{bad!r}: {r.stderr}")
@@ -257,6 +261,52 @@ class Cli(unittest.TestCase):
             notes = store.load(env["BALANCEWHEEL_METRICS_LOG"])["panels"][0]["notes"]
             self.assertIn("count_mismatch", notes)
             self.assertIn("alpha.total", notes)
+
+    def test_amend_findings_raw_type_checked_even_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"BALANCEWHEEL_METRICS_LOG": os.path.join(tmp, "m.jsonl")}
+            run(["panel"], stdin=json.dumps(record()), env=env)
+            pid = store.load(env["BALANCEWHEEL_METRICS_LOG"])["panels"][0]["id"]
+            r = run(["amend", "--panel-id", pid], stdin=json.dumps({"findings_raw": "60"}), env=env)
+            self.assertEqual(r.returncode, 2)
+            self.assertEqual(store.load(env["BALANCEWHEEL_METRICS_LOG"])["panels"][0]["amendments"], [])
+
+    def test_amend_findings_only_merges_over_existing_when_no_detail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = os.path.join(tmp, "m.jsonl")
+            panel = {"type": "panel", "id": "legacy01", "ts": "2026-01-01T00:00:00Z", "target": "legacy change",
+                     "kind": "review", "seats": ["alpha", "beta"], "immediate_agreement": True,
+                     "findings": {"alpha": {"total": 2, "confirmed": 2, "refuted": 0, "partial": 0, "unique": 1},
+                                  "beta": {"total": 3, "confirmed": 1, "refuted": 2, "partial": 0, "unique": 0}}}
+            with open(log, "w") as f:
+                f.write(json.dumps(panel) + "\n")
+            env = {"BALANCEWHEEL_METRICS_LOG": log}
+            r = run(["amend", "--panel-id", "legacy01"], stdin=json.dumps({"findings": {"alpha": {"total": 9}}}), env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            p = store.load(log)["panels"][0]
+            self.assertEqual(p["findings"]["alpha"]["total"], 9)
+            self.assertEqual(p["findings"]["alpha"]["confirmed"], 2)  # untouched key for alpha kept
+            self.assertEqual(p["findings"]["beta"],
+                              {"total": 3, "confirmed": 1, "refuted": 2, "partial": 0, "unique": 0})  # beta untouched
+
+    def test_same_target_repeated_panels_each_get_their_own_skim_watch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"BALANCEWHEEL_METRICS_LOG": os.path.join(tmp, "m.jsonl")}
+            target = "same change every time"
+
+            def skim_panel():
+                fd = [detail(s, f"g{s}{i}") for s in ("alpha", "beta", "gamma") for i in range(5)]
+                counts = {s: {"total": 5, "confirmed": 5, "refuted": 0, "partial": 0, "unique": 5}
+                          for s in ("alpha", "beta", "gamma")}
+                r = run(["panel"], stdin=json.dumps(record(target=target, seats=["alpha", "beta", "gamma"],
+                                                            findings=counts, findings_detail=fd)), env=env)
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+            skim_panel()
+            skim_panel()
+            watches = [w for w in store.load(env["BALANCEWHEEL_METRICS_LOG"])["watches"] if w["kind"] == "verification-skim"]
+            self.assertEqual(len(watches), 2)
+            self.assertNotEqual(watches[0]["id"], watches[1]["id"])
 
 
 if __name__ == "__main__":
