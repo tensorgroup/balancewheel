@@ -84,7 +84,7 @@ def load_config(path=None):
     try:
         raw = Path(p).read_text()
     except OSError as e:
-        raise ConfigError(f"{p}: {e.strerror}") from e
+        raise ConfigError(f"{p}: {e.strerror or e}") from e
     try:
         obj = json.loads(raw)
     except json.JSONDecodeError as e:
