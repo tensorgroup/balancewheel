@@ -5,13 +5,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 Balancewheel is a **private design repo, pre-extraction**. It holds the architecture,
-decision log, and extraction roadmap for a moderated multi-model review panel — no
-code lives here yet. The working reference implementation runs as the author's
-personal user-level tooling *outside* this repo and is being dogfooded; code is
-extracted here only once the roadmap's criteria hold.
+decision log, and extraction roadmap for a moderated multi-model review panel — code
+is being extracted here per the amended roadmap gate. The working reference
+implementation runs as the author's personal user-level tooling *outside* this repo
+and is being dogfooded; code is extracted here only once the roadmap's criteria hold.
 
-There is nothing to build, lint, or test. The only tooling is git; commits so far use
-a `docs:` prefix with a lowercase summary.
+There is now code (extraction started 2026-09-03; the roadmap records the amended gate).
+Python 3.9+ standard library only; no packages to install. Run the tests from the repo root:
+
+    python3 -m unittest discover -s tests -v
+
+`metrics/` holds the config loader, the JSONL store (the only reader/appender), the roster
+watches, the logger CLI, and the dashboard generator. `tests/fixtures/` are synthetic — keep
+them that way (privacy firewall). Commits use a lowercase summary with a `feat:`/`fix:`/
+`test:`/`docs:` prefix.
 
 Sibling project: [OpenEscapement](https://github.com/tensorgroup/openescapement)
 (esc). Division of labor: balancewheel is the collaboration pattern that *generates and
