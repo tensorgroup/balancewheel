@@ -2193,3 +2193,18 @@ git commit -m "docs: repo now has code — test runner, ignore file, firewall no
 **Placeholder scan:** none; every step has its code or exact command.
 
 **Type consistency:** `store.load()` keys (`usage`, `panels`, `watches`, `events`, `warnings`) are used identically in `watches.py`, `log.py`, `dashboard.py`. `watch_id(kind, target, panel_id)` signature matches its three call sites. `validate_panel` returns the record the tests inspect (`id`, `seats`, `findings[..]["unique"]`, `notes`). `compute_counts` verdict keys match `VERDICTS`. `dashboard.timeline_positions(timestamps, width)` and `radius_for(count)` are module-level as the tests import them.
+
+---
+
+## Post-execution deviations (2026-09-03)
+
+The code on the branch is the source of truth; these are the places it deliberately differs from the task text above, each found by review during execution.
+
+- **Task 4** — `cmd_amend`'s findings-only branch now appends the `count_mismatch` note like the `findings_detail` branch (the listing dropped it). `test_check_does_not_recreate_watches_written_under_older_ids` was rewritten to build its own log with a skim-worthy panel and a legacy watch line with no id and a truncated target, so it can fail.
+- **Final review fix wave** (five `fix:` commits):
+  - `store.py`: `load()` dedupes duplicate panel ids (last occurrence survives, warning kept) and warns on duplicate legacy timestamps; `panel_id_for` coerces non-string ids; `target`, `seats`, `findings_raw`, `findings_after_triage` are normalised; `append()` repairs a missing trailing newline after a cut line before writing and encodes with `errors="replace"`.
+  - `watches.py`: `_is_count` for `unique`; the redundant-seat id is keyed on the newest panel in the window, not the seat's last qualifying panel.
+  - `log.py`: the legacy prefix dedupe applies only to watches without `panel_id`; redundant-seat candidates are gated by `should_refire` first, then exact id; `findings_raw`/`findings_after_triage` must be non-negative ints (panel and amend); dispute fields are type-checked; a findings-only amend on a panel without detail merges over existing counts; `amend` and `resolve` run their read-validate-append under `store.locked()` with `run_check` called after the block; `REJECT` narrowed to `(ValueError, TypeError)`.
+  - `dashboard.py`: `esc()` also strips U+FFFE/U+FFFF; `main()` survives an unreadable `seats.json` and surfaces it as a warning.
+  - Tests: fixture files opened with context managers; the multibyte-cut fixture really ends mid-codepoint; the control-character assertion uses the `"\x01"` escape. Suite: 69 tests.
+- **Parked**: a dedicated test for the redundant-seat re-fire when the seat sits out later panels (fix is in place, not directly exercised); disabled seats are still evaluated and rendered; dropped findings still count as group members for `unique`; `rounds: 0` accepted; a detail-only amend zeroes other seats' counts without a note.
