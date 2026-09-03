@@ -279,6 +279,8 @@ def cmd_amend(args, config):
         elif "findings" in patch and panels[args.panel_id]["findings_detail"]:
             computed = compute_counts(panels[args.panel_id]["findings_detail"])
             patch["findings"], note = check_counts(patch["findings"], computed, seats, args.force)
+            if note:
+                patch["notes"] = ((patch.get("notes") or panels[args.panel_id]["notes"] or "") + " | " + note).strip(" |")
     except REJECT as e:
         die(f"amend rejected: {e}")
     store.append(path, dict(patch, type="panel-amend", panel_id=args.panel_id))

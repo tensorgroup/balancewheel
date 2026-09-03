@@ -201,9 +201,21 @@ class Cli(unittest.TestCase):
 
     def test_check_does_not_recreate_watches_written_under_older_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
-            import shutil
             log = os.path.join(tmp, "m.jsonl")
-            shutil.copy(str(HERE / "fixtures" / "modern.jsonl"), log)  # its skim watch has a non-formula id AND a truncated target
+            target = "example change with a long target name"
+            fd = [detail(s, f"g{s}{i}") for s in ("alpha", "beta", "gamma") for i in range(5)]
+            counts = {s: {"total": 5, "confirmed": 5, "refuted": 0, "partial": 0, "unique": 5}
+                      for s in ("alpha", "beta", "gamma")}
+            panel = {"type": "panel", "id": "p0000009", "ts": "2026-02-01T00:00:00Z", "target": target,
+                     "kind": "review", "seats": ["alpha", "beta", "gamma"], "immediate_agreement": True,
+                     "findings": counts, "findings_detail": fd}
+            # a legacy watch line: no "id" and no "panel_id" (store falls back to legacy_watch_id),
+            # and a truncated target — the same shape older loggers wrote before the id formula existed
+            legacy_watch = {"type": "watch", "ts": "2026-02-01T00:00:01Z", "kind": "verification-skim",
+                             "target": "example change with a lo", "detail": "legacy truncated"}
+            with open(log, "w") as f:
+                f.write(json.dumps(panel) + "\n")
+                f.write(json.dumps(legacy_watch) + "\n")
             r = run(["check"], env={"BALANCEWHEEL_METRICS_LOG": log})
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("0 new watch(es)", r.stdout)
@@ -233,6 +245,18 @@ class Cli(unittest.TestCase):
             self.assertEqual(r.returncode, 2); self.assertIn("alpha.total", r.stderr)
             r = run(["amend", "--panel-id", pid], stdin=json.dumps([]), env=env)
             self.assertEqual(r.returncode, 2)
+
+    def test_amend_findings_only_keeps_mismatch_note(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"BALANCEWHEEL_METRICS_LOG": os.path.join(tmp, "m.jsonl")}
+            run(["panel"], stdin=json.dumps(record()), env=env)
+            pid = store.load(env["BALANCEWHEEL_METRICS_LOG"])["panels"][0]["id"]
+            patch = {"findings": {"alpha": {"total": 9}}}
+            r = run(["amend", "--panel-id", pid, "--force"], stdin=json.dumps(patch), env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            notes = store.load(env["BALANCEWHEEL_METRICS_LOG"])["panels"][0]["notes"]
+            self.assertIn("count_mismatch", notes)
+            self.assertIn("alpha.total", notes)
 
 
 if __name__ == "__main__":
