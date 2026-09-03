@@ -54,7 +54,7 @@ class Render(unittest.TestCase):
         self.assertNotIn("<script>alert(1)</script>", html)
         self.assertIn("&lt;script&gt;", html)
         self.assertNotIn("<b>bold</b>", html)
-        self.assertNotIn("", html); self.assertNotIn("\ud800", html)
+        self.assertNotIn("\x01", html); self.assertNotIn("\ud800", html)
         for svg in svgs(html):
             ET.fromstring(svg)
         html.encode("utf-8")  # no lone surrogates survive
@@ -123,6 +123,19 @@ class Main(unittest.TestCase):
                 del os.environ["BALANCEWHEEL_METRICS_LOG"]; del os.environ["BALANCEWHEEL_CONFIG"]
             self.assertTrue(Path(out).exists())
             self.assertIn("<title>", Path(out).read_text())
+
+    def test_invalid_seats_json_is_reported_not_a_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "seats.json").write_text("{not valid json")
+            os.environ["BALANCEWHEEL_METRICS_LOG"] = str(FX / "modern.jsonl")
+            os.environ["BALANCEWHEEL_CONFIG"] = str(FX / "config.json")
+            try:
+                out = dashboard.main(["--state-dir", tmp])
+            finally:
+                del os.environ["BALANCEWHEEL_METRICS_LOG"]; del os.environ["BALANCEWHEEL_CONFIG"]
+            html = Path(out).read_text()
+            self.assertIn("<title>", html)
+            self.assertIn("seats.json", html)
 
 
 if __name__ == "__main__":

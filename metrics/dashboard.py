@@ -40,7 +40,7 @@ th{color:var(--muted);font-weight:500;font-size:12px}
 """
 
 
-CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff]")
+CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
 
 
 def esc(s):
@@ -268,12 +268,19 @@ def main(argv=None):
         print(f"config error: {e}", file=sys.stderr)
         sys.exit(2)
     state_dir = args.state_dir or config["state_dir"]
+    data = store.load(store.log_path(config))
     seats_state = None
     sp = os.path.join(state_dir, "seats.json")
     if os.path.exists(sp):
-        with open(sp) as f:
-            seats_state = json.load(f)
-    data = store.load(store.log_path(config))
+        try:
+            with open(sp) as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                seats_state = loaded
+            else:
+                data["warnings"].append(f"seats.json unreadable: expected an object, got {type(loaded).__name__}")
+        except (json.JSONDecodeError, OSError) as e:
+            data["warnings"].append(f"seats.json unreadable: {e}")
     out = args.out or os.path.join(state_dir, "dashboard.html")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     with open(out, "w", encoding="utf-8", errors="replace") as f:
