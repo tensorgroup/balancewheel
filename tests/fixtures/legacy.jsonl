@@ -1,0 +1,9 @@
+{"type":"usage","ts":"2025-12-01T10:00:00Z","seat":"alpha","mode":"new","dir":"/work/old-repo","duration_s":60,"ok":true}
+{"type":"panel","ts":"2025-12-01T11:00:00Z","target":"old change","kind":"code","seats":["alpha","beta"],"rounds":1,"immediate_agreement":true,"findings":{"alpha":{"total":3,"confirmed":3,"refuted":0},"beta":{"total":2,"confirmed":2,"refuted":0}},"disputes":[]}
+{"type":"watch","ts":"2025-12-01T11:00:01Z","kind":"verification-skim","target":"old change","detail":"legacy watch"}
+{"type":"watch","ts":"2025-12-01T11:00:02Z","id":"perf0001","kind":"panel-bloat","target":"old change","status":"performed","detail":"legacy performed watch"}
+{"type":"watch","ts":"2025-12-01T11:00:03Z","kind":"panel-bloat","auto":true,"target":"older change","summary":"auto-form legacy watch"}
+{"type":"watch-update","ts":"2025-12-02T09:00:00Z","watch_id":"28756599","status":"dismissed","note":"was fine"}
+{"type":"panel-amend","ts":"2025-12-03T09:00:00Z","panel_ts":"2025-12-01T11:00:00Z","findings_detail":[{"seat":"alpha","group":"g1","title":"a","claim":"a","severity":"major","verdict":"confirmed"}],"note":"backfilled"}
+{"type":"panel-amend","ts":"2025-12-03T09:01:00Z","panel_ts":"1999-01-01T00:00:00Z","notes":"orphan","note":"targets nothing"}
+{"type":"watch-update","ts":"2025-12-03T09:02:00Z","watch_id":"nope0000","status":"resolved","note":"targets nothing"}
