@@ -43,7 +43,15 @@ def legacy_watch_id(ts, kind, target):
 
 
 def panel_id_for(event):
-    return event.get("id") or _sha8(event.get("ts", ""))
+    raw_id = event.get("id")
+    if raw_id is None or raw_id == "":
+        return _sha8(event.get("ts", ""))
+    return raw_id if isinstance(raw_id, str) else str(raw_id)
+
+
+def _has_explicit_id(event):
+    raw_id = event.get("id")
+    return not (raw_id is None or raw_id == "")
 
 
 def read_events(path):
@@ -103,22 +111,34 @@ def _normalise_counts(findings):
     return out
 
 
+def _normalise_target(target):
+    if target is None:
+        return ""
+    return target if isinstance(target, str) else str(target)
+
+
+def _normalise_seats(raw_seats):
+    raw_seats = raw_seats or {}
+    if isinstance(raw_seats, list):
+        return {str(s): None for s in raw_seats}
+    if isinstance(raw_seats, dict):
+        return {k: (None if v is None else str(v)) for k, v in raw_seats.items() if isinstance(k, str)}
+    return {}
+
+
 def _normalise_panel(e):
-    seats = e.get("seats") or {}
-    if isinstance(seats, list):
-        seats = {s: None for s in seats}
     return {
         "type": "panel",
         "id": panel_id_for(e),
         "ts": e.get("ts"),
-        "target": e.get("target", ""),
+        "target": _normalise_target(e.get("target", "")),
         "kind": e.get("kind"),
-        "seats": dict(seats),
+        "seats": _normalise_seats(e.get("seats")),
         "rounds": e.get("rounds"),
         "immediate_agreement": e.get("immediate_agreement"),
         "findings": _normalise_counts(e.get("findings")),
-        "findings_raw": e.get("findings_raw"),
-        "findings_after_triage": e.get("findings_after_triage"),
+        "findings_raw": e.get("findings_raw") if _is_count(e.get("findings_raw")) else None,
+        "findings_after_triage": e.get("findings_after_triage") if _is_count(e.get("findings_after_triage")) else None,
         "findings_detail": e.get("findings_detail"),
         "disputes": list(e.get("disputes") or []),
         "notes": e.get("notes", ""),
@@ -142,13 +162,19 @@ def _normalise_watch(e):
 def load(path):
     events, warnings = read_events(path)
     usage = [e for e in events if e.get("type") == "usage"]
-    panels = [_normalise_panel(e) for e in events if e.get("type") == "panel"]
-    by_id, by_ts = {}, {}
-    for p in panels:
+    panel_events = [e for e in events if e.get("type") == "panel"]
+    by_id, by_ts, order = {}, {}, []
+    for e in panel_events:
+        p = _normalise_panel(e)
         if p["id"] in by_id:
             warnings.append(f"duplicate panel id {p['id']}; amendments will attach to the last one")
+        else:
+            order.append(p["id"])
         by_id[p["id"]] = p
+        if not _has_explicit_id(e) and p["ts"] in by_ts:
+            warnings.append(f"duplicate panel ts {p['ts']}; a panel_ts amend will attach to the last one")
         by_ts[p["ts"]] = p
+    panels = [by_id[i] for i in order]  # first-seen order; last occurrence's data wins, matching amend behaviour
     for e in events:
         if e.get("type") != "panel-amend":
             continue
@@ -176,17 +202,26 @@ def load(path):
 
 
 def append(path, event):
-    """One line, one write(), under an exclusive lock. Adds ts if missing.
+    """One record appended per call, under an exclusive lock. Adds ts if missing.
+    If a prior write was cut short (no trailing newline), repair it first — still inside the
+    same lock, two writes under one lock, never two locks. Bytes go through errors="replace" so
+    a lone surrogate in a record never tracebacks.
     flush() without fsync(): survives a process crash, not a power loss — acceptable for metrics."""
     event = dict(event)
     event.setdefault("ts", now_ts())
     line = json.dumps(event, ensure_ascii=False) + "\n"
+    data = line.encode("utf-8", errors="replace")
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "a", encoding="utf-8") as f:
+    with open(p, "a+b") as f:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
         try:
-            f.write(line)
+            size = f.seek(0, os.SEEK_END)
+            if size > 0:
+                f.seek(size - 1)
+                if f.read(1) != b"\n":
+                    f.write(b"\n")
+            f.write(data)
             f.flush()
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)

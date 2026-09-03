@@ -59,7 +59,7 @@ class ReadAndLoad(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "m.jsonl"
             good = json.dumps({"type": "usage", "seat": "alpha"})
-            p.write_bytes((good + "\nnull\n[]\n" + '{"type":"usage","seat":"bé"').encode("utf-8")[:-1])
+            p.write_bytes((good + "\nnull\n[]\n" + '{"type":"usage","seat":"bé"').encode("utf-8")[:-2])
             d = store.load(str(p))
             self.assertEqual(len(d["usage"]), 1)
             self.assertEqual(len(d["warnings"]), 3)
@@ -71,6 +71,41 @@ class ReadAndLoad(unittest.TestCase):
                                      "findings": {"a": {"total": True, "confirmed": 1.9, "refuted": 2}}}) + "\n")
             f = store.load(str(p))["panels"][0]["findings"]["a"]
             self.assertIsNone(f["total"]); self.assertIsNone(f["confirmed"]); self.assertEqual(f["refuted"], 2)
+
+    def test_duplicate_panel_id_dedupes_to_one_with_a_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "m.jsonl"
+            first = {"type": "panel", "id": "dup0001", "ts": "2026-01-01T00:00:00Z", "target": "first",
+                     "seats": ["a"], "findings": {}}
+            second = {"type": "panel", "id": "dup0001", "ts": "2026-01-02T00:00:00Z", "target": "second",
+                      "seats": ["a"], "findings": {}}
+            p.write_text(json.dumps(first) + "\n" + json.dumps(second) + "\n")
+            d = store.load(str(p))
+            self.assertEqual(len(d["panels"]), 1)
+            self.assertEqual(d["panels"][0]["target"], "second")  # last occurrence survives
+            self.assertEqual(sum("duplicate panel id" in w for w in d["warnings"]), 1)
+
+    def test_duplicate_ts_among_legacy_panels_is_warned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "m.jsonl"
+            ts = "2025-12-01T11:00:00Z"
+            first = {"type": "panel", "ts": ts, "target": "first", "seats": ["a"], "findings": {}}
+            second = {"type": "panel", "ts": ts, "target": "second", "seats": ["a"], "findings": {}}
+            p.write_text(json.dumps(first) + "\n" + json.dumps(second) + "\n")
+            d = store.load(str(p))
+            self.assertTrue(any("duplicate panel ts" in w for w in d["warnings"]))
+
+    def test_append_after_a_cut_line_repairs_the_newline_instead_of_concatenating(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "m.jsonl"
+            existing = json.dumps({"type": "usage", "seat": "existing"})
+            # a damaged final line with no trailing newline, as a crash mid-write would leave it
+            cut = '{"type": "usage", "seat": "cut off'
+            p.write_bytes((existing + "\n" + cut).encode("utf-8"))
+            store.append(str(p), {"type": "usage", "seat": "next"})
+            d = store.load(str(p))
+            self.assertEqual([u["seat"] for u in d["usage"]], ["existing", "next"])  # not concatenated onto "cut"
+            self.assertEqual(len(d["warnings"]), 1)
 
 
 class Ids(unittest.TestCase):
