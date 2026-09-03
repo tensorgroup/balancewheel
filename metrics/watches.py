@@ -72,14 +72,14 @@ def _redundant(panels, config):
     out = []
     seats = set(config.get("seats", {})) | {s for p in window for s in p["findings"]}
     for seat in sorted(seats):
-        mine = [p for p in window if seat in p["findings"] and isinstance(p["findings"][seat].get("unique"), int)]
+        mine = [p for p in window if seat in p["findings"] and _is_count(p["findings"][seat].get("unique"))]
         if len(mine) < w["redundant_min_panels"]:
             continue
         recent = mine[-w["redundant_min_panels"]:]
         if any(p["findings"][seat]["unique"] > 0 for p in recent):
             continue
-        last = recent[-1]["id"]
-        excluded = sum(1 for p in window if seat in p["findings"] and not isinstance(p["findings"][seat].get("unique"), int))
+        last = window[-1]["id"]  # newest panel in the window, so the id keeps moving if the seat sits out later panels
+        excluded = sum(1 for p in window if seat in p["findings"] and not _is_count(p["findings"][seat].get("unique")))
         note = f" ({excluded} panel(s) without a recorded unique count excluded)" if excluded else ""
         out.append({"type": "watch", "id": watch_id("redundant-seat", seat, last),
                     "kind": "redundant-seat", "target": seat, "panel_id": last, "status": "open",
