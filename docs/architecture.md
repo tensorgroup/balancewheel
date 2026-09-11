@@ -1,7 +1,9 @@
 # Balancewheel — Architecture
 
 *A multi-model review panel with a win-rate scoreboard. Written 2026-08-26 from a
-working private implementation; paths and names below are the reference setup's.*
+working private implementation; paths and names below are the reference setup's.
+Seat names refreshed 2026-09-11 when the Codex seat changed model generation; seat B's
+runtime updated the same day (pi since 2026-09-03, OpenCode before).*
 
 ## The problem
 
@@ -24,8 +26,8 @@ their disagreement into signal instead of noise.
 | Role | Runs as | State |
 |---|---|---|
 | Moderator / orchestrator | Primary agent (Claude Code session) | its own transcript + instruction files |
-| Seat A ("sol") | Codex CLI headless (`codex exec -p review`), pinned model, read-only sandbox | Codex session store (resumable) |
-| Seat B ("ox") | OpenCode headless (`opencode run --agent ox`), pinned OpenRouter model, deny-listed writes | OpenCode SQLite session store (resumable) |
+| Seat A ("astra") | Codex CLI headless (`codex exec -p review`), pinned model, read-only sandbox | Codex session store (resumable) |
+| Seat B ("ox") | pi headless (`pi -p --tools read,grep,find,ls,bash -e guard.ts`), pinned OpenRouter model, in-process read-only guard | JSONL session file chosen by the wrapper (resumable) |
 
 Each seat is wrapped in a ~60-line shell script with a uniform interface:
 
@@ -41,8 +43,10 @@ append a usage event to the metrics log. That's the whole integration surface �
 SDKs, no proxies.
 
 **Read-only is load-bearing.** These are autonomous agents with write-capable tools
-pointed at a live checkout. Codex gets `sandbox_mode = "read-only"`; the OpenCode
-agent gets `edit: deny` plus a bash allow-list of read-only commands. Verify by
+pointed at a live checkout. Codex gets `sandbox_mode = "read-only"`; the pi seat
+gets a tool allowlist with no write/edit tool plus an in-process `tool_call` guard
+that admits only single read-only bash commands (a command-line glob allow-list, the
+previous runtime's mechanism, let `git log | tee x` through). Verify by
 attack, not by docs: ask each seat to create a file, on both fresh and resumed
 sessions, and confirm refusal before trusting it.
 
@@ -78,12 +82,12 @@ Append-only JSONL, two event types:
 
 ```jsonc
 {"type": "usage", "seat": "ox-agent", "mode": "resume", "dir": "...", "duration_s": 87, "ok": true}
-{"type": "panel", "target": "PR #123 diff", "seats": ["sol", "ox"], "rounds": 2,
+{"type": "panel", "target": "PR #123 diff", "seats": ["astra", "ox"], "rounds": 2,
  "immediate_agreement": false,
- "findings": {"sol": {"total": 4, "confirmed": 3, "refuted": 1},
+ "findings": {"astra": {"total": 4, "confirmed": 3, "refuted": 1},
               "ox":  {"total": 5, "confirmed": 5, "refuted": 0}},
- "disputes": [{"summary": "...", "challenger": "sol",
-               "proposals": {"ox": "...", "sol": "..."},
+ "disputes": [{"summary": "...", "challenger": "astra",
+               "proposals": {"ox": "...", "astra": "..."},
                "winner": "ox", "reason": "..."}]}
 ```
 
@@ -125,8 +129,9 @@ knowledge. Rules that keep that sane:
 
 - **Session continuity beats context stuffing.** Resumable per-directory seat
   sessions let cross-examination reference earlier rounds without re-briefing, and
-  vendors' own stores (Codex sessions, OpenCode SQLite) are more reliable than any
-  bridge you'd build.
+  vendors' own stores (Codex sessions, pi session files) are more reliable than any
+  bridge you'd build — and a store the wrapper can *address* (pi's `--session <path>`)
+  beats one it has to scrape (OpenCode's SQLite by directory).
 - **Stealth/preview models are load-bearing quicksand.** Pin them in one config line
   you expect to change; never bake them into interfaces.
 - **Vendor CLIs churn.** A profile format broke mid-build; a config table silently

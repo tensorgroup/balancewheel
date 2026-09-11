@@ -11,7 +11,7 @@ from pathlib import Path
 RUNTIMES = {"claude-code", "codex", "pi", "kimi", "agy"}
 ROLES = {"design", "plan", "review", "debug", "decision"}
 EFFORT_LEVELS = {
-    "codex": {"low", "medium", "high"},
+    "codex": {"low", "medium", "high", "xhigh", "max"},  # "ultra" adds auto task delegation; excluded until verified read-only
     "pi": {"off", "minimal", "low", "medium", "high", "xhigh"},
     "kimi": {"low", "high", "max"},
 }

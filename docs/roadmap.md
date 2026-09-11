@@ -10,7 +10,7 @@ commands, launchd sync, local dashboard). Goals of this phase:
 - Let the seat-policy design settle (the substance bar and role scoping changed on
   day two — extraction before stability means maintaining an API for unfinished
   decisions).
-- Watch vendor-CLI churn (Codex profile format, OpenCode config schema) to learn
+- Watch vendor-CLI churn (Codex profile format, the OpenCode→pi runtime swap) to learn
   where the abstraction seams actually are.
 
 ## Extraction criteria (all must hold before code lands here)

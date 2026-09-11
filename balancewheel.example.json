@@ -2,7 +2,7 @@
   "_comment": "Replace these rows with your seats. Seat names are yours; model ids are data and are expected to change. Copy to ~/.config/balancewheel/config.json.",
   "schema_version": 1,
   "seats": {
-    "sol":   {"runtime": "codex",       "model": "gpt-5.6-sol",   "effort": "high",   "roles": ["review"],
+    "astra": {"runtime": "codex",       "model": "gpt-6-astra",   "effort": "xhigh",  "roles": ["plan", "review", "decision"],
               "policy": "why this seat has these roles; the evidence cited; what would change them"},
     "ox":    {"runtime": "pi",          "model": "openrouter/z-ai/glm-5.3-flash", "effort": "medium",
               "roles": ["plan", "review", "decision"],
