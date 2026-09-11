@@ -57,7 +57,14 @@ sessions, and confirm refusal before trusting it.
    (findings with file:line and severity; "no significant findings" allowed).
 2. **Round 1 — independent.** Both seats run in parallel with the same brief and no
    sight of each other. Independence first: agreement between blind reviewers is the
-   strongest signal the panel produces.
+   strongest signal the panel produces. Each seat gets a hard wall-clock cap, enforced
+   by its wrapper rather than by the moderator's tool timeout (the reference setup uses
+   12 minutes by default and 30 in a *deep* tier that also raises every seat's reasoning
+   effort — opted into for an unresolved dispute, a high-stakes area, or on request). A
+   seat that misses the cap is recorded as *absent* on that panel and excluded from its
+   per-seat counts, and the panel proceeds on the seats that returned. One slow run
+   never blocks a review, and never changes the roster — that stays with the metrics
+   loop below.
 3. **Round 2 — targeted cross-examination.** Only where seats disagree, or a
    load-bearing finding looks shaky, the moderator relays the *specific claim* to the
    other seat's resumed session: "the other reviewer claims X at file:line — verify
