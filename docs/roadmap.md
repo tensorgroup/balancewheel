@@ -42,5 +42,8 @@ commands, launchd sync, local dashboard). Goals of this phase:
 ## Non-goals
 
 - Not a router/proxy: no request interception, no prompt translation.
-- Not a harness replacement: the user's primary agent stays primary.
+- Not a harness replacement: the user's primary agent stays primary. Driver mode
+  (running a peer vendor's CLI as the working agent when the moderator's budget is
+  exhausted) is failover, not promotion — see "Seat mode and driver mode" in
+  `architecture.md`.
 - Not a hosted service: everything local, everything inspectable.

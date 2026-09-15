@@ -3,7 +3,8 @@
 *A multi-model review panel with a win-rate scoreboard. Written 2026-08-26 from a
 working private implementation; paths and names below are the reference setup's.
 Seat names refreshed 2026-09-11 when the Codex seat changed model generation; seat B's
-runtime updated the same day (pi since 2026-09-03, OpenCode before).*
+runtime updated the same day (pi since 2026-09-03, OpenCode before). Driver mode added
+2026-09-15, separating the read-only seat guarantee from writable vendor failover.*
 
 ## The problem
 
@@ -49,6 +50,42 @@ that admits only single read-only bash commands (a command-line glob allow-list,
 previous runtime's mechanism, let `git log | tee x` through). Verify by
 attack, not by docs: ask each seat to create a file, on both fresh and resumed
 sessions, and confirm refusal before trusting it.
+
+### Seat mode and driver mode are different things
+
+The read-only guarantee above is scoped to **seats**. The same vendor CLIs can also be
+run as a **driver** — the agent actually doing the work — and that mode is deliberately
+writable. Keeping the two labelled apart matters, because they are contained by
+different mechanisms and only one of them is scored.
+
+| | Seat mode | Driver mode |
+|---|---|---|
+| Purpose | Review, blind and independent | Do the work |
+| Writes | Never; enforced by sandbox + guard | Yes, by design |
+| Contained by | Tool allowlist and read-only sandbox | A dedicated worktree as the only writable root |
+| Target | The live checkout, read in place | A throwaway branch off the integration branch |
+| Metrics | Logged and scored against verified findings | Not scored — it is not making review claims |
+
+Driver mode exists for one reason: **the moderator's capacity is a single point of
+failure.** When the primary agent's budget runs out, the work stops even though two
+capable peers are sitting right there, already repo-aware and already paid for. Vendor
+failover keeps the pattern working on the day it would otherwise be most useless.
+
+This is a fallback, not a promotion: the moderator stays primary, and a driver seat
+never reviews its own output — that would collapse the blind-round rule the whole
+protocol rests on. When a driver has written the code, the panel that reviews it
+should run with that vendor's seat excluded, or with the finding treated as
+self-assessment and marked accordingly.
+
+Containment moves with the mode. A seat is safe because it *cannot* write; a driver is
+safe because the only thing it can write is a scratch worktree, never the checkout the
+author is working in. Two traps found by attacking it rather than reading docs: a
+sandbox may refuse a writable root that merely *contains a symlinked path component*
+(failing every command, not just the ones crossing the link), and basing the worktree
+on a remote branch that the local one is far ahead of will hand the driver a stale tree
+without any error at all. Test both directions — that writes inside the worktree
+succeed, and that writes aimed at the real checkout, including through any symlink the
+setup created, are refused.
 
 ## The panel protocol
 
