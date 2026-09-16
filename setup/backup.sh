@@ -30,6 +30,15 @@ done
 
 root="${BALANCEWHEEL_BACKUP_ROOT:-$HOME/.balancewheel/backups}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+# Never reuse an existing directory. The stamp has one-second resolution, and a restore takes
+# a safety backup of the current state before it writes: run backup → damage → restore inside
+# the same second and that safety copy would land in the SAME directory as the backup being
+# restored, overwriting the good copy with the damaged state. The restore then "succeeds" and
+# puts the damage back, with the only good copy gone. Suffix instead of colliding.
+if [ -e "$root/$stamp" ]; then
+  n=2; while [ -e "$root/$stamp-$n" ]; do n=$((n + 1)); done
+  stamp="$stamp-$n"
+fi
 dest="$root/$stamp"
 
 # Expand a leading "~/" to $HOME; anything else is used as written. (The quoted tilde is

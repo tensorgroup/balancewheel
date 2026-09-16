@@ -15,6 +15,19 @@ not against the prose.
 
 ### Fixed
 
+- **`setup/restore.sh` could destroy the backup it was restoring from.** Backup directories
+  are named by a one-second UTC stamp, and a restore takes a safety backup of the current
+  state before writing. Run backup → damage → restore inside the same second and that safety
+  copy landed in the *same directory* as the backup being restored, overwriting the good copy
+  with the damaged state; the restore then reported success and put the damage back, with
+  nothing left to recover from. A code comment had dismissed the shared-second case as
+  harmless. `backup.sh` now suffixes a stamp whose second is taken (`…Z-2`) and never reuses
+  a directory.
+- **A second bare `restore.sh` restored the damage instead of undoing it.** "Most recent
+  backup" included the safety copy the previous restore had just taken, so pressing undo
+  twice cemented the damage while reporting `restored N path(s)`. Safety copies are now
+  marked, skipped when choosing a default, labelled in `--list`, and still restorable by
+  explicit timestamp — which is how you undo a restore.
 - `log.py panel` and `log.py amend` read their record as JSON on stdin, which was
   documented nowhere — not in `--help`, not in any doc a new user reads — while the
   setup prompt's step 8 tells their agent to log a panel. Both subcommands now describe
