@@ -112,8 +112,11 @@ and that is the layer [OpenEscapement](#working-with-openescapement) governs.
   superpowers plugin.
 - One or more seat harnesses: [Codex CLI](https://github.com/openai/codex) on a ChatGPT
   subscription, and/or [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
-  on Node 22.19 or newer (pi can also use the ChatGPT subscription; a Claude subscription
-  through pi bills per token — see the rebuild guide).
+  on Node 22.19 or newer — install it with a manager that pins the tool to its own Node
+  (`volta install @earendil-works/pi-coding-agent`), because pi's Node floor moves between
+  releases and a plain `npm install -g` binds the copy to whichever Node is active. pi can
+  also use the ChatGPT subscription; a Claude subscription through pi bills per token — see
+  the rebuild guide.
 - An OpenRouter key if you want a cheap metered seat.
 - Python 3.9+ (standard library only) for `metrics/` and the tests; git and `gh` for the
   branch-and-PR flow; `sandbox-exec` (ships with macOS) if pi is used as a driver;

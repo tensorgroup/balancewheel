@@ -66,10 +66,34 @@ Invocation and traps:
 ## Seat: pi (`z-ai/glm-5.3-flash` via OpenRouter)
 
 Runtime: [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
-(`@earendil-works/pi-coding-agent`, 0.85.x since 2026-09-16 — 0.74.x before; `npm install
--g --ignore-scripts`). Re-verify the read-only layers by attack after every upgrade: the
-0.74→0.85 jump crossed eleven minor versions and was re-checked the same day. This
-seat ran on OpenCode until 2026-09-03; the move is described at the end of the section.
+(`@earendil-works/pi-coding-agent`, 0.85.x since 2026-09-16 — 0.74.x before). Re-verify the
+read-only layers by attack after every upgrade: the 0.74→0.85 jump crossed eleven minor
+versions and was re-checked the same day. This seat ran on OpenCode until 2026-09-03; the
+move is described at the end of the section.
+
+**Install it with a manager that pins the tool to its own Node, not to whichever Node is
+active.** pi's `engines` floor moves with the release — 0.74 wanted Node ≥20.6, 0.85 wants
+≥22.19 — so a plain `npm install -g` binds the copy to whatever Node was on PATH at the
+time. The reference setup uses [Volta](https://volta.sh):
+
+```sh
+volta install @earendil-works/pi-coding-agent   # resolves latest, fetches a Node that satisfies it
+pi --version                                    # confirm; re-run the same command to upgrade
+```
+
+Volta fetches and pins a satisfying Node per tool, so a repo that pins an older Node for its
+own build does not change which Node pi runs on. Without that, the failure is quiet: on
+2026-09-16 this setup had **two** pi installs — 0.85.1 on the pinned Node, and an orphaned
+0.74.2 sitting in an older Node image's globals from an earlier `npm install -g`. Both were
+on disk, and which one ran depended on PATH order, so the seat and the driver could run
+different pi versions on the same machine. `pi --version` in one shell disagreed with
+another.
+
+Two rules that follow. Never put a Node image's own `bin` directory on PATH to find a tool
+(`$VOLTA_HOME/tools/image/node/<version>/bin`) — those are one Node version's globals, and
+searching them defeats the pinning; probe the manager's shim directory only. And after any
+pi upgrade, check the installed model catalog rather than the docs: 0.74 stopped at the
+previous model generation.
 
 **The stealth-model lesson, lived (2026-09-02):** the seat originally ran on
 `stealth/ox-alpha`, a free preview. OpenRouter ended the test period one week after
