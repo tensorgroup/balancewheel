@@ -22,8 +22,14 @@ them that way (privacy firewall). Commits use a lowercase summary with a `feat:`
 
 Sibling project: [OpenEscapement](https://github.com/tensorgroup/openescapement)
 (esc). Division of labor: balancewheel is the collaboration pattern that *generates and
-justifies* seat policy; esc *ships* that policy as a signed rule pack (its
-`model-seats` example pack is this repo's seat policy generalized).
+justifies* seat policy; esc *ships* policy into a repo as a signed rule pack. The two
+live at different levels and never write the same file: balancewheel's setup writes only
+under the user's home directory (`setup/paths.txt`, plus its state dir and backups); esc
+writes agent-readable files only in a repo and keeps just a pack cache and portal data
+under the home directory. A `model-seats` pack (this repo's seat policy in esc's pack
+shape, the planned `packs/`) is not on esc's main; a stale draft sits on its
+`feat/model-seats-pack` branch. Do not describe it as shipped. The README's "Working with
+OpenEscapement" section owns the install order and the reconcile rule.
 
 ## The docs and what each one owns
 

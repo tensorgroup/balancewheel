@@ -39,7 +39,16 @@ commands, launchd sync, local dashboard). Goals of this phase:
   seat implementation)* the list of home-directory paths a setup touches, and the
   backup/restore scripts around it.
 - `packs/` — seat policies exported as OpenEscapement rule packs (the governance
-  hand-off: balancewheel generates and justifies policy; esc distributes it).
+  hand-off: balancewheel generates and justifies policy; esc distributes it). The first
+  pack, `model-seats`, carries the roles per target kind, the substance bar, and each
+  seat's re-promotion criteria as rule fragments, with the dashboard numbers cited in
+  its changelog; it is mirrored into esc's `examples/packs/` once it exists, and until
+  then no doc in either repo should say esc ships it. A first draft is on esc's
+  `feat/model-seats-pack` branch (2026-08-25); its catalog names since-retired stealth
+  model ids, which this repo's rules forbid in interfaces, so it needs re-pinning to seat
+  names before it lands. A pack that also carries the
+  panel protocol as a skill makes the user-level copy redundant in governed repos; esc
+  already reports that overlap as an informational duplicate.
 - Knowledge layer stays out of scope for v1 — it's separable, and the panel is the
   novel part.
 

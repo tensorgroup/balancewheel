@@ -6,7 +6,9 @@ Seat names refreshed 2026-09-11 when the Codex seat changed model generation; se
 runtime updated the same day (pi since 2026-09-03, OpenCode before). Driver mode added
 2026-09-15, separating the read-only seat guarantee from writable vendor failover;
 extended 2026-09-16 to same-vendor cheaper tiers, with the harness-billing and
-first-party-harness containment notes.*
+first-party-harness containment notes. The OpenEscapement hand-off corrected the same
+day: the `model-seats` pack is planned, not shipped, and the two tools' scopes are
+stated.*
 
 ## The problem
 
@@ -181,7 +183,13 @@ was dispute conduct, not competence), its challenges now require a substance bar
 the policy states the reversal condition (≥10 logged disputes with >50% win share).
 That policy is exactly the kind of artifact
 [OpenEscapement](https://github.com/tensorgroup/openescapement) ships as a signed rule
-pack — see its `model-seats` example pack, which is this policy generalized.
+pack, rendered into a repo's instruction files and versioned like any other policy
+change. Its `anthropic-models` example pack has the shape (a catalog of models with a
+status and a note each); a `model-seats` pack carrying this policy generalized is the
+roadmap's planned `packs/` output, not something esc ships today. The seam between the
+two is scope, not files: balancewheel configures the user's own agent under the home
+directory, esc governs the repo, and a pack rule wins over a moderator rule in the repo
+it is synced into (the README's "Working with OpenEscapement" section).
 
 ## The knowledge layer
 
