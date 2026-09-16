@@ -35,6 +35,10 @@ justifies* seat policy; esc *ships* that policy as a signed rule pack (its
   a verification checklist), deliberately **not** a dump of the private setup.
 - `docs/roadmap.md` — dogfooding goals, the four extraction criteria, the planned
   directory shape (`seats/`, `panel/`, `metrics/`, `packs/`), and non-goals.
+- `docs/handoffs/YYYY-MM-DD-topic.md` — a session record: what changed and why, the
+  issues that cost time, what was deliberately left alone, and where to pick up. Point-in-time
+  by nature, so it is never the source of truth — when a handoff and an owning doc disagree,
+  the owning doc wins.
 
 Docs are dated in their preamble ("Written 2026-08-26 …") and reference specific
 tool versions; when updating one, update the date and note what changed since.
