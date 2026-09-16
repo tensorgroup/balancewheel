@@ -4,7 +4,9 @@
 working private implementation; paths and names below are the reference setup's.
 Seat names refreshed 2026-09-11 when the Codex seat changed model generation; seat B's
 runtime updated the same day (pi since 2026-09-03, OpenCode before). Driver mode added
-2026-09-15, separating the read-only seat guarantee from writable vendor failover.*
+2026-09-15, separating the read-only seat guarantee from writable vendor failover;
+extended 2026-09-16 to same-vendor cheaper tiers, with the harness-billing and
+first-party-harness containment notes.*
 
 ## The problem
 
@@ -86,6 +88,22 @@ on a remote branch that the local one is far ahead of will hand the driver a sta
 without any error at all. Test both directions — that writes inside the worktree
 succeed, and that writes aimed at the real checkout, including through any symlink the
 setup created, are refused.
+
+A driver need not be a different vendor. The cheapest failover is often the primary
+vendor's own smaller tier through the same first-party harness, tried before leaving the
+vendor at all. Two things decide *which harness* runs a given model, and neither is about
+capability. First, billing: a subscription that covers a vendor's own CLI at a flat rate
+may bill the same models per token when they are reached through a third-party harness
+(the Claude subscription does exactly this since April 2026, while the OpenAI one
+explicitly endorses third-party use), so a peer harness that is the right choice for one
+vendor's models is the API bill by another name for another's. Second, containment: a
+first-party harness inherits the user's own permission grants, which are usually broad
+enough to reach the live checkout from inside the worktree, and a harness with no sandbox
+of its own will simply do what it is asked, checkout included. The first needs per-launch
+deny rules on the checkout path plus the harness's own command sandbox; the second needs
+the operating system's sandbox wrapped around the whole process. Only then is the
+worktree a boundary rather than a suggestion — and, as with everything else here, the
+proof is an attack in both directions, not the settings file.
 
 ## The panel protocol
 

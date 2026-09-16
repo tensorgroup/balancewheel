@@ -7,7 +7,9 @@ get right, and the traps. Written 2026-08-26 against the versions noted; updated
 2026-09-02 when the stealth seat model graduated (see the pi section); updated
 2026-09-11 when the Codex seat moved to a new model generation and gained planning duties
 (see the Codex section) and to describe the ox seat's runtime move from OpenCode to pi
-(2026-09-03).*
+(2026-09-03); updated 2026-09-16 with the driver-mode section (which harness may run
+which model at flat rate, first-party-harness containment, two new traps) and the pi
+version bump to 0.85.x it required.*
 
 ## The cast
 
@@ -15,7 +17,7 @@ get right, and the traps. Written 2026-08-26 against the versions noted; updated
 |---|---|---|---|
 | Moderator / primary | Claude Code (CLI) | Claude (Fable/Opus tier) | Anthropic subscription |
 | Planning + review seat ("astra") | Codex CLI ≥0.153 | `gpt-6-astra`, xhigh reasoning (was `gpt-5.6-sol`, seat "sol", until 2026-09-11) | OpenAI Pro subscription (CLI OAuth) |
-| Planning seat ("ox") | pi 0.74.x (was OpenCode ≥1.18 until 2026-09-03) | `z-ai/glm-5.3-flash` via OpenRouter (was `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
+| Planning seat ("ox") | pi 0.85.x (0.74.x until 2026-09-16; was OpenCode ≥1.18 until 2026-09-03) | `z-ai/glm-5.3-flash` via OpenRouter (was `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
 | Blind one-shot fallback | plain HTTPS (`chat/completions`) | same OpenRouter model | OpenRouter API key |
 
 Why these: each vendor's *own* CLI gives the seat repo exploration, native session
@@ -61,7 +63,9 @@ Invocation and traps:
 ## Seat: pi (`z-ai/glm-5.3-flash` via OpenRouter)
 
 Runtime: [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
-(`@earendil-works/pi-coding-agent`, 0.74.x, `npm install -g --ignore-scripts`). This
+(`@earendil-works/pi-coding-agent`, 0.85.x since 2026-09-16 — 0.74.x before; `npm install
+-g --ignore-scripts`). Re-verify the read-only layers by attack after every upgrade: the
+0.74→0.85 jump crossed eleven minor versions and was re-checked the same day. This
 seat ran on OpenCode until 2026-09-03; the move is described at the end of the section.
 
 **The stealth-model lesson, lived (2026-09-02):** the seat originally ran on
@@ -145,6 +149,101 @@ JSONL → exit with the CLI's status. The moderator (Claude Code) drives seats t
 slash-command instructions that carry the panel protocol and the mandatory
 outcome-logging step.
 
+**Temp-dir hygiene (seats and drivers alike).** Every vendor CLI extracts scratch files into
+`$TMPDIR` — Codex unpacks multi-megabyte native libraries there, Node writes its compile
+cache under it, Python and pi follow suit — and some agent sandboxes force `TMPDIR` to the
+*project checkout* for anything run through them. The symptom is hash-named directories,
+`.tmpXXXXXX` files, and a `node-compile-cache/` tree appearing in the working directory,
+none of them ignored. Two layers fix it: every wrapper, seat or driver, resolves the real
+system temp directory with `TMPDIR` unset, creates a private scratch directory there, and
+exports it as `TMPDIR` (and as Node's compile-cache path) before launching the CLI; and a
+global git excludes file carries the patterns for whatever still lands, so a stray cache
+never reaches a commit in any repo. Neither layer alone is enough — the wrapper cannot
+cover a CLI the user runs by hand, and the ignore file cannot stop the litter, only hide it.
+
+## Driver mode (the same CLIs as the working agent)
+
+Driver mode is the writable failover described in architecture.md: one command that
+builds a throwaway worktree off the integration branch and launches a coding agent in
+it as the *working* agent. It is a mode of the seat abstraction — same per-repo
+profile, same briefing — not a second subsystem. What differs per seat is the harness,
+the credential, and the containment.
+
+| Driver seat | Harness | Model | Billing |
+|---|---|---|---|
+| astra | Codex CLI | `gpt-6-astra` | OpenAI Pro, flat (CLI OAuth) |
+| astra via pi | pi ≥0.85, built-in `openai-codex` provider | `gpt-6-astra` | Same subscription, flat — OpenAI endorses third-party use ("Codex for OSS") |
+| ox | pi | `z-ai/glm-5.3-flash` via OpenRouter | ~$0.02 per session |
+| fable / opus / sonnet | Claude Code | the Claude tier named | Claude plan, flat |
+| *(not a seat)* Claude via pi | pi's Claude Pro/Max login | any Claude model | **per-token "extra usage"** — Anthropic bills third-party harnesses at API rates since 2026-04-04; only the vendor's own surfaces stay flat |
+
+Which harness runs a model is therefore a billing decision first. One harness for all
+non-primary drivers works for the OpenAI models; for the Claude models it is the API
+bill by another name (and a terms-of-service gray area), so the Claude driver seats run
+the primary harness at a cheaper tier — the first thing to reach for when the top tier's
+budget is low, before leaving the vendor at all.
+
+**pi as a second harness for the OpenAI seat.** The subscription route only lists
+models the installed pi knows: 0.74 stopped at the previous generation, 0.85 carries the
+current one — check the installed catalog, not the docs. pi keeps its own OAuth tokens in
+its agent directory; never copy another CLI's token file across (refresh-token rotation
+breaks whichever tool refreshes second). The login is interactive (`/login` in the TUI),
+done once, into the *driver's* agent directory — never the guarded review seat's.
+
+**Containment differs per harness, and two of the three need help.** Codex's sandbox makes
+the worktree the only writable root by itself. pi has *no* sandbox: on its first attack run a
+pi driver wrote every outside probe into the live checkout, one through a symlink — the
+worktree was a briefing, not a boundary. The launcher now runs pi under the OS sandbox
+(macOS Seatbelt via `sandbox-exec`, the mechanism the other two harnesses use internally)
+with a deny-list profile: everything allowed except writes under the checkout's physical
+path, with the shared `.git` directory re-allowed so `git commit` from a linked worktree
+still works, and `.git/hooks` plus `.git/config` denied again. Seatbelt resolves real paths,
+so symlinks into the checkout are covered. Without `sandbox-exec` the launcher warns loudly
+rather than falling back silently. Claude Code instead inherits the user's own
+permission grants, which in any working setup are broad enough (`Edit(**/*)`, allowed
+`cp`/`mv`/`git`) to reach the live checkout from inside the worktree. The launcher passes
+per-session settings: a deny rule for every file-editing tool on the checkout path, plus
+the built-in Bash sandbox with the checkout in its deny-write list. Three details that
+took debugging: rule paths take a **leading double slash** for absolute (a single slash
+resolves relative to the project root and silently protects nothing); only `Edit(path)`
+rules match file tools (`Write`/`MultiEdit` rules are ignored with a warning); and
+`acceptEdits` auto-approves only inside the working directory, which is the behaviour
+wanted here.
+
+**Choosing a driver (the reference user's routine).** The primary harness is always the
+starting point: the moderator tooling — panel, skills, memory — lives there, and its top
+tier is the right model for anything that needs judgment (design, plans, debugging,
+review). Driver mode is reached *from* that session, not instead of it, when one of three
+conditions holds: the primary subscription's usage window is nearly spent; a second worker
+is wanted in parallel (the worktree makes that safe — the moderator keeps designing in the
+checkout while a driver implements an independent, specified task elsewhere); or the task is
+mechanical. The default driver seat is deliberately the *other* vendor's subscription: by the
+time driver mode is invoked the primary pool is the constraint, so a cheaper tier of the same
+pool is the wrong default. A weaker driver is appropriate exactly when the work is specified
+and verifiable — a written plan, tests, and the panel behind it — and wrong for anything
+ambiguous, where it costs more in review cycles than it saves. After a driver run the panel
+reviews as usual with the driver's vendor seat excluded.
+
+**Three driver traps, all found by attack:**
+
+- **A harness with no sandbox is contained by nothing but manners.** The pi driver's first
+  attack run passed every inside step and every outside step alike — it did exactly what it
+  was asked, including writing into the checkout it had been told not to touch. Read the
+  outside-write results, not just the inside ones, and wrap the process in the OS sandbox.
+
+- **The worktree root must not sit under the primary harness's own config directory.**
+  Claude Code treats every path under a `.claude` directory as a sensitive config file and
+  refuses to write it — a driver worktree placed under that state directory had *every*
+  write refused, including its own files, on the first attack run. Keep driver worktrees
+  under a neutral state directory, still resolved to the physical path (the Codex
+  symlinked-root rule from architecture.md applies too).
+- **A model's refusal is not the guard firing.** The first re-verification of the review
+  seat after the pi upgrade produced polite "I'm read-only" replies with *no entry in the
+  guard log* — the model declined before making a tool call, which proves nothing about
+  the mechanism. Long multi-step "sanctioned test" prompts also stalled the seat for the
+  full wall-clock cap. One-line prompts ("call bash once with exactly: …") produce a real
+  tool call, a logged denial, and an unchanged directory — that is the evidence.
+
 ## Verification checklist (before trusting any seat)
 
 1. Ask it to create a file. Confirm refusal AND that no file exists.
@@ -154,6 +253,12 @@ outcome-logging step.
    `.opencode/` — whatever the runtime auto-loads) and confirm the seat never loads it.
 5. Run one panel on a seeded buggy file; confirm both seats find the planted bugs
    independently, then relay one dispute and confirm the resumed cross-examination.
+6. For a **driver** seat, attack in both directions through the real launch path: a write
+   inside the worktree must land; writes to the live checkout — direct, and through a
+   symlink planted inside the worktree — must be refused. Read the filesystem for the
+   verdict, not the agent's summary table.
+7. For any seat, confirm the refusal came from the mechanism (guard log entry, sandbox
+   error text) and not from the model declining to try.
 
 ## Supporting cast (named, with the one key fact each)
 

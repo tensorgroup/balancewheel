@@ -10,8 +10,9 @@ commands, launchd sync, local dashboard). Goals of this phase:
 - Let the seat-policy design settle (the substance bar and role scoping changed on
   day two — extraction before stability means maintaining an API for unfinished
   decisions).
-- Watch vendor-CLI churn (Codex profile format, the OpenCode→pi runtime swap) to learn
-  where the abstraction seams actually are.
+- Watch vendor-CLI churn (Codex profile format, the OpenCode→pi runtime swap, a
+  subscription route that exists only from a given pi version) to learn where the
+  abstraction seams actually are.
 
 ## Extraction criteria (all must hold before code lands here)
 
@@ -43,7 +44,7 @@ commands, launchd sync, local dashboard). Goals of this phase:
 
 - Not a router/proxy: no request interception, no prompt translation.
 - Not a harness replacement: the user's primary agent stays primary. Driver mode
-  (running a peer vendor's CLI as the working agent when the moderator's budget is
-  exhausted) is failover, not promotion — see "Seat mode and driver mode" in
-  `architecture.md`.
+  (running a peer vendor's CLI, or the primary vendor's cheaper tier, as the working
+  agent when the moderator's budget is exhausted) is failover, not promotion — see
+  "Seat mode and driver mode" in `architecture.md`.
 - Not a hosted service: everything local, everything inspectable.
