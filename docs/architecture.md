@@ -107,6 +107,18 @@ proof is an attack in both directions, not the settings file.
 
 ## The panel protocol
 
+**Where it sits.** The panel is not a separate workflow; it is a set of checkpoints inside
+the one the moderator already follows. The reference setup uses the
+[superpowers](https://github.com/obra/superpowers) skill lifecycle — brainstorm → worktree →
+written plan → execute (often via subagents) → verify → request review → finish the branch
+— and convenes the panel at four of its seams: when a design converges (before the spec),
+when a plan is written (before approval), at code review (in the same parallel batch as
+any single-model reviewers), and in debugging when the first hypothesis fails. Two
+consequences shape the rest of the design: feature work already lives on a branch in its
+own worktree and lands by pull request, so a driver's worktree is the same shape the
+lifecycle already expects and its branch finishes the same way; and review targets are
+usually a branch diff or a plan file, which is what the brief points at.
+
 1. **One shared brief.** The moderator frames the target (a branch diff, a plan file,
    a design question), the stack, the focus dimensions, and the required output shape
    (findings with file:line and severity; "no significant findings" allowed).

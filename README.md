@@ -89,6 +89,10 @@ primary agent do the assembly. Paste this into it, from the root of this repo:
 ```text
 Set up a balancewheel review panel for me.
 
+0. If my primary agent is Claude Code and the superpowers plugin is not installed,
+   install it (`/plugin install superpowers@claude-plugins-official`) — the panel checkpoints attach to its
+   brainstorming, writing-plans, requesting-code-review and systematic-debugging skills,
+   and its worktree-plus-PR flow is what drivers assume.
 1. Read README.md, docs/architecture.md, docs/reference-implementation.md and
    docs/roadmap.md in full. The two rules that are never relaxed: seats are enforced
    read-only and verified by attack; first rounds are blind and only disputed claims
@@ -120,14 +124,21 @@ names live in config: the first seat model was retired by its provider within a 
 
 ## Using it
 
-- **Review** happens at checkpoints, not at the end: when a design converges, when a
-  plan is written, at code review, and in debugging when the first hypothesis fails.
-  Convene the panel, verify what survives, log the record.
+- **Work the way you already do, on branches, by pull request.** The reference setup runs
+  the [superpowers](https://github.com/obra/superpowers) skill lifecycle in Claude Code:
+  brainstorm → worktree → written plan → execute → verify → review → finish the branch. We
+  recommend it; it already puts every change in its own worktree and lands it by PR, which
+  is the shape the panel and the drivers assume.
+- **Review** happens at checkpoints of that lifecycle, not at the end: when a design
+  converges, when a plan is written, at code review, and in debugging when the first
+  hypothesis fails. Convene the panel, verify what survives, log the record.
 - **Drive** when the moderator's budget is the constraint, when a second worker on a
   different subscription can take an independent, well-specified task in parallel, or
   for mechanical work. Start in your primary agent; reach for a driver from there. Match
   driver strength to how well-specified the work is: a weaker model is fine behind a
-  written plan, tests, and the panel, and wrong for anything ambiguous.
+  written plan, tests, and the panel, and wrong for anything ambiguous. A driver's branch
+  finishes like any other: pushed, opened as a PR, reviewed by the panel with the driver's
+  vendor excluded.
 - **Read the scoreboard** before changing roles. A seat is dropped or demoted on logged
   outcomes over a window, never on one bad review, and every change states what would
   earn the role back.

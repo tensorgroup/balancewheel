@@ -25,6 +25,11 @@ make "attack in both directions" and "mechanism, not model refusal" explicit.
 be a different vendor; which harness runs a model is decided by billing and containment,
 not capability. Preamble dated.
 
+**Superpowers named as the recommended workflow skeleton** (README, architecture,
+rebuild guide, AGENTS.md): the panel's checkpoints are seams of that lifecycle, and its
+worktree-plus-pull-request flow is the shape drivers assume. The driver briefing now says
+to commit on the branch, never merge, and finish by pushing and opening a PR.
+
 **`roadmap.md` — non-goal widened, one dogfooding goal extended.** "Driver mode" now
 includes the primary vendor's cheaper tier; the vendor-churn goal notes a subscription
 route that exists only from a given runtime version.

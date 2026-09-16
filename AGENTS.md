@@ -39,8 +39,10 @@ amendments and repairs truncated appends, so its edge cases are the ones that bi
 
 ## Commit & Pull Request Guidelines
 
-Commit summaries are lowercase with a `feat:` / `fix:` / `test:` / `docs:` prefix. Keep commits
-focused. Docs carry a dated preamble ("Written 2026-08-26 …") and name specific tool versions —
+Work on a branch in its own worktree and land it by pull request against `main`; that is
+the superpowers lifecycle the maintainer runs, and driver-mode branches follow the same
+path. Commit summaries are lowercase with a `feat:` / `fix:` / `test:` / `docs:` prefix. Keep
+commits focused. Docs carry a dated preamble ("Written 2026-08-26 …") and name specific tool versions —
 when you change a doc, update its date and note what changed since.
 
 ## Security & Configuration

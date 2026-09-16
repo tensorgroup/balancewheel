@@ -15,7 +15,7 @@ version bump to 0.85.x it required.*
 
 | Role | Software | Model | Billing |
 |---|---|---|---|
-| Moderator / primary | Claude Code (CLI) | Claude (Fable/Opus tier) | Anthropic subscription |
+| Moderator / primary | Claude Code (CLI) with the [superpowers](https://github.com/obra/superpowers) plugin (6.x) as the workflow skeleton | Claude (Fable/Opus tier) | Anthropic subscription |
 | Planning + review seat ("astra") | Codex CLI ≥0.153 | `gpt-6-astra`, xhigh reasoning (was `gpt-5.6-sol`, seat "sol", until 2026-09-11) | OpenAI Pro subscription (CLI OAuth) |
 | Planning seat ("ox") | pi 0.85.x (0.74.x until 2026-09-16; was OpenCode ≥1.18 until 2026-09-03) | `z-ai/glm-5.3-flash` via OpenRouter (was `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
 | Blind one-shot fallback | plain HTTPS (`chat/completions`) | same OpenRouter model | OpenRouter API key |
@@ -209,6 +209,15 @@ resolves relative to the project root and silently protects nothing); only `Edit
 rules match file tools (`Write`/`MultiEdit` rules are ignored with a warning); and
 `acceptEdits` auto-approves only inside the working directory, which is the behaviour
 wanted here.
+
+**Drivers and the branch lifecycle.** A driver works on a throwaway branch in its own
+worktree, commits there, and never merges or rebases onto the integration branch. When the
+work is done the branch is pushed and opened as a pull request against the base, and the
+moderator's panel reviews it there with the driver's vendor excluded — the same path every
+feature branch takes under the superpowers lifecycle (`using-git-worktrees` in, `finishing-a-
+development-branch` out). The launcher's briefing says exactly this, so the driver does not
+invent its own integration step; and the launcher's cleanup refuses to remove a worktree
+whose commits exist nowhere else.
 
 **Choosing a driver (the reference user's routine).** The primary harness is always the
 starting point: the moderator tooling — panel, skills, memory — lives there, and its top
