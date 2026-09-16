@@ -224,6 +224,39 @@ and verifiable — a written plan, tests, and the panel behind it — and wrong 
 ambiguous, where it costs more in review cycles than it saves. After a driver run the panel
 reviews as usual with the driver's vendor seat excluded.
 
+**The two containment configs, literally** (placeholders in angle brackets; both paths must be
+the *physical* path of the live checkout):
+
+Claude Code driver, passed per launch as `--settings '<json>'` alongside
+`--permission-mode acceptEdits`:
+
+```json
+{
+  "permissions": { "deny": ["Edit(//<checkout>/**)"] },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false,
+    "filesystem": { "denyWrite": ["//<checkout>/**"] }
+  }
+}
+```
+
+pi driver, wrapped as `sandbox-exec -p '<profile>' pi …` (macOS Seatbelt; rules later in
+the profile win, which is what re-allows the shared git directory and then re-denies its
+hooks and config):
+
+```text
+(version 1)
+(allow default)
+(deny file-write* (subpath "<checkout>"))
+(allow file-write* (subpath "<checkout>/.git"))
+(deny file-write* (subpath "<checkout>/.git/hooks") (literal "<checkout>/.git/config"))
+```
+
+Codex needs nothing extra: `codex -C <worktree>` makes the worktree the working root and the
+sandbox's only writable root (its `workspace-write` policy), and it refuses a writable root
+with a symlinked path component rather than silently widening.
+
 **Three driver traps, all found by attack:**
 
 - **A harness with no sandbox is contained by nothing but manners.** The pi driver's first
