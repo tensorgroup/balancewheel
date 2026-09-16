@@ -4,11 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Balancewheel is a **private design repo, pre-extraction**. It holds the architecture,
-decision log, and extraction roadmap for a moderated multi-model review panel — code
-is being extracted here per the amended roadmap gate. The working reference
-implementation runs as the author's personal user-level tooling *outside* this repo
-and is being dogfooded; code is extracted here only once the roadmap's criteria hold.
+Balancewheel is a **public repo for a moderated multi-model review panel whose reference
+implementation is private**. It holds the design, the decision log, the extraction roadmap,
+and the setup a new user follows to build their own panel. The working implementation runs
+as the author's personal user-level tooling *outside* this repo and is being dogfooded;
+nothing is copied in from it, and code lands here only once the roadmap's criteria hold.
+
+That split is the reason the privacy firewall below is not a formality: **everything here is
+world-readable**, and the thing it describes lives in someone's home directory.
 
 There is now code (extraction started 2026-09-03; the roadmap records the amended gate).
 Python 3.9+ standard library only; no packages to install. Run the tests from the repo root:
@@ -43,6 +46,10 @@ OpenEscapement" section owns the install order and the reconcile rule.
   a verification checklist), deliberately **not** a dump of the private setup.
 - `docs/roadmap.md` — dogfooding goals, the four extraction criteria, the planned
   directory shape (`seats/`, `panel/`, `metrics/`, `packs/`), and non-goals.
+- `CHANGELOG.md` — what each tagged version pins and what moved between versions. A version
+  here is a contract (config and log schemas, `setup/paths.txt`, the setup prompt), not a
+  download: there is nothing to install, so semver applies to those interfaces, not to the
+  prose. Add to `[Unreleased]` in the same commit as any change that moves one of them.
 - `docs/handoffs/YYYY-MM-DD-topic.md` — a session record: what changed and why, the
   issues that cost time, what was deliberately left alone, and where to pick up. Point-in-time
   by nature, so it is never the source of truth — when a handoff and an owning doc disagree,
