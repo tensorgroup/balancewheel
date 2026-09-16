@@ -25,8 +25,7 @@ other's state.
 **Stale claim removed.** Three balancewheel docs said esc ships a `model-seats` example
 pack. It does not. A draft sits on esc's `feat/model-seats-pack` branch (2026-08-25) with
 a catalog naming since-retired stealth model ids, which this repo's rules forbid in
-interfaces. Docs now say planned, not shipped, and point at the branch as a draft to
-re-pin to seat names before landing.
+interfaces. Docs said planned, not shipped, for most of the day; that evening the pack was written clean on esc's main (see Where to pick up, item 3), and the docs now say shipped.
 
 **Model packs in esc.** `anthropic-models` refreshed to 0.2.0: Fable 5.1 preferred, Opus
 4.8 the Opus-tier choice, Sonnet 5 at its now-permanent $2/$10, Opus 5 moved to
@@ -75,8 +74,7 @@ panel at the design checkpoint, branch and PR. Mechanical steps are candidates f
   says expired 2026-08-31 (Anthropic made $2/$10 permanent in August). It now disagrees
   with the example packs on all of that and needs the same refresh, with sources; it
   has its own tests.
-- esc's `feat/model-seats-pack` branch: stale ids, three commits behind main. Re-pin to
-  seat names, rebase, then land; the docs already say where it goes.
+- esc's `feat/model-seats-pack` branch: superseded by the clean copy on main; not deleted here. Delete it when convenient.
 - esc's README still says the repo is private; that paragraph goes when it opens.
 - `CONTINUE.md` at esc's root: an untracked session note from an old cycle, not
   committed here.
@@ -85,5 +83,9 @@ panel at the design checkpoint, branch and PR. Mechanical steps are candidates f
 
 1. Dogfood the new-project prompt on the next real project; step 8 collects what the
    docs missed. Decide from that run what becomes `setup/new-project.sh`.
-2. Refresh esc's portal guidance to match the packs.
-3. Re-pin and land `model-seats`; then flip "planned" to "shipped" in both repos.
+2. ~~Refresh esc's portal guidance to match the packs.~~ Done later the same day (esc
+   commit `025d624`): Fable 5.1, Opus 4.8, Astra added; Sonnet 5 price corrected.
+3. ~~Re-pin and land `model-seats`; then flip "planned" to "shipped" in both repos.~~
+   Done later the same day: written clean on esc's main with the catalog keyed by
+   seat and the models as a dated roster; the branch can be deleted. What `packs/`
+   still owes is the export step that regenerates the pack from the log.

@@ -7,8 +7,10 @@ runtime updated the same day (pi since 2026-09-03, OpenCode before). Driver mode
 2026-09-15, separating the read-only seat guarantee from writable vendor failover;
 extended 2026-09-16 to same-vendor cheaper tiers, with the harness-billing and
 first-party-harness containment notes. The OpenEscapement hand-off corrected the same
-day: the `model-seats` pack is planned, not shipped, and the two tools' scopes are
-stated.*
+day: the two tools' scopes are stated, and the `model-seats` pack shipped in esc's
+examples that evening, keyed by seat with the models as a dated roster; the same-vendor
+blind seat and the on-demand seat pattern, in the reference roster since 2026-09-02,
+are documented in the architecture table below for the first time.*
 
 ## The problem
 
@@ -33,6 +35,21 @@ their disagreement into signal instead of noise.
 | Moderator / orchestrator | Primary agent (Claude Code session) | its own transcript + instruction files |
 | Seat A ("astra") | Codex CLI headless (`codex exec -p review`), pinned model, read-only sandbox | Codex session store (resumable) |
 | Seat B ("ox") | pi headless (`pi -p --tools read,grep,find,ls,bash -e guard.ts`), pinned OpenRouter model, in-process read-only guard | JSONL session file chosen by the wrapper (resumable) |
+| Seat C ("fable") | the moderator's own vendor CLI, headless, in a fresh session with none of the moderator's conversation; write tools disallowed plus a pre-tool guard | the CLI's own session store (resumable) |
+
+Seat C is the **same-vendor blind seat** (added to the reference roster 2026-09-02):
+the moderator's model family run without the moderator's context, so its round-1
+agreement is an independent signal rather than an echo. It is scored as a peer, and
+the moderator must not favor it: its findings are verified with the same rigor and
+logged under its own seat id, never folded into the moderator's verdict. A seat can
+also be **on demand** rather than default: the reference roster dropped a second
+same-vendor seat from the default panel on scoreboard evidence (one unique catch in its
+first thirteen findings, and the log's only refuted finding) and convenes it only for
+high-stakes targets, with a stated re-promotion criterion (five consecutive panels with
+at least one confirmed unique catch). Cross-examination is capped at two rounds, and
+each seat at a wall-clock cap (twelve minutes standard, thirty for a deep tier): a seat
+that does not return is logged as absent and the panel proceeds; a timeout never
+changes the roster.
 
 Each seat is wrapped in a ~60-line shell script with a uniform interface:
 
@@ -184,9 +201,10 @@ the policy states the reversal condition (≥10 logged disputes with >50% win sh
 That policy is exactly the kind of artifact
 [OpenEscapement](https://github.com/tensorgroup/openescapement) ships as a signed rule
 pack, rendered into a repo's instruction files and versioned like any other policy
-change. Its `anthropic-models` example pack has the shape (a catalog of models with a
-status and a note each); a `model-seats` pack carrying this policy generalized is the
-roadmap's planned `packs/` output, not something esc ships today. The seam between the
+change. esc's `examples/packs/model-seats` is this policy generalized: seats named by
+role, the substance bar, mandatory logging, evidence-cited demotion with re-promotion
+criteria, and the models behind the seats as a dated catalog roster rather than a rule.
+The roadmap's planned `packs/` is the export step that regenerates it from the log. The seam between the
 two is scope, not files: balancewheel configures the user's own agent under the home
 directory, esc governs the repo, and a pack rule wins over a moderator rule in the repo
 it is synced into (the README's "Working with OpenEscapement" section).

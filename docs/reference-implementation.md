@@ -9,7 +9,8 @@ get right, and the traps. Written 2026-08-26 against the versions noted; updated
 (see the Codex section) and to describe the ox seat's runtime move from OpenCode to pi
 (2026-09-03); updated 2026-09-16 with the driver-mode section (which harness may run
 which model at flat rate, first-party-harness containment, two new traps) and the pi
-version bump to 0.85.x it required.*
+version bump to 0.85.x it required; the cast table gained the same-vendor blind seat
+and the on-demand second seat the same day (both in the roster since 2026-09-02).*
 
 ## The cast
 
@@ -18,6 +19,8 @@ version bump to 0.85.x it required.*
 | Moderator / primary | Claude Code (CLI) with the [superpowers](https://github.com/obra/superpowers) plugin (6.x) as the workflow skeleton | Claude (Fable/Opus tier) | Anthropic subscription |
 | Planning + review seat ("astra") | Codex CLI ≥0.153 | `gpt-6-astra`, xhigh reasoning (was `gpt-5.6-sol`, seat "sol", until 2026-09-11) | OpenAI Pro subscription (CLI OAuth) |
 | Planning seat ("ox") | pi 0.85.x (0.74.x until 2026-09-16; was OpenCode ≥1.18 until 2026-09-03) | `z-ai/glm-5.3-flash` via OpenRouter (was `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
+| Same-vendor blind seat ("fable") | Claude Code headless (`claude -p`), fresh session, write tools disallowed plus a pre-tool guard hook | `claude-fable-5-1` (since 2026-09-02) | Claude subscription (flat) |
+| On-demand second same-vendor seat ("opus") | same mechanism | `claude-opus-4-8` | Claude subscription (flat); off the default roster since 2026-09-02 on scoreboard evidence |
 | Blind one-shot fallback | plain HTTPS (`chat/completions`) | same OpenRouter model | OpenRouter API key |
 
 Why these: each vendor's *own* CLI gives the seat repo exploration, native session

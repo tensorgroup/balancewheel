@@ -40,13 +40,12 @@ commands, launchd sync, local dashboard). Goals of this phase:
   backup/restore scripts around it.
 - `packs/` — seat policies exported as OpenEscapement rule packs (the governance
   hand-off: balancewheel generates and justifies policy; esc distributes it). The first
-  pack, `model-seats`, carries the roles per target kind, the substance bar, and each
-  seat's re-promotion criteria as rule fragments, with the dashboard numbers cited in
-  its changelog; it is mirrored into esc's `examples/packs/` once it exists, and until
-  then no doc in either repo should say esc ships it. A first draft is on esc's
-  `feat/model-seats-pack` branch (2026-08-25); its catalog names since-retired stealth
-  model ids, which this repo's rules forbid in interfaces, so it needs re-pinning to seat
-  names before it lands. A pack that also carries the
+  pack, `model-seats`, shipped in esc's `examples/packs/` on 2026-09-16, written by hand
+  from this repo's seat policy: duties per seat, the substance bar, wall-clock
+  caps, mandatory logging, and a re-promotion criterion for any seat demoted on evidence, with the models behind
+  the seats a dated catalog roster (the 2026-08-25 draft that named stealth ids was
+  superseded). What `packs/` still owes is the export step: regenerate that pack's
+  catalog and changelog from the log and the dashboard numbers instead of by hand. A pack that also carries the
   panel protocol as a skill makes the user-level copy redundant in governed repos; esc
   already reports that overlap as an informational duplicate.
 - Knowledge layer stays out of scope for v1 — it's separable, and the panel is the

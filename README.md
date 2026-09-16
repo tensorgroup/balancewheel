@@ -316,8 +316,10 @@ never edits a repo's instruction files.
   pack is the delivery. esc's `examples/packs/` already carries model packs for
   Anthropic, OpenAI, and Z.ai, the vendors behind the reference setup's seats, each
   status with its reason and, where it departs from the vendor's own default, the
-  condition that would reverse it. A `model-seats` pack in that shape
-  is the planned `packs/` output here.
+  condition that would reverse it, and a `model-seats` pack that is this repo's seat
+  policy in pack form: seats named by role, the models behind them a dated config
+  detail. The planned `packs/` directory here is the export step that regenerates it
+  from the log.
 
 **Install balancewheel first, then esc per repo.** That is the recommended order, not a
 dependency: neither tool reads the other's state. Balancewheel is the working
@@ -333,9 +335,8 @@ PR against the pack.
 pack is the form that policy takes once it applies to more than one person. The planned
 `packs/` directory exports seat policy in esc's rule-pack shape (roles per target kind,
 the substance bar, the re-promotion criteria), with the dashboard numbers cited in the
-pack's changelog and the version bump reviewed like any policy change. esc's
-`anthropic-models` example pack is that shape for one vendor's model guidance; a
-`model-seats` pack is planned, not shipped. Once a pack carries the panel protocol as a
+pack's changelog and the version bump reviewed like any policy change. esc's `model-seats` example pack is that policy in pack form today, written by hand;
+the export step that regenerates it from the log is what `packs/` still owes. Once a pack carries the panel protocol as a
 skill, keep the pack's copy in each repo and drop your user-level one, so the version
 agents run is the signed one.
 
