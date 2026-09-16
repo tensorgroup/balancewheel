@@ -309,5 +309,29 @@ class Cli(unittest.TestCase):
             self.assertNotEqual(watches[0]["id"], watches[1]["id"])
 
 
+class PanelHelpExample(unittest.TestCase):
+    """The worked example in `log.py panel --help` must actually run.
+
+    It is the only place the stdin record shape is written down, so a cold user
+    copies it verbatim. The first version shipped with placeholder seat ids that no
+    config contains, and every paste of it was rejected — caught by running it, not
+    by reading it. This keeps it honest against the config the epilog names.
+    """
+
+    def _example(self):
+        epilog = logmod.PANEL_EPILOG
+        start = epilog.index("echo '") + len("echo '")
+        return json.loads(epilog[start:epilog.rindex("'")])
+
+    def test_example_is_valid_json(self):
+        self.assertIn("findings_detail", self._example())
+
+    def test_example_validates_against_the_shipped_example_config(self):
+        import config as cfg
+        example_config = str(HERE.parent / "balancewheel.example.json")
+        rec = logmod.validate_panel(self._example(), cfg.load_config(example_config), force=False)
+        self.assertEqual(rec["target"], "PR 42")
+
+
 if __name__ == "__main__":
     unittest.main()

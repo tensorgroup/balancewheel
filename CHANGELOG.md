@@ -13,6 +13,18 @@ not against the prose.
 
 ## [Unreleased]
 
+### Fixed
+
+- `log.py panel` and `log.py amend` read their record as JSON on stdin, which was
+  documented nowhere — not in `--help`, not in any doc a new user reads — while the
+  setup prompt's step 8 tells their agent to log a panel. Both subcommands now describe
+  the stdin contract, `panel --help` carries the full record shape and a worked example,
+  and the top-level help labels both. Found by cold-starting the setup from a fresh
+  clone: building a valid record took four rejections, guided only by error messages.
+- A regression test now validates that worked example against the shipped
+  `balancewheel.example.json`. The first version of it used placeholder seat ids no
+  config contains, so every copy-paste would have been rejected.
+
 ## [0.1.0] — 2026-09-16
 
 First tagged version. Everything below arrived across 31 commits from 2026-08-25, none of it

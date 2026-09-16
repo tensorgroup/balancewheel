@@ -26,6 +26,37 @@ DETAIL_REQUIRED = ("seat", "group", "title", "severity", "verdict")
 DISPUTE_REQUIRED = ("summary", "challenger", "proposals", "winner", "reason")
 REJECT = (ValueError, TypeError)  # malformed input; TypeError still covers a shape validation missed
 
+PANEL_EPILOG = """\
+required fields:
+  target                what was reviewed
+  kind                  one of the configured roles (see `log.py config`)
+  seats                 list of seat ids that took part; each must be a seat in
+                        your config, unless --force (an on-demand seat)
+  immediate_agreement   true if round 1 agreed with no cross-examination
+  findings              per seat: {total, confirmed, refuted, unique}
+  findings_detail       one entry per finding, each with:
+                          seat, group, title, severity, verdict
+                        group ties the same finding across seats: a finding
+                        alone in its group is that seat's unique catch.
+                        severity: critical | major | minor | nit
+                        verdict:  confirmed | refuted | partial | dropped
+
+optional: rounds, disputes, findings_raw, findings_after_triage, tier, absent
+
+`findings` is cross-checked against `findings_detail` and a disagreement is
+rejected — unique counts are computed from the detail, never self-reported.
+A finding alone in its group but refuted is not a unique catch.
+
+example (seat ids are the shipped example config's; use your own):
+  echo '{"target":"PR 42","kind":"review","seats":["astra","ox"],
+         "immediate_agreement":false,
+         "findings":{"astra":{"total":1,"confirmed":1,"refuted":0,"unique":1},
+                     "ox":{"total":0,"confirmed":0,"refuted":0,"unique":0}},
+         "findings_detail":[{"seat":"astra","group":"g1","title":"off-by-one",
+                             "severity":"major","verdict":"confirmed"}]}' \\
+    | log.py panel
+"""
+
 
 def compute_counts(findings_detail):
     groups = {}
@@ -344,11 +375,25 @@ def main(argv=None):
     u.add_argument("--dir", required=True); u.add_argument("--duration", type=int, required=True)
     u.add_argument("--ok", required=True, choices=["true", "false"])
     u.add_argument("--model", default=None); u.add_argument("--reason", default=None)
-    p = sub.add_parser("panel"); p.add_argument("--force", action="store_true")
+    # panel and amend take their record as JSON on stdin. That is invisible from a usage
+    # line with no positional arguments, so the shape is spelled out here: a cold user's
+    # agent runs --help, not the source.
+    p = sub.add_parser(
+        "panel", help="log a panel record (JSON on stdin)",
+        description="Append a panel record, read as JSON on stdin.",
+        epilog=PANEL_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--force", action="store_true",
+                   help="log despite a findings/findings_detail disagreement")
     sub.add_parser("check"); sub.add_parser("watches")
     r = sub.add_parser("resolve"); r.add_argument("id")
     r.add_argument("--status", default="resolved", choices=list(store.WATCH_STATUSES)); r.add_argument("--note", default="")
-    a = sub.add_parser("amend"); a.add_argument("--panel-id", required=True); a.add_argument("--force", action="store_true")
+    a = sub.add_parser(
+        "amend", help="amend a logged panel (JSON patch on stdin)",
+        description="Append a panel-amend record, read as a JSON object of fields to "
+                    "change on stdin. The log is append-only; the amendment is folded "
+                    "in on load rather than rewriting the original line.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    a.add_argument("--panel-id", required=True); a.add_argument("--force", action="store_true")
     args = ap.parse_args(argv)
     try:
         config = cfgmod.load_config()
