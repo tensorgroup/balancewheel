@@ -6,7 +6,9 @@
 store), `watches.py` (roster watches), `log.py` (the logger CLI), and `dashboard.py` (the
 dashboard generator). Tests live in `tests/`, with synthetic data in `tests/fixtures/`. Prose
 lives in `README.md` and `docs/`; `docs/superpowers/` holds the specs and plans behind the
-extraction. `balancewheel.example.json` is the annotated config example.
+extraction. `balancewheel.example.json` is the annotated config example. `setup/` holds `paths.txt` (the
+home-directory paths a setup touches) and the `backup.sh` / `restore.sh` pair around it;
+`tests/test_setup_scripts.py` runs both against a temporary `HOME`.
 
 This is a **design repo, pre-extraction**: the reference implementation runs outside this repo
 and is being dogfooded, and code lands here only once the four criteria in `docs/roadmap.md`

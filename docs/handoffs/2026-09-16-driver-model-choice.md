@@ -104,6 +104,8 @@ are on neither the remote nor the local base.
 | `docs/architecture.md` | Same-vendor tier, harness billing, first-party containment paragraph; preamble dated |
 | `docs/roadmap.md` | Non-goal widened; vendor-churn goal extended |
 | `.gitignore` | Tool-litter patterns |
+| `setup/paths.txt`, `setup/backup.sh`, `setup/restore.sh`, `tests/test_setup_scripts.py` | New: the home-directory paths a setup touches, timestamped backup, reversible restore, tests against a temp `HOME` |
+| `README.md` | Rewritten: how it works, the plan, install map + dependencies, setup prompt, use, maintain |
 | `docs/handoffs/2026-09-16-driver-model-choice.md` | This file |
 
 All three driver harnesses were attack-tested in both directions during this session;

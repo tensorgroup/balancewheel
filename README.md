@@ -79,6 +79,54 @@ Planned shape: `seats/` (wrapper generator), `panel/` (the protocol as instructi
 templates — the moderator stays whatever agent you already run), `metrics/` (here now),
 `packs/` (seat policy exported as OpenEscapement rule packs).
 
+## What gets installed, and where
+
+Nothing is installed system-wide and nothing runs as a service. A setup edits or creates
+a handful of files under your home directory, and `setup/paths.txt` is the single list of
+them — the backup and restore scripts read the same file. Credentials are on purpose not
+on it: the setup reads them and never writes them, and a backup that copies tokens around
+is a liability. In the reference setup the paths are:
+
+| Path | What lives there | Setup does |
+|---|---|---|
+| `~/.config/balancewheel/config.json` | seats, state dir, watches | creates from `balancewheel.example.json` |
+| `~/.claude/CLAUDE.md`, `~/.claude/settings.json` | moderator rules, permissions | appends / edits |
+| `~/.claude/commands/`, `~/.claude/skills/` | the panel and seat slash commands | creates files |
+| `~/.claude/scripts/` | seat wrappers, guards, driver launcher | creates files |
+| `~/.claude/state/` | metrics JSONL, session tables, seat agent dirs, dashboard | creates; grows; not backed up (it is the setup's own output) |
+| `~/.codex/config.toml`, `~/.codex/review.config.toml` | default profile, read-only review profile | edits / creates |
+| `~/.pi/agent/settings.json`, `~/.pi/agent/models.json` | pi defaults and model pins | edits |
+| `~/.config/git/ignore` | tool-litter patterns | appends |
+| `~/.codex/auth.json`, `~/.pi/agent/auth.json`, your secrets file | credentials | reads only; never written, never backed up |
+
+**Dependencies** (install and log in yourself; the setup does not do it for you):
+
+- A primary agent: the reference setup uses [Claude Code](https://code.claude.com) with the
+  superpowers plugin.
+- One or more seat harnesses: [Codex CLI](https://github.com/openai/codex) on a ChatGPT
+  subscription, and/or [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+  on Node 22.19 or newer (pi can also use the ChatGPT subscription; a Claude subscription
+  through pi bills per token — see the rebuild guide).
+- An OpenRouter key if you want a cheap metered seat.
+- Python 3.9+ (standard library only) for `metrics/` and the tests; git and `gh` for the
+  branch-and-PR flow; `sandbox-exec` (ships with macOS) if pi is used as a driver;
+  shellcheck optional, for the wrappers.
+
+**Back up first, restore if you want out:**
+
+```sh
+setup/backup.sh              # copies every existing listed path to ~/.balancewheel/backups/<UTC stamp>/
+setup/backup.sh --dry-run    # shows what would be copied
+setup/restore.sh --list      # backups on disk and what each holds
+setup/restore.sh             # puts the latest backup back (after backing up the current state first)
+setup/restore.sh <stamp>     # a specific one; --dry-run shows the plan
+```
+
+A restore is reversible because it snapshots the current state before touching anything.
+It only restores paths that existed when the backup was taken; a file the setup *created*
+is reported and left for you to delete, so nothing disappears that the script did not
+first copy. Set `BALANCEWHEEL_BACKUP_ROOT` to keep backups elsewhere.
+
 ## Getting started
 
 You need: a primary coding agent you already use, at least one other vendor's CLI agent
@@ -89,33 +137,36 @@ primary agent do the assembly. Paste this into it, from the root of this repo:
 ```text
 Set up a balancewheel review panel for me.
 
-0. If my primary agent is Claude Code and the superpowers plugin is not installed,
+0. Run setup/backup.sh first and show me the backup directory it printed; it copies
+   every file in setup/paths.txt that exists before you change anything, so
+   setup/restore.sh can put my originals back.
+1. If my primary agent is Claude Code and the superpowers plugin is not installed,
    install it (`/plugin install superpowers@claude-plugins-official`) — the panel checkpoints attach to its
    brainstorming, writing-plans, requesting-code-review and systematic-debugging skills,
    and its worktree-plus-PR flow is what drivers assume.
-1. Read README.md, docs/architecture.md, docs/reference-implementation.md and
+2. Read README.md, docs/architecture.md, docs/reference-implementation.md and
    docs/roadmap.md in full. The two rules that are never relaxed: seats are enforced
    read-only and verified by attack; first rounds are blind and only disputed claims
    are relayed.
-2. Ask me which vendor CLIs I have installed and logged in (for example Codex CLI, pi,
+3. Ask me which vendor CLIs I have installed and logged in (for example Codex CLI, pi,
    Gemini CLI), which subscription or key each one uses, and which model each should run.
    Warn me if a route bills per token behind a subscription login — the rebuild guide's
    driver-mode section explains which ones do.
-3. For each seat, write a wrapper that implements the interface in the guide's "Seat
+4. For each seat, write a wrapper that implements the interface in the guide's "Seat
    wrappers" section: new or resumed session, per-directory session persistence,
    read-only enforcement in every layer the guide lists for that CLI, a private scratch
    TMPDIR, a wall-clock cap, and a `usage` record appended via metrics/log.py. Pin the
    model in exactly one config line per seat.
-4. Copy balancewheel.example.json to my config location, fill in the seats, and run
+5. Copy balancewheel.example.json to my config location, fill in the seats, and run
    `python3 metrics/log.py config` to validate it.
-5. Run the verification checklist in the guide against every seat, fresh and resumed,
+6. Run the verification checklist in the guide against every seat, fresh and resumed,
    and show me the evidence (the refusal text and the unchanged directory), not the
    model's own description of what it did.
-6. Write me a moderator instruction file for the panel protocol (shared brief, blind
+7. Write me a moderator instruction file for the panel protocol (shared brief, blind
    round, dispute relay, substance bar, verification, the logging step) and run one
    panel on a file with two planted bugs so I can see the whole loop, including the
    record it appends and `python3 metrics/dashboard.py` rendering it.
-7. Keep a list of everything these docs did not tell you. I will send it upstream.
+8. Keep a list of everything these docs did not tell you. I will send it upstream.
 ```
 
 Nothing in this repo assumes a particular vendor. The reference setup names its own
@@ -160,4 +211,5 @@ names live in config: the first seat model was retired by its provider within a 
 - **Date the docs.** Each doc's preamble says when it was written and what changed
   since; session handoffs under `docs/handoffs/` are point-in-time and the owning doc
   wins when they disagree.
-- **Run the tests** from the repo root: `python3 -m unittest discover -s tests -v`.
+- **Run the tests** from the repo root: `python3 -m unittest discover -s tests -v`. They
+  cover `metrics/` and exercise the backup and restore scripts against a temporary home.

@@ -35,6 +35,9 @@ commands, launchd sync, local dashboard). Goals of this phase:
   bar, logging schema) rather than code: the moderator is whatever primary agent the
   user already runs.
 - `metrics/` — JSONL schema, validator, dashboard generator.
+- `setup/` — *(landed 2026-09-16, ahead of the gate: it is install hygiene, not the
+  seat implementation)* the list of home-directory paths a setup touches, and the
+  backup/restore scripts around it.
 - `packs/` — seat policies exported as OpenEscapement rule packs (the governance
   hand-off: balancewheel generates and justifies policy; esc distributes it).
 - Knowledge layer stays out of scope for v1 — it's separable, and the panel is the

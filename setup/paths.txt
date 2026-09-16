@@ -1,0 +1,29 @@
+# Files and directories a balancewheel setup creates or edits in your home directory.
+# One path per line; "~" is your home. Directories are copied recursively.
+# This is the single source for the README table, setup/backup.sh and setup/restore.sh.
+#
+# Credentials are deliberately NOT listed (~/.codex/auth.json, ~/.pi/agent/auth.json,
+# secrets files, keychain): the setup reads them and never writes them, and a backup that
+# copies tokens around is a liability, not a safety net.
+
+# balancewheel's own config (created from balancewheel.example.json)
+~/.config/balancewheel/config.json
+
+# Primary agent (Claude Code in the reference setup): rules, permissions, commands, wrappers
+~/.claude/CLAUDE.md
+~/.claude/settings.json
+~/.claude/commands
+~/.claude/skills
+~/.claude/scripts
+
+# Codex CLI: default profile and the read-only review profile
+~/.codex/config.toml
+~/.codex/review.config.toml
+~/.codex/AGENTS.md
+
+# pi: defaults and model pins (auth.json intentionally absent)
+~/.pi/agent/settings.json
+~/.pi/agent/models.json
+
+# git: global excludes for tool litter
+~/.config/git/ignore
