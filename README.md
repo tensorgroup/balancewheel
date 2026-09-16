@@ -1,3 +1,5 @@
+<p align="center"><img src="balancewheel-logo.svg" alt="Balancewheel logo" width="220"></p>
+
 # Balancewheel
 
 **Moderated multi-model agent collaboration, with the receipts to tune it.**
