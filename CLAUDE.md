@@ -27,7 +27,9 @@ justifies* seat policy; esc *ships* that policy as a signed rule pack (its
 
 ## The docs and what each one owns
 
-- `README.md` — the pitch and the six core ideas on one screen. Keep it that short.
+- `README.md` — the pitch, the six core ideas, an outline of how it works, the plan,
+  a paste-in setup prompt for a new user's own agent, and the use/maintain outline. It
+  is the entry point a second person builds from; details stay in `docs/`.
 - `docs/architecture.md` — the design write-up: problem, three-peers/one-moderator
   topology, the panel protocol, the metrics loop, the knowledge layer, lessons learned.
 - `docs/reference-implementation.md` — the working example with tools, versions, and
