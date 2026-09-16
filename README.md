@@ -89,13 +89,13 @@ is a liability. In the reference setup the paths are:
 
 | Path | What lives there | Setup does |
 |---|---|---|
-| `~/.config/balancewheel/config.json` | seats, state dir, watches | creates from `balancewheel.example.json` |
+| `~/.config/balancewheel/config.json` | seats, state dir, watches | creates from `balancewheel.example.json` (a setup built before `metrics/` was extracted may still have these paths built into its own scripts instead) |
 | `~/.claude/CLAUDE.md`, `~/.claude/settings.json` | moderator rules, permissions | appends / edits |
 | `~/.claude/commands/`, `~/.claude/skills/` | the panel and seat slash commands | creates files |
 | `~/.claude/scripts/` | seat wrappers, guards, driver launcher | creates files |
 | `~/.claude/state/` | metrics JSONL, session tables, seat agent dirs, dashboard | creates; grows; not backed up (it is the setup's own output) |
 | `~/.codex/config.toml`, `~/.codex/review.config.toml` | default profile, read-only review profile | edits / creates |
-| `~/.pi/agent/settings.json`, `~/.pi/agent/models.json` | pi defaults and model pins | edits |
+| `~/.pi/agent/settings.json`, `~/.pi/agent/models.json` | pi defaults and model pins | edits — *only if pi runs from its default agent dir; the reference setup gives each pi seat its own agent dir under the state dir, so these stay untouched there* |
 | `~/.config/git/ignore` | tool-litter patterns | appends |
 | `~/.codex/auth.json`, `~/.pi/agent/auth.json`, your secrets file | credentials | reads only; never written, never backed up |
 
@@ -121,6 +121,9 @@ setup/restore.sh --list      # backups on disk and what each holds
 setup/restore.sh             # puts the latest backup back (after backing up the current state first)
 setup/restore.sh <stamp>     # a specific one; --dry-run shows the plan
 ```
+
+The backup reports listed paths that do not exist as "absent"; that is normal and means
+the setup either has not created them yet or, as above, keeps that state elsewhere.
 
 A restore is reversible because it snapshots the current state before touching anything.
 It only restores paths that existed when the backup was taken; a file the setup *created*

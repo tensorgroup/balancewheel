@@ -21,7 +21,10 @@
 ~/.codex/review.config.toml
 ~/.codex/AGENTS.md
 
-# pi: defaults and model pins (auth.json intentionally absent)
+# pi: defaults and model pins, if pi runs from its default agent dir. A setup that gives
+# each pi seat its own agent dir (PI_CODING_AGENT_DIR under the state dir, as the
+# reference setup does) never touches these; they then show as "absent", which is fine.
+# (auth.json intentionally absent from this list)
 ~/.pi/agent/settings.json
 ~/.pi/agent/models.json
 
