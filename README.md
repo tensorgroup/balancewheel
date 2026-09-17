@@ -368,3 +368,7 @@ agents run is the signed one.
   wins when they disagree.
 - **Run the tests** from the repo root: `python3 -m unittest discover -s tests -v`. They
   cover `metrics/` and exercise the backup and restore scripts against a temporary home.
+
+## License
+
+[Apache-2.0](LICENSE). Copyright 2026 Tensor Group and William Zajac; the `NOTICE` file carries the attribution that downstream copies must keep.
