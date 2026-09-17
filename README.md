@@ -371,4 +371,4 @@ agents run is the signed one.
 
 ## License
 
-[Apache-2.0](LICENSE). Copyright 2026 Tensor Group and William Zajac; the `NOTICE` file carries the attribution that downstream copies must keep.
+[Apache-2.0](LICENSE). Copyright 2026 Tensor Group, LLC and William Zajac; the `NOTICE` file carries the attribution that downstream copies must keep.
