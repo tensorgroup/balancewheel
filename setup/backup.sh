@@ -28,6 +28,45 @@ while [ $# -gt 0 ]; do
 done
 [ -f "$paths_file" ] || { echo "backup.sh: no such path list: $paths_file" >&2; exit 2; }
 
+# The static list cannot name two things, so they are resolved at run time and appended:
+#
+#   1. The metrics log. It is the one file a setup PRODUCES that cannot be regenerated —
+#      the append-only record the whole scoreboard rests on — and its location is a config
+#      setting, so no fixed path covers everyone. The rest of the state dir is deliberately
+#      still excluded: dashboards and caches rebuild, and seat agent dirs hold credentials.
+#   2. ~/.config/balancewheel/paths.local.txt, a user's own additions. A setup that predates
+#      the config loader, or one that keeps state somewhere unusual, needs a way to be backed
+#      up without editing a tracked file.
+#
+# Resolution never fails the backup: no config, no python3, no local list — just fewer paths.
+effective="$(mktemp "${TMPDIR:-/tmp}/bw-paths.XXXXXX")"
+trap 'rm -f "$effective"' EXIT
+cat "$paths_file" > "$effective"
+
+add_path() {  # append unless the list already names it
+  local p="$1" existing
+  [ -n "$p" ] || return 0
+  existing="$(sed 's/#.*//; s/^[[:space:]]*//; s/[[:space:]]*$//' "$effective")"
+  case $'\n'"$existing"$'\n' in *$'\n'"$p"$'\n'*) return 0 ;; esac
+  printf '%s\n' "$p" >> "$effective"
+}
+
+if command -v python3 >/dev/null 2>&1 && [ -f "$here/../metrics/log.py" ]; then
+  add_path "$( { python3 "$here/../metrics/log.py" config --json 2>/dev/null || true; } \
+    | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("metrics_log", "") or "")
+except Exception: pass' 2>/dev/null || true)"
+fi
+
+local_list="${BALANCEWHEEL_LOCAL_PATHS:-$HOME/.config/balancewheel/paths.local.txt}"
+if [ -f "$local_list" ]; then
+  while IFS= read -r l || [ -n "$l" ]; do
+    l="${l%%#*}"; l="${l#"${l%%[![:space:]]*}"}"; l="${l%"${l##*[![:space:]]}"}"
+    add_path "$l"
+  done < "$local_list"
+fi
+paths_file="$effective"
+
 root="${BALANCEWHEEL_BACKUP_ROOT:-$HOME/.balancewheel/backups}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 # Never reuse an existing directory. The stamp has one-second resolution, and a restore takes

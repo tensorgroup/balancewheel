@@ -13,6 +13,19 @@ not against the prose.
 
 ## [Unreleased]
 
+### Added
+
+- `setup/backup.sh` now covers **the metrics log**, resolved from the config's `metrics_log`
+  rather than a fixed path. It is the one file a setup produces that cannot be regenerated,
+  and it had no cover at all: excluded from `paths.txt` as "the setup's own output", and
+  typically under a state directory a user's dotfiles repo ignores. The rest of the state
+  directory stays excluded on purpose — dashboards and indexes rebuild from the log, and
+  seat agent dirs hold credentials a backup must not copy.
+- `~/.config/balancewheel/paths.local.txt` (or `$BALANCEWHEEL_LOCAL_PATHS`): your own paths,
+  appended to the tracked list. A setup predating the config loader, or one keeping state
+  somewhere unusual, can now be protected without editing a tracked file. Each backup stores
+  the effective list it used, so restores inherit the additions.
+
 ### Fixed
 
 - **`setup/restore.sh` could destroy the backup it was restoring from.** Backup directories

@@ -5,6 +5,15 @@
 # Credentials are deliberately NOT listed (~/.codex/auth.json, ~/.pi/agent/auth.json,
 # secrets files, keychain): the setup reads them and never writes them, and a backup that
 # copies tokens around is a liability, not a safety net.
+#
+# Two things backup.sh adds that no fixed list can name:
+#   - The metrics log, read from your config's "metrics_log". It is the one file a setup
+#     PRODUCES that cannot be regenerated, and its location is configurable. The rest of
+#     the state dir stays out: dashboards and search indexes rebuild from it, and seat
+#     agent dirs hold credentials.
+#   - Anything in ~/.config/balancewheel/paths.local.txt, your own additions, same format.
+#     Use it for a setup that predates the config loader or keeps state somewhere unusual,
+#     so you never have to edit this tracked file to protect your own machine.
 
 # balancewheel's own config (created from balancewheel.example.json)
 ~/.config/balancewheel/config.json
