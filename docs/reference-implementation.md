@@ -10,7 +10,8 @@ get right, and the traps. Written 2026-08-26 against the versions noted; updated
 (2026-09-03); updated 2026-09-16 with the driver-mode section (which harness may run
 which model at flat rate, first-party-harness containment, two new traps) and the pi
 version bump to 0.85.x it required; the cast table gained the same-vendor blind seat
-and the on-demand second seat the same day (both in the roster since 2026-09-02).*
+and the on-demand second seat the same day (both in the roster since 2026-09-02); updated
+2026-09-21 with the seat-brief flag and the effort knob on the Claude seat (see Seat wrappers).*
 
 ## The cast
 
@@ -168,13 +169,38 @@ read-only or continuity hole the pi setup closes by construction.
 
 ## Seat wrappers (the whole integration surface)
 
-One ~60-line shell script per seat, uniform interface `seat.sh [-r] [-d dir] "prompt"`:
+One ~60-line shell script per seat, uniform interface `seat.sh [-b] [-r] [-d dir] "prompt"`:
 self-source credentials → absolutize `-d` → make a private scratch dir under the
 system temp root and export it as `TMPDIR` → run the CLI from it →
 persist session id per target directory (tsv) → append a `usage` event to the metrics
 JSONL → exit with the CLI's status. The moderator (Claude Code) drives seats through
 slash-command instructions that carry the panel protocol and the mandatory
 outcome-logging step.
+
+**The seat brief (`-b`, 2026-09-21).** One shared script builds it; each wrapper calls it only
+when starting a *new* session and replaces the prompt with brief + reading rule + task (a
+resumed session already carries it). What goes in, and the limits that keep it useful:
+- the head of the project's instruction file (about 80 lines) and pointers to the
+  architecture doc and README — pointers, not contents;
+- `git diff --stat` and `git diff` against `merge-base(base, HEAD)`, which includes
+  uncommitted edits; capped (a few thousand lines) with a note to open the rest from the stat;
+- untracked files, listed, since the diff can't show them;
+- "direct callers": `git grep -l -w` on each touched file's stem, skipping generic stems
+  (`index`, `utils`, `types`, …) and anything under four characters, a handful per file.
+  A starting point, not a call graph — say so in the brief;
+- base: an explicit override, else the first of the integration branch's remote, the default
+  branch's remote, the local default branch.
+Cache it keyed on directory, both commit ids, and a hash of the working-tree diff plus the
+untracked list, so an edit rebuilds it and a re-run doesn't. Two traps: on a case-insensitive
+filesystem, probing `ARCHITECTURE.md` *and* `docs/architecture.md`-style variants will list the
+same file twice — probe one spelling per location; and resolve the base *before* computing
+the cache key, or a moved base branch serves a stale brief. Verify it the cheap way: ask each
+seat, fresh with `-b`, a question only the brief answers ("what command runs the tests?"),
+and check all of them answer it.
+
+**Effort.** The Claude seat's CLI takes an effort level per run; the wrapper defaults it to
+`high` and the deep tier raises it to `max`, the same way it raises the other seats'
+reasoning. Before this the Claude seat had no knob and ran at the CLI's default.
 
 **Temp-dir hygiene (seats and drivers alike).** Every vendor CLI extracts scratch files into
 `$TMPDIR` — Codex unpacks multi-megabyte native libraries there, Node writes its compile

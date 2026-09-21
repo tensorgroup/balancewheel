@@ -10,7 +10,10 @@ first-party-harness containment notes. The OpenEscapement hand-off corrected the
 day: the two tools' scopes are stated, and the `model-seats` pack shipped in esc's
 examples that evening, keyed by seat with the models as a dated roster; the same-vendor
 blind seat and the on-demand seat pattern, in the reference roster since 2026-09-02,
-are documented in the architecture table below for the first time.*
+are documented in the architecture table below for the first time. Updated 2026-09-21: the
+shared brief became a pre-built, cached artifact every seat starts from (protocol step 1),
+with the finding that resuming a session is not a cache, and the stand-in rule for a seat
+whose subscription window is exhausted.*
 
 ## The problem
 
@@ -54,7 +57,8 @@ changes the roster.
 Each seat is wrapped in a ~60-line shell script with a uniform interface:
 
 ```
-seat.sh [-r] [-d dir] "prompt"     # -r resumes this directory's saved session
+seat.sh [-b] [-r] [-d dir] "prompt"   # -b: start a new session from the pre-built brief
+                                      # -r: resume this directory's saved session
 ```
 
 Wrapper responsibilities: self-source credentials, absolutize the target dir, run the
@@ -141,6 +145,17 @@ usually a branch diff or a plan file, which is what the brief points at.
 1. **One shared brief.** The moderator frames the target (a branch diff, a plan file,
    a design question), the stack, the focus dimensions, and the required output shape
    (findings with file:line and severity; "no significant findings" allowed).
+   **The code context is built once, not discovered per seat.** Left alone, a fresh seat
+   spends most of its first round surveying the repository before it reads the change —
+   and every seat does it again, every panel. So the wrapper can prepend a pre-built
+   *seat brief* to a new session: the head of the project's instruction file, the diff
+   against the merge-base (uncommitted edits included) with its stat, untracked files,
+   and the likely callers of each touched file, followed by a reading rule — open a file
+   only to verify a claim, follow a caller, or read what the task names; don't survey.
+   It is generated once per (directory, base, HEAD, working-tree diff) and cached, so
+   every seat gets the same bytes. That keeps round 1 blind: the brief is the
+   moderator's framing of the target, not another seat's output. A plan or design target
+   gets the orientation with no diff section.
 2. **Round 1 — independent.** Both seats run in parallel with the same brief and no
    sight of each other. Independence first: agreement between blind reviewers is the
    strongest signal the panel produces. Each seat gets a hard wall-clock cap, enforced
@@ -232,6 +247,21 @@ knowledge. Rules that keep that sane:
   vendors' own stores (Codex sessions, pi session files) are more reliable than any
   bridge you'd build — and a store the wrapper can *address* (pi's `--session <path>`)
   beats one it has to scrape (OpenCode's SQLite by directory).
+- **…but resuming is not a cache.** The tempting fix for "every review re-reads the
+  repo" is to resume the last session instead of starting fresh. It doesn't save what
+  it looks like it saves: a resumed session re-sends its whole transcript, and once the
+  vendor's prompt cache has expired — minutes to an hour — that history is billed (or
+  drawn from a subscription window) at full input price again, so resuming yesterday's
+  review can cost *more* than a fresh read. It also spends the blind first read, and
+  with one worktree per branch a per-directory session rarely exists anyway. Use
+  continuity for cross-examination inside the cache window; shrink the fresh read with a
+  pre-built brief instead.
+- **A capped seat gets a stand-in, not a gap.** When a seat's subscription window runs
+  out, a same-vendor cheaper tier can take the seat for that stretch, run through the
+  same wrapper, recorded under *its own* seat id (the capped seat marked absent with the
+  reason), so the scoreboard never credits one model with another's findings. Thinking
+  depth is most of what a reasoning seat draws, so give every seat an effort setting in
+  its wrapper — moderate by default, raised only in the deep tier.
 - **Stealth/preview models are load-bearing quicksand.** Pin them in one config line
   you expect to change; never bake them into interfaces.
 - **Vendor CLIs churn.** A profile format broke mid-build; a config table silently

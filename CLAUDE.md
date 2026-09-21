@@ -62,7 +62,7 @@ tool versions; when updating one, update the date and note what changed since.
 
 A primary agent (Claude Code) acts as **moderator**; other vendors' own repo-aware CLI
 agents (Codex CLI, pi) run as **enforced read-only peer seats**, each behind a
-~60-line shell wrapper with a uniform `seat.sh [-r] [-d dir] "prompt"` interface and
+~60-line shell wrapper with a uniform `seat.sh [-b] [-r] [-d dir] "prompt"` interface and
 per-directory resumable sessions. Protocol: one shared brief → blind parallel round →
 targeted cross-examination of *disputed claims only* (specific claim relayed, never the
 whole transcript; rounds capped) → moderator applies a substance bar to challenges →

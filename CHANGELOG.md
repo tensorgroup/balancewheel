@@ -15,6 +15,14 @@ not against the prose.
 
 ### Added
 
+- **An optional `-b` flag on the seat wrapper interface** (`seat.sh [-b] [-r] [-d dir]
+  "prompt"`), and a setup-prompt step 5 that asks for it: on a new session only, the wrapper
+  prepends a pre-built, cached *seat brief* (instruction-file head, diff vs merge-base,
+  untracked files, likely callers) and a reading rule, so a fresh seat reads the change
+  instead of surveying the repository. Backward-compatible: a wrapper without `-b` still
+  meets the interface. Rationale, including why resuming a session is not a substitute:
+  `docs/architecture.md` (protocol step 1, lessons learned); build details and traps:
+  the rebuild guide's "Seat wrappers" section.
 - `setup/backup.sh` now covers **the metrics log**, resolved from the config's `metrics_log`
   rather than a fixed path. It is the one file a setup produces that cannot be regenerated,
   and it had no cover at all: excluded from `paths.txt` as "the setup's own output", and

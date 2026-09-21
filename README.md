@@ -46,7 +46,7 @@ Three roles, one protocol, one log.
   surviving finding against the code, and writes the record. It is the only thing that
   ever changes your checkout.
 - **Seats.** Other vendors' own CLI agents, each behind a ~60-line shell wrapper with
-  one interface — `seat.sh [-r] [-d dir] "prompt"` — that makes it repo-aware,
+  one interface — `seat.sh [-b] [-r] [-d dir] "prompt"` — that makes it repo-aware,
   resumable per directory, and **enforced read-only** (tool allowlist, sandbox, and a
   guard; verified by trying to make it write, not by reading vendor docs). Models are a
   one-line config detail, never part of an interface.
@@ -182,7 +182,8 @@ Set up a balancewheel review panel for me.
    Warn me if a route bills per token behind a subscription login — the rebuild guide's
    driver-mode section explains which ones do.
 5. For each seat, write a wrapper that implements the interface in the guide's "Seat
-   wrappers" section: new or resumed session, per-directory session persistence,
+   wrappers" section: new or resumed session, an optional pre-built seat brief on new
+   sessions, per-directory session persistence,
    read-only enforcement in every layer the guide lists for that CLI, a private scratch
    TMPDIR, a wall-clock cap, and a `usage` record appended via metrics/log.py. Pin the
    model in exactly one config line per seat.
