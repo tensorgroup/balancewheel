@@ -11,7 +11,9 @@ get right, and the traps. Written 2026-08-26 against the versions noted; updated
 which model at flat rate, first-party-harness containment, two new traps) and the pi
 version bump to 0.85.x it required; the cast table gained the same-vendor blind seat
 and the on-demand second seat the same day (both in the roster since 2026-09-02); updated
-2026-09-21 with the seat-brief flag and the effort knob on the Claude seat (see Seat wrappers).*
+2026-09-21 with the seat-brief flag and the effort knob on the Claude seat (see Seat wrappers);
+updated 2026-09-22 when the on-demand Opus seat moved to Opus 5.5; updated 2026-09-25 for
+OpenAI's GPT-6 Sol and Luna (two new traps in the Codex section; the astra seat is unchanged).*
 
 ## The cast
 
@@ -21,7 +23,7 @@ and the on-demand second seat the same day (both in the roster since 2026-09-02)
 | Planning + review seat ("astra") | Codex CLI ≥0.153 | `gpt-6-astra`, xhigh reasoning (was `gpt-5.6-sol`, seat "sol", until 2026-09-11) | OpenAI Pro subscription (CLI OAuth) |
 | Planning seat ("ox") | pi 0.85.x (0.74.x until 2026-09-16; was OpenCode ≥1.18 until 2026-09-03) | `z-ai/glm-5.3-flash` via OpenRouter (was `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
 | Same-vendor blind seat ("fable") | Claude Code headless (`claude -p`), fresh session, write tools disallowed plus a pre-tool guard hook | `claude-fable-5-1` (since 2026-09-02) | Claude subscription (flat) |
-| On-demand second same-vendor seat ("opus") | same mechanism | `claude-opus-4-8` | Claude subscription (flat); off the default roster since 2026-09-02 on scoreboard evidence |
+| On-demand second same-vendor seat ("opus") | same mechanism | `claude-opus-5-5` (was `claude-opus-4-8` until 2026-09-22, when 4.8 went legacy) | Claude subscription (flat); off the default roster since 2026-09-02 on 4.8's scoreboard evidence |
 | Blind one-shot fallback | plain HTTPS (`chat/completions`) | same OpenRouter model | OpenRouter API key |
 
 Why these: each vendor's *own* CLI gives the seat repo exploration, native session
@@ -54,6 +56,17 @@ Invocation and traps:
   (roles, rebuttal caps) was earned by the old model's dispute record and the per-seat
   metrics would otherwise blend two models. A same-model re-pin (the stealth-id
   graduation below) keeps the seat id and its history.
+- Don't name a seat after a vendor's tier name; vendors reuse them across generations.
+  OpenAI shipped GPT-6 Sol (`gpt-6-sol`) on 2026-09-22, so the retired seat "sol" (which
+  held `gpt-5.6-sol`) now reads like the new model. A GPT-6 Sol seat needs its own id,
+  and any rule that maps a retired id onto its successor must not catch the new one,
+  or two models' findings merge silently.
+- Under a ChatGPT sign-in, new models reach accounts in a rollout. Until one reaches
+  yours, Codex answers with a 400, "not supported when using Codex with a ChatGPT
+  account", while the vendor docs already list the model. `~/.codex/models_cache.json`
+  lists what the account can actually use; check it before pinning a new model in a
+  profile. As of 2026-09-25 a Pro account on Codex 0.154 did not yet have `gpt-6-sol`
+  or `gpt-6-luna`, and pi 0.85.1's `openai-codex` provider did not list them either.
 - Set `TMPDIR` to a private scratch dir: the Rust binary extracts multi-MB temp
   `.dylib`s into `$TMPDIR` — *not* cwd, as first assumed. Some agent sandboxes point
   `TMPDIR` at the project checkout, which litters it with `.<hash>-00000000.dylib`
@@ -224,7 +237,7 @@ the credential, and the containment.
 
 | Driver seat | Harness | Model | Billing |
 |---|---|---|---|
-| astra | Codex CLI | `gpt-6-astra` | OpenAI Pro, flat (CLI OAuth) |
+| astra | Codex CLI | `gpt-6-astra` (`gpt-6-sol`, which Codex now recommends as its everyday default, is the cheaper candidate for spec'd work once the rollout reaches the account) | OpenAI Pro, flat (CLI OAuth) |
 | astra via pi | pi ≥0.85, built-in `openai-codex` provider | `gpt-6-astra` | Same subscription, flat — OpenAI endorses third-party use ("Codex for OSS") |
 | ox | pi | `z-ai/glm-5.3-flash` via OpenRouter | ~$0.02 per session |
 | fable / opus / sonnet | Claude Code | the Claude tier named | Claude plan, flat |
