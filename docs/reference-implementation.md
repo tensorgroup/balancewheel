@@ -13,7 +13,9 @@ version bump to 0.85.x it required; the cast table gained the same-vendor blind 
 and the on-demand second seat the same day (both in the roster since 2026-09-02); updated
 2026-09-21 with the seat-brief flag and the effort knob on the Claude seat (see Seat wrappers);
 updated 2026-09-22 when the on-demand Opus seat moved to Opus 5.5; updated 2026-09-25 for
-OpenAI's GPT-6 Sol and Luna (two new traps in the Codex section; the astra seat is unchanged).*
+OpenAI's GPT-6 Sol and Luna (two new traps in the Codex section; the astra seat is unchanged);
+updated 2026-09-26 with the quota fallback for the Claude seat and Claude subagents (see Seat
+wrappers).*
 
 ## The cast
 
@@ -214,6 +216,35 @@ and check all of them answer it.
 **Effort.** The Claude seat's CLI takes an effort level per run; the wrapper defaults it to
 `high` and the deep tier raises it to `max`, the same way it raises the other seats'
 reasoning. Before this the Claude seat had no knob and ran at the CLI's default.
+
+**Quota fallback for the Claude seat (2026-09-26).** A flat-rate plan still has a usage cap
+per model, and when the top Claude tier hits it, every place that pins that model fails at
+once: the blind seat, any subagent definition pinned to it, any ad-hoc subagent that names it.
+The fix is one piece of state and three readers, not a per-call judgment:
+- **One flag with an expiry** (a small script: `on [hours] | off | status | check`, storing an
+  epoch deadline in the state directory). Expiry matters: a flag that never clears quietly
+  keeps the fallback in place after the cap resets. Default to a few hours; set the real
+  reset window when you know it.
+- **The seat wrapper reads it.** While the flag is fresh, a run of the top-tier seat goes to
+  the fallback model instead (the next tier down, not a model you have ruled out), and the
+  wrapper prints a one-line notice. The seat name follows the model, so the run logs and
+  scores under the fallback's id, and the panel record lists the original seat as `absent`
+  with reason "usage cap". Folding it into the top-tier seat's scoreboard would credit one
+  model with another's findings.
+- **The wrapper arms it.** When a top-tier run fails and its output matches a usage-limit
+  pattern, the wrapper sets the flag and re-runs itself once. A re-entry guard
+  (an environment variable) keeps a mismatch from looping.
+- **A pre-tool hook on the subagent tool reads it too.** If the call names the capped
+  model, or leaves the model unset while the subagent definition pins it, the hook rewrites
+  the call's model to the fallback (Claude Code: `hookSpecificOutput.updatedInput`). A
+  post-failure hook on the same tool arms the flag when a pinned call fails on the limit. Skip
+  forked subagents: they ignore the model field anyway.
+Trap: the subagent tool only accepts family aliases (`opus`, `sonnet`, …), and an alias
+resolves to whatever the client currently maps it to, which may be a model you have ruled out.
+Pin the alias in the harness settings (Claude Code: `ANTHROPIC_DEFAULT_OPUS_MODEL`) so the
+fallback is the exact version you chose. Verify end to end: arm the flag, dispatch a subagent
+pinned to the capped model, and check the model id in its transcript, not the hook's own
+output.
 
 **Temp-dir hygiene (seats and drivers alike).** Every vendor CLI extracts scratch files into
 `$TMPDIR` — Codex unpacks multi-megabyte native libraries there, Node writes its compile
