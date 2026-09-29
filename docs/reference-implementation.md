@@ -241,7 +241,8 @@ The fix is one piece of state and three readers, not a per-call judgment:
   forked subagents: they ignore the model field anyway.
 Trap: the subagent tool only accepts family aliases (`opus`, `sonnet`, …), and an alias
 resolves to whatever the client currently maps it to, which may be a model you have ruled out.
-Pin the alias in the harness settings (Claude Code: `ANTHROPIC_DEFAULT_OPUS_MODEL`) so the
+Pin each alias in the harness settings (Claude Code: `ANTHROPIC_DEFAULT_OPUS_MODEL`, and
+`ANTHROPIC_DEFAULT_SONNET_MODEL` for the cheaper tier) so the
 fallback is the exact version you chose. Verify end to end: arm the flag, dispatch a subagent
 pinned to the capped model, and check the model id in its transcript, not the hook's own
 output.
