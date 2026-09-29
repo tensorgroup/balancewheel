@@ -15,6 +15,12 @@ not against the prose.
 
 ### Added
 
+- **A decision-model pilot** (reference-implementation.md, "Decision model"): a System One
+  model (Jev via OpenRouter by default; Kev, SemIf, OpenJev, Laya as self-hosted options)
+  gives raise-only advice on executor tier, reasoning effort, and review depth per task, and
+  scores review findings in shadow for later calibration against verified verdicts.
+  Documented as a design for the harness to implement (no config schema change yet);
+  decisions and agent dispatches are logged to one JSONL.
 - **An optional `-b` flag on the seat wrapper interface** (`seat.sh [-b] [-r] [-d dir]
   "prompt"`), and a setup-prompt step 5 that asks for it: on a new session only, the wrapper
   prepends a pre-built, cached *seat brief* (instruction-file head, diff vs merge-base,

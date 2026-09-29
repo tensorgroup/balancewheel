@@ -384,6 +384,71 @@ with a symlinked path component rather than silently widening.
   full wall-clock cap. One-line prompts ("call bash once with exactly: …") produce a real
   tool call, a logged denial, and an unchanged directory — that is the evidence.
 
+## Decision model: routing advice and shadow review scoring (pilot)
+
+Written 2026-09-29. Which model does a task, how hard it thinks, and how deep the review goes
+were chosen by feel. A *decision model* (a "System One" model: TypeSafe's Jev was first, on
+2026-09-15) answers narrow typed questions — `choice` (pick an option), `score` (a place on an
+ordered scale), `noul` (probability of yes) — with probabilities instead of text, in a few
+hundred milliseconds, for fractions of a cent. That is cheap enough to ask on every task and
+check later against what happened. It does not generate, explain, or reason aloud.
+
+**Provider.** The reference setup uses Jev (`typesafe/jev-1.13`, pinned) through OpenRouter's
+decisions endpoint (`POST https://openrouter.ai/api/alpha/decisions`, the seats' existing
+OpenRouter key, input-only billing). Open alternatives exist and several speak a compatible
+`/v1/systemone` shape — Kev (Qwen-based, local MLX serving), SemIf (formerly OpenJev; reads
+option probabilities from an open model's logits, runs on Apple Silicon), OpenJev
+(DiffusionGemma server), Laya (ModernBERT encoder, CPU-friendly, small option budget),
+NanoJev and jevlike (training starters). A swap is **not** config-only: context and option
+budgets differ, so it needs a contract test, a truncation test, and re-calibration on logged
+tasks. Pick hosted first for setup effort; move local when privacy or volume says so.
+
+**What it is asked.** One request per task, four questions plus one logged for comparison:
+enough context to judge (noul) · difficulty (score, five described levels) · reasoning effort
+(score, five described levels) · high stakes — auth, payments, access rules, private data,
+production migration (noul) · *tier* (choice; logged only — the decision model cannot know what
+your model tiers are). Every threshold lives in code, not in the question.
+
+**Policy (the rules a design panel forced; thresholds are pilot guesses, not recommendations).**
+- **Raise-only.** Advice may escalate a pinned executor or deepen a review. It never lowers a
+  pin, skips a mandatory review, downgrades the default for unpinned agents, or overrides the
+  human. Would-be downgrades are logged as shadow data, never shown.
+- **Tails, not means.** A `score` answer's headline value is a probability-weighted mean, which
+  hides a fat hard tail. Derive the tier from P(difficulty ≥ hard) and the stakes probability;
+  take the arg-max effort level, not the rounded mean.
+- **Asymmetric floors.** Under-routing costs more than over-routing, so the stakes floor fires
+  at a low probability (the pilot uses 0.5) and raises both tier and effort; a high-stakes
+  target always gets the deep review tier, as the panel protocol already requires.
+- **Once per task, with context.** Route the prompt that starts a task (first substantive
+  prompt, an issue reference, a long brief), speak only when the advice changes, and let the
+  working agent route a scoped subtask (phase, role, risks) before dispatching it. Thin input
+  gets "not enough context" and no advice.
+- **Fail-open.** A timeout, error, kill switch, or unsafe input returns no advice; existing
+  rules stand. The prompt hook is bounded by the request timeout plus the hook timeout.
+
+**Privacy.** Only a redacted task description leaves the machine: credential-, email-, and
+phone-shaped strings are replaced, text that looks like a pasted log or diff is never sent,
+zero-data-retention routing is requested, and the prompt text is not logged. The prompt hook
+runs only in interactive sessions — the seat wrappers disable it, because a user-level hook
+otherwise fires inside every headless seat, sending the seat brief out and handing a blind
+reviewer routing advice.
+
+**Review scoring runs in shadow.** Round-1 findings are scored (severity, actionable, and —
+when the seat quoted code — whether the quote supports the claim), but the scores go to the
+log only. The moderator verifies without seeing them, logs the panel record with a
+`decide_key`, and only then are scores revealed and joined to the verified verdicts. Using the
+scores to order or drop findings would anchor the very verdicts they are measured against;
+dropped and unverified findings are excluded from the accuracy labels.
+
+**Logs and promotion.** Every routing decision (answers, advice, shadow data, model and policy
+versions, session id) and every agent dispatch (requested, pinned, and effective model; quota
+state) go to one JSONL, joinable by session; scored findings join panels by key. The pilot is
+instrumentation, not evidence: a task that finished on the stronger tier does not show the
+cheaper tier would have failed. Promotion to enforcement needs criteria written down before
+the data is read, a held-out comparison against the current pins, and a rollback switch — and
+an enforcing hook that rewrites a subagent's model must not also grant tool permission, which
+a rewrite response can do as a side effect (Claude Code: `permissionDecision: "allow"`).
+
 ## Verification checklist (before trusting any seat)
 
 1. Ask it to create a file. Confirm refusal AND that no file exists.
