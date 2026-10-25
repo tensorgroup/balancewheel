@@ -19,7 +19,11 @@ Python 3.9+ standard library only; no packages to install. Run the tests from th
     python3 -m unittest discover -s tests -v
 
 `metrics/` holds the config loader, the JSONL store (the only reader/appender), the roster
-watches, the logger CLI, and the dashboard generator. `tests/fixtures/` are synthetic — keep
+watches, the logger CLI, and the dashboard generator. `lead/` holds leads and rotation:
+project resolution, the pure rotation decision, per-plan quota and caps, `bw sandbox`
+profiles and containment records, handoffs, runtime adapters, and the runner behind
+`bin/bw` (`bin/bw-statusline` records Claude quota). `tests/attack/lead_containment.sh`
+attack-tests a lead runtime (spends model quota; not part of `unittest discover`). `tests/fixtures/` are synthetic — keep
 them that way (privacy firewall). Commits use a lowercase summary with a `feat:`/`fix:`/
 `test:`/`docs:` prefix.
 

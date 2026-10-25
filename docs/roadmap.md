@@ -51,10 +51,18 @@ commands, launchd sync, local dashboard). Goals of this phase:
 - Knowledge layer stays out of scope for v1 — it's separable, and the panel is the
   novel part.
 
+## Amendment (2026-10-24): `lead/` and `bin/bw` land before criterion 4
+
+Leads and rotation (build-order step 2 of the 2026-10-24 design) are built here, clean-room,
+before a second user has run the setup. Reason: they are what a second user needs most, and
+the author's own setup becoming `bw`'s first consumer is the dogfood. The privacy firewall is
+unchanged.
+
 ## Non-goals
 
 - Not a router/proxy: no request interception, no prompt translation.
-- Not a harness replacement: the user's primary agent stays primary. Driver mode
+- Not a harness replacement: the user works in a vendor's own agent; `bw lead` picks which
+  one and never sits between the user and it. Driver mode
   (running a peer vendor's CLI, or the primary vendor's cheaper tier, as the working
   agent when the moderator's budget is exhausted) is failover, not promotion — see
   "Seat mode and driver mode" in `architecture.md`.

@@ -88,6 +88,14 @@ class SetupScriptsTest(unittest.TestCase):
         listed = [l.strip() for l in real_list.read_text().splitlines() if l.strip() and not l.startswith("#")]
         self.assertFalse(any("auth" in l or "secret" in l for l in listed), "paths.txt must not list credentials")
 
+    def test_paths_list_bw_pins_and_handoffs_but_no_live_state(self):
+        listed = [l.strip() for l in (REPO / "setup" / "paths.txt").read_text().splitlines()
+                  if l.strip() and not l.lstrip().startswith("#")]
+        self.assertIn("~/.local/state/balancewheel/leads.json", listed)
+        self.assertIn("~/.local/state/balancewheel/handoffs", listed)
+        for live in ("locks", "quota", "caps", "models", "containment.json"):
+            self.assertFalse(any(l.rstrip("/").endswith(live) for l in listed), live)
+
     def test_restore_puts_originals_back_and_takes_a_safety_backup(self):
         dest, _ = self.backup()
         stamp = dest.name

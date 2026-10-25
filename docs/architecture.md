@@ -13,7 +13,9 @@ blind seat and the on-demand seat pattern, in the reference roster since 2026-09
 are documented in the architecture table below for the first time. Updated 2026-09-21: the
 shared brief became a pre-built, cached artifact every seat starts from (protocol step 1),
 with the finding that resuming a session is not a cache, and the stand-in rule for a seat
-whose subscription window is exhausted.*
+whose subscription window is exhausted. Updated 2026-10-24: leads and rotation — the lead is
+the moderator; a project's profile may make a non-primary vendor's agent the default lead,
+which narrows "driver mode is failover, not promotion" to drivers outside a profile.*
 
 ## The problem
 
@@ -75,6 +77,17 @@ that admits only single read-only bash commands (a command-line glob allow-list,
 previous runtime's mechanism, let `git log | tee x` through). Verify by
 attack, not by docs: ask each seat to create a file, on both fresh and resumed
 sessions, and confirm refusal before trusting it.
+
+### Leads, profiles, and rotation
+
+The agent the user works in is the **lead**, and the lead moderates every panel it convenes
+(the panel record names it: `moderator`). A **profile** orders a project's leads; when the
+current lead's plan is capped, `bw lead` stops it, hands the worktree to the next eligible
+lead, and returns to the preferred one after its cap resets. Decisions are a pure function
+of quota, caps, and time (`lead/rotation.py`); thresholds are on *remaining* quota. Leads
+are contained like drivers, by their own sandbox or by `bw sandbox` after an attack-verified
+pass; leads never share a worktree (an inherited lock). Design and amendments:
+`docs/superpowers/specs/2026-10-24-profiles-lead-rotation-cockpit-design.md`.
 
 ### Seat mode and driver mode are different things
 

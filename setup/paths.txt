@@ -37,5 +37,11 @@
 ~/.pi/agent/settings.json
 ~/.pi/agent/models.json
 
+# bw (leads and rotation), default state_dir. Only pins and handoffs: locks, quota, caps,
+# resolved models, and containment records are live state that must never be restored stale.
+# If your state_dir is elsewhere, list these in ~/.config/balancewheel/paths.local.txt.
+~/.local/state/balancewheel/leads.json
+~/.local/state/balancewheel/handoffs
+
 # git: global excludes for tool litter
 ~/.config/git/ignore

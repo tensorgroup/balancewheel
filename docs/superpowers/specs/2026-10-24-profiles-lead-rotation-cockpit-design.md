@@ -607,6 +607,21 @@ telemetry work; this document fixes only the payload.
   config schema 2 and the new and extended log events (`session`, `lead`, `ask`,
   `answer`; `panel.moderator`; `usage` token and cost fields).
 
+### Amendments made while building step 2 (2026-10-24)
+
+- Leads name a `runtime` (the seat runtime names), not `tool`.
+- `bw sandbox` contains pi and Kimi leads, which must pass `bw sandbox verify` on their current
+  verification key. Claude Code, Codex, and agy leads are contained by their own sandboxes and
+  interactive approval with the user's real HOME, and are not gated on an attack pass in v0.
+- Locks and handoff/checkpoint dirs are keyed by worktree (`sha1(worktree)[:12]`), not by
+  repository: two worktrees of a repo are two independent tasks. Profiles stay per repository.
+- A contained lead writes its worktree, the git data a commit needs, its runtime state, and
+  `handoffs/<worktree-key>/` only; never locks, pins, quota, caps, or containment records.
+  Git control files (hooks, config, config.worktree, other worktrees' admin dirs, the linked
+  `.git` file) are write-denied, and bw reads git with hooks, fsmonitor, and external diff off.
+- v0 detects caps automatically only through the Claude Code statusline; other leads use
+  `bw cap`. `task` events and `panel.subject` move to later steps.
+
 ## Extraction gate
 
 Roadmap criterion 4 (a second user has run setup from the README) is not met, and the

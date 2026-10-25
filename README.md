@@ -288,9 +288,41 @@ a `setup/new-project.sh`; the judgment steps (2, 4, 6) stay with the agent.
   written plan, tests, and the panel, and wrong for anything ambiguous. A driver's branch
   finishes like any other: pushed, opened as a PR, reviewed by the panel with the driver's
   vendor excluded.
+- **Lead** with `bw lead` in each project's worktree; let rotation move you off a capped
+  plan instead of switching tools by hand (see "Leads and rotation").
 - **Read the scoreboard** before changing roles. A seat is dropped or demoted on logged
   outcomes over a window, never on one bad review, and every change states what would
   earn the role back.
+
+## Leads and rotation (`bw`, since 2026-10-24)
+
+The **lead** is the agent you work in for a project; it is also the moderator of every
+panel it convenes. One plan usually runs out first, so a project's **profile** (config
+schema 2) names its leads in order, and `bw lead` picks one:
+
+    bw lead                  # start the profile's lead for this worktree
+    bw lead --use <lead>     # pin a lead for this worktree; bw lead --auto unpins
+    bw status                # plans (quota, caps), worktrees, leads and how each is contained
+    bw cap <plan>            # record that a plan is capped (for leads without a statusline)
+    bw sandbox verify <rt>   # attack-test a bw-contained runtime (pi, kimi) and record a pass
+
+- **Switching.** When the current lead's plan is capped, bw stops the lead (its whole
+  process group, confirmed gone), writes a handoff from git facts and the lead's last
+  checkpoint, and starts the next eligible lead with it. It never switches mid-turn for a
+  plan that is merely low. When the preferred plan has reset, the next `bw lead` returns to
+  it. Every change is logged (`session`, `lead`, `rating` events).
+- **What v0 detects by itself.** Claude Code reports its usage to its status line; install
+  `bin/bw-statusline <plan>` as the `statusLine` command (set `BW_STATUSLINE_CHAIN` to keep
+  your existing one) and caps are seen automatically. Other leads: run `bw cap <plan>`
+  (Kimi Code can do it from its own `StopFailure` hook, which you add to its config).
+- **One lead per worktree.** A lock the lead itself holds; a crashed `bw` cannot let a
+  second writable agent in.
+- **Containment.** Claude Code, Codex, and agy run with their own sandboxes and permission
+  prompts and your real configuration (`contained by self`). pi and Kimi run under
+  `bw sandbox` — nono when installed, macOS `sandbox-exec` otherwise — and only after
+  `bw sandbox verify` passed on their current version: writes stop at the worktree, the git
+  data a commit needs, the runtime's own state, and the checkpoint dir; git hooks and
+  config stay read-only; no app launches, Apple Events, or preference writes.
 
 ## Working with OpenEscapement
 

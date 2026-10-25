@@ -22,6 +22,11 @@ not against the prose.
   seats gain `plan` and `fallback`. Version-1 files load unchanged as one implicit profile
   with no leads; the v2-only keys are rejected in a version-1 file. Leads name a `runtime`
   (the same names seats use), not the spec draft's `tool`.
+- **`bin/bw` and the `lead/` package**: `bw lead` (one locked, job-controlled lead per
+  worktree; switch on cap with a handoff; return after reset), `bw status`, `bw cap`,
+  `bw sandbox verify`; `bin/bw-statusline` (Claude quota and resolved model from the status
+  line, with chaining). `setup/paths.txt` gains the state dir's `leads.json` and
+  `handoffs/` (pins and handoffs only).
 - **Log events `session`, `lead`, `rating`, and `panel.moderator`** (`metrics/log.py`):
   `session --phase start|end` records a lead session (worktree key, lead, runtime, model and
   whether it was resolved, plan; `end` carries `exit|switch|lost`); `lead` records every lead
