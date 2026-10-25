@@ -12,9 +12,38 @@ prompt to the checkpoint dir and prints its path (Kimi Code has no initial-promp
 import os
 from collections import namedtuple
 
+from .guard import install as _guard_install
 from .sandbox import RuntimeGrants
 
-Adapter = namedtuple("Adapter", "argv contained_by grants prompt_mode version_argv verify_argv verify_flags")
+Adapter = namedtuple("Adapter", "argv contained_by grants prompt_mode version_argv verify_argv verify_flags "
+                                "guard_argv guard_hook_files")
+# guard_argv(lead, client_dir) -> the headless command the guard attack runs (None: no guard attack for
+# this runtime); guard_hook_files() -> files and dirs whose content decides what the guard hooks run.
+Adapter.__new__.__defaults__ = (None, lambda: [])
+
+# Permission posture per runtime and autonomy (schema 3). "{client}" is the session's pi_guard.ts.
+# Schema-2 (legacy) and custom leads get no flags: their argv is what it always was.
+AUTONOMY_FLAGS = {
+    "claude-code": {"native": ["--permission-mode", "auto"], "bypass": ["--permission-mode", "bypassPermissions"],
+                    "manual": ["--permission-mode", "default"]},
+    "codex": {"native": ["--approve-for-me"], "manual": []},
+    "agy": {"guard": ["--dangerously-skip-permissions"], "bypass": ["--dangerously-skip-permissions"], "manual": []},
+    "pi": {"guard": ["-e", "{client}"], "bypass": []},
+    "kimi": {"native": ["--yolo"], "bypass": ["--auto"], "manual": []},
+}
+
+
+def autonomy_flags(runtime, lead, client_dir):
+    if lead.get("autonomy_source", "legacy") == "legacy":
+        return []
+    flags = AUTONOMY_FLAGS.get(runtime, {}).get(lead.get("autonomy"), [])
+    if "{client}" in " ".join(flags) and not client_dir:
+        return []  # a guarded pi lead is launched with its client dir (Task 7); without one, nothing to load
+    return [f.replace("{client}", os.path.join(client_dir or "", "pi_guard.ts")) for f in flags]
+
+
+def _guarded_pi(lead):
+    return lead.get("autonomy_source", "legacy") != "legacy" and lead.get("autonomy") == "guard"
 
 
 def _real(p):
@@ -38,32 +67,44 @@ PI_CODE = ["extensions", "settings.json", "models.json", "skills", "prompts", "t
 
 ADAPTERS = {
     "claude-code": Adapter(
-        argv=lambda lead, prompt, writable=(): _with_prompt(["claude", "--model", lead["model"], *lead.get("args", [])], prompt),
-        contained_by="self", grants=lambda lead: RuntimeGrants([], [], {}, False), prompt_mode="arg",
+        argv=lambda lead, prompt, writable=(), client_dir=None: _with_prompt(
+            ["claude", "--model", lead["model"], *autonomy_flags("claude-code", lead, client_dir), *lead.get("args", [])], prompt),
+        contained_by="self", grants=lambda lead, client_dir=None: RuntimeGrants([], [], {}, False), prompt_mode="arg",
         version_argv=["claude", "--version"], verify_argv=None, verify_flags=lambda lead: []),
     "codex": Adapter(
-        argv=lambda lead, prompt, writable=(): _with_prompt(["codex", "-m", lead["model"], "--sandbox", "workspace-write",
-                                                             *_add_dirs(writable), *lead.get("args", [])], prompt),
-        contained_by="self", grants=lambda lead: RuntimeGrants([], [], {}, False), prompt_mode="arg",
+        argv=lambda lead, prompt, writable=(), client_dir=None: _with_prompt(
+            ["codex", "-m", lead["model"], "--sandbox", "workspace-write", *_add_dirs(writable),
+             *autonomy_flags("codex", lead, client_dir), *lead.get("args", [])], prompt),
+        contained_by="self", grants=lambda lead, client_dir=None: RuntimeGrants([], [], {}, False), prompt_mode="arg",
         version_argv=["codex", "--version"], verify_argv=None, verify_flags=lambda lead: []),
     "agy": Adapter(
-        argv=lambda lead, prompt, writable=(): (["agy", "--model", lead["model"], "--sandbox", *_add_dirs(writable),
-                                                 *lead.get("args", [])] + (["-i", prompt] if prompt else [])),
-        contained_by="self", grants=lambda lead: RuntimeGrants([], [], {}, False), prompt_mode="arg",
-        version_argv=["agy", "--version"], verify_argv=None, verify_flags=lambda lead: []),
+        argv=lambda lead, prompt, writable=(), client_dir=None: (
+            ["agy", "--model", lead["model"], "--sandbox", *_add_dirs(writable),
+             *autonomy_flags("agy", lead, client_dir), *lead.get("args", [])] + (["-i", prompt] if prompt else [])),
+        contained_by="self", grants=lambda lead, client_dir=None: RuntimeGrants([], [], {}, False), prompt_mode="arg",
+        version_argv=["agy", "--version"], verify_argv=None, verify_flags=lambda lead: [],
+        guard_argv=lambda lead, client_dir: ["agy", "-p", "--model", lead["model"], "--sandbox", "--dangerously-skip-permissions"],
+        guard_hook_files=lambda: [_guard_install.hooks_path(), os.path.expanduser("~/.gemini/settings.json")]),
     "pi": Adapter(
-        argv=lambda lead, prompt, writable=(): _with_prompt(["pi", "--model", lead["model"], *lead.get("args", [])], prompt),
+        argv=lambda lead, prompt, writable=(), client_dir=None: _with_prompt(
+            ["pi", "--model", lead["model"], *autonomy_flags("pi", lead, client_dir), *lead.get("args", [])], prompt),
         contained_by="bw",
-        grants=lambda lead: RuntimeGrants(read=["~/.volta"], write=[_real("~/.pi/agent")], env={}, private_home=False,
-                                          deny_write=[_real(f"~/.pi/agent/{p}") for p in PI_CODE]),
+        grants=lambda lead, client_dir=None: RuntimeGrants(
+            read=["~/.volta"] + ([client_dir] if client_dir and _guarded_pi(lead) else []),
+            write=[_real("~/.pi/agent")], env={}, private_home=False,
+            deny_write=[_real(f"~/.pi/agent/{p}") for p in PI_CODE]),
         prompt_mode="arg", version_argv=["pi", "--version"],
         verify_argv=lambda lead: ["pi", "-p", "--model", lead["model"], "--no-session", "--no-extensions"],
         verify_flags=lambda lead: ["--read", _real("~/.volta"), "--write", _real("~/.pi/agent")]
-                                  + [f for p in PI_CODE for f in ("--deny-write", _real(f"~/.pi/agent/{p}"))]),
+                                  + [f for p in PI_CODE for f in ("--deny-write", _real(f"~/.pi/agent/{p}"))],
+        guard_argv=lambda lead, client_dir: ["pi", "-p", "--model", lead["model"], "-e", os.path.join(client_dir, "pi_guard.ts")],
+        guard_hook_files=lambda: [os.path.join(_guard_install.pi_agent_dir(), "settings.json"),
+                                  os.path.join(_guard_install.pi_agent_dir(), "extensions")]),
     "kimi": Adapter(
-        argv=lambda lead, prompt, writable=(): ["kimi", "-m", lead["model"], *lead.get("args", [])],
+        argv=lambda lead, prompt, writable=(), client_dir=None: ["kimi", "-m", lead["model"],
+                                                                *autonomy_flags("kimi", lead, client_dir), *lead.get("args", [])],
         contained_by="bw",
-        grants=lambda lead: RuntimeGrants(read=["~/.kimi-code/bin", "~/.volta"], write=[_real("~/.kimi-code")],
+        grants=lambda lead, client_dir=None: RuntimeGrants(read=["~/.kimi-code/bin", "~/.volta"], write=[_real("~/.kimi-code")],
                                           env={"KIMI_CODE_HOME": _real("~/.kimi-code")}, private_home=True,
                                           deny_write=[_real(f"~/.kimi-code/{p}") for p in KIMI_CODE]),
         prompt_mode="file", version_argv=["kimi", "--version"],

@@ -5,6 +5,8 @@
   bw status                                       leads, quota, caps, pins
   bw cap <plan> [--resets-at <epoch>]             record that a plan is capped
   bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
+  bw guard install agy                            add the guard hook entry to agy's hooks file
+  bw guard uninstall agy                          remove it (other entries are left alone)
 """
 import argparse
 import os
@@ -14,6 +16,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from lead import containment, quota, runner, sandbox  # noqa: E402
+from lead.guard import AGY_SPIKE_PASSED, install as guard_install  # noqa: E402
 from lead.paths import ConfigError, ROOT, load_config, read_json, state_dir  # noqa: E402
 from lead.projects import resolve_project  # noqa: E402
 from lead.rotation import effective_quota  # noqa: E402
@@ -81,6 +84,26 @@ def cmd_verify(a, config, state):
     return 1
 
 
+def cmd_guard(a, config, state):
+    path = guard_install.hooks_path()
+    if a.sub == "install":
+        if not AGY_SPIKE_PASSED:
+            print("bw: agy guard awaits its hook spike (Task 1b); set autonomy manual or bypass", file=sys.stderr)
+            return 1
+        try:
+            print(guard_install.install_agy(path, state))
+        except ValueError as e:
+            print(f"bw: {e}", file=sys.stderr)
+            return 1
+        others = guard_install.other_pretooluse_entries(path)
+        if others:
+            print(f"bw: other PreToolUse hooks in the same file: {', '.join(others)}")
+        return 0
+    guard_install.uninstall_agy(path)
+    print(f"bw: removed the agy guard hook from {path}")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="bw")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -92,7 +115,12 @@ def main(argv=None):
     c = sub.add_parser("cap"); c.add_argument("plan"); c.add_argument("--resets-at", type=float, default=None)
     sb = sub.add_parser("sandbox"); sbs = sb.add_subparsers(dest="sub", required=True)
     v = sbs.add_parser("verify"); v.add_argument("runtime"); v.add_argument("--lead", default=None)
+    gd = sub.add_parser("guard"); gds = gd.add_subparsers(dest="sub", required=True)
+    for name in ("install", "uninstall"):
+        gds.add_parser(name).add_argument("runtime", choices=["agy"])
     a = ap.parse_args(argv)
+    if a.cmd == "guard":  # touches only the hooks file, so it needs no config
+        return cmd_guard(a, None, None)
     try:
         config = load_config()
     except ConfigError as e:
