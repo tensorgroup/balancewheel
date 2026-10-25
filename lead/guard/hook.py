@@ -10,6 +10,7 @@ is a failure. Python 3.9+ standard library only. bw copies this file to a dir no
 import json
 import os
 import socket
+import stat
 import sys
 import time
 
@@ -39,10 +40,12 @@ def write_marker(path, mode, why):
     if not path:
         return
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    except OSError:
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    except OSError:  # includes a FIFO with no reader (ENXIO): never wait on a planted node
         return
     try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return
         line = json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "runtime": RUNTIME,
                            "mode": mode, "why": why}) + "\n"
         os.write(fd, line.encode())

@@ -25,8 +25,9 @@ function writeMarker(path: string | undefined, mode: string, why: string): void 
     } catch (e: any) {
       if (e?.code !== "ENOENT") return;
     }
-    const fd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW, 0o600);
+    const fd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK, 0o600);
     try {
+      if (!fs.fstatSync(fd).isFile()) return; // a FIFO or device planted at the path is not a marker file
       fs.writeSync(fd, JSON.stringify({ ts: new Date().toISOString(), runtime: RUNTIME, mode, why }) + "\n");
     } finally {
       fs.closeSync(fd);

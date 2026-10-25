@@ -283,6 +283,21 @@ class ClientTests:
         with open(target) as f:
             self.assertEqual(f.read(), "keep")
 
+    def test_marker_fifo_never_blocks(self):
+        os.mkfifo(self.markers)
+        kind, _ = self.call(self.env("shadow"), timeout=8)  # a regression hangs and times out
+        self.assertEqual(kind, "allow")
+        # with a reader attached the open succeeds, but a FIFO is still not a marker file
+        reader = os.open(self.markers, os.O_RDONLY | os.O_NONBLOCK)
+        self.addCleanup(os.close, reader)
+        kind, _ = self.call(self.env("shadow"), timeout=8)
+        self.assertEqual(kind, "allow")
+        try:
+            data = os.read(reader, 10)
+        except BlockingIOError:
+            data = b""
+        self.assertEqual(data, b"")  # nothing was written into the FIFO
+
     def test_missing_markers_path_still_allows_in_shadow(self):
         self.assertEqual(self.call(self.env("shadow", markers=False))[0], "allow")
 
@@ -495,13 +510,28 @@ class SandboxedPiTests(Env):
         b = self.real("acting")
         with open(self.ext) as f:
             original = f.read()
+        node = NODE_ARGV[0]
+        # positive control: same sandbox and grants, a dir that IS writable (the worktree)
+        okdir = self.wt
+        control = ("const net=require('net'),fs=require('fs');"
+                   "fs.writeFileSync(%r,'x');net.createServer().listen(%r,function(){this.close();});"
+                   % (os.path.join(okdir, "ctl.txt"), os.path.join(okdir, "ctl.sock")))
+        unlink_listen = ("require('fs').unlinkSync(%r);require('net').createServer().listen(%r);"
+                         % (self.sock, self.sock))
+        denied = ("Operation not permitted", "EPERM")
         for backend in backends:
             with self.subTest(backend=backend):
+                for f in ("ctl.txt", "ctl.sock"):
+                    if os.path.exists(os.path.join(okdir, f)):
+                        os.remove(os.path.join(okdir, f))
+                p = self.sandboxed(backend, [node, "-e", control], {})
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertTrue(os.path.exists(os.path.join(okdir, "ctl.txt")))
                 attacks = [
                     ("rm", ["/bin/rm", self.sock]),
-                    ("bind-over", NODE_ARGV[:1] + ["-e", "require('net').createServer().listen(%r)" % self.sock]),
-                    ("bind-new", NODE_ARGV[:1] + ["-e", "require('net').createServer().listen(%r)"
-                                                  % os.path.join(self.gdir, "sock2")]),
+                    ("unlink-then-listen", [node, "-e", unlink_listen]),
+                    ("bind-new", [node, "-e", "require('net').createServer().listen(%r)"
+                                  % os.path.join(self.gdir, "sock2")]),
                     ("write-client", ["/bin/sh", "-c", "echo x >> '%s'" % self.ext]),
                     ("replace-client", ["/bin/sh", "-c", "echo x > '%s.new' && mv '%s.new' '%s'"
                                         % (self.ext, self.ext, self.ext)]),
@@ -509,6 +539,9 @@ class SandboxedPiTests(Env):
                 for name, argv in attacks:
                     p = self.sandboxed(backend, argv, {})
                     self.assertNotEqual(p.returncode, 0, "%s succeeded under %s" % (name, backend))
+                    err = p.stderr.decode()
+                    self.assertTrue(any(d in err for d in denied),
+                                    "%s under %s failed for another reason: %s" % (name, backend, err[-300:]))
                 self.assertTrue(os.path.exists(self.sock))
                 self.assertFalse(os.path.exists(os.path.join(self.gdir, "sock2")))
                 with open(self.ext) as f:
