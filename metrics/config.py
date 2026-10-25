@@ -276,7 +276,7 @@ def _validate_guard(obj, profiles, leads, version):
         for name, ld in leads.items():
             _expect(not (ld["autonomy"] == "guard" and ld["model"] == model),
                     f"guard.model: must differ from the lead's own model ({model!r}, lead {name!r})")
-    failure = given.get("on_judge_failure", "ask")
+    failure = given.get("on_judge_failure", "allow")
     _expect(failure in JUDGE_FAILURES, f"guard.on_judge_failure: must be one of {sorted(JUDGE_FAILURES)}, got {failure!r}")
     rules = given.get("rules_on_native", False)
     _expect(isinstance(rules, bool), "guard.rules_on_native: must be true or false")

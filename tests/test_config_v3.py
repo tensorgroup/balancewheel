@@ -126,7 +126,7 @@ class SchemaV3(unittest.TestCase):
             g = cfg.load_config(str(path))["guard"]
             self.assertEqual(set(g["mode"].values()), {"shadow"})
             self.assertIsNone(g["model"])
-            self.assertEqual(g["on_judge_failure"], "ask")
+            self.assertEqual(g["on_judge_failure"], "allow")
             self.assertFalse(g["rules_on_native"])
         o = v3(); del o["guard"]
         self.assertIsNone(load_obj(o)["guard"]["model"])

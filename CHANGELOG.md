@@ -17,7 +17,7 @@ not against the prose.
 
 - **Config schema 3** (`metrics/config.py`): per-lead `autonomy` (`native`, `guard`, `bypass`,
   `manual`; checked against what each runtime supports), a `guard` block (`mode` per profile,
-  `model`, `on_judge_failure`, `rules_on_native`), and per-profile `protected_branches` and
+  `model`, `on_judge_failure` (default `allow`), `rules_on_native`), and per-profile `protected_branches` and
   `deploy_commands`. A lead without `autonomy` gets its runtime's default (claude-code `native`,
   codex `native`, agy `guard`, pi `guard`, kimi `manual`), and under schema 3 `args` may no longer
   carry permission flags (autonomy owns them). **Schema 3 moves Codex leads to

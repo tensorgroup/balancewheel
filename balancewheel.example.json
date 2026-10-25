@@ -177,7 +177,7 @@
     "mode": {
       "product": "shadow"
     },
-    "on_judge_failure": "ask"
+    "on_judge_failure": "allow"
   },
   "state_dir": "~/.local/state/balancewheel",
   "metrics_log": "~/.local/state/balancewheel/metrics.jsonl",
