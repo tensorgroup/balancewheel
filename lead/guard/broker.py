@@ -238,7 +238,10 @@ class Broker:
     def _finish(self, conn, call, d, t0):
         latency = round((time.monotonic() - t0) * 1000, 3)
         text = _text(call)
-        self_test = bool(self._marker) and self._marker in text
+        with self._lock:  # one-shot: the first matching call spends the marker
+            self_test = bool(self._marker) and self._marker in text
+            if self_test:
+                self._marker = None
         did = uuid.uuid4().hex[:12]
         outcome = "shadow-allowed" if self.mode == "shadow" else OUTCOME.get(d.decision, "asked")
         s = self.session

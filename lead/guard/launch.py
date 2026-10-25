@@ -101,7 +101,7 @@ def _node_ok():
     return (major, minor) >= (22, 6)
 
 
-def self_test(broker, runtime, guard_dir, token, mode, worktree, state_dir):
+def _self_test(broker, runtime, guard_dir, token, mode, worktree, state_dir):
     """Send one block-class call through the copied client. Returns (error, note): error None
     when the client answered block and the broker logged the call as a self-test."""
     from . import record
@@ -141,3 +141,11 @@ def self_test(broker, runtime, guard_dir, token, mode, worktree, state_dir):
     if not logged:
         return "guard client self-test: the broker did not log the client's call", note
     return None, note
+
+
+def self_test(broker, runtime, guard_dir, token, mode, worktree, state_dir):
+    """_self_test, with the marker disarmed afterwards on every path."""
+    try:
+        return _self_test(broker, runtime, guard_dir, token, mode, worktree, state_dir)
+    finally:
+        broker.arm_self_test(None)

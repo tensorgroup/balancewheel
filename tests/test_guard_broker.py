@@ -240,13 +240,11 @@ class TestBroker(BrokerBase):
 
     def test_self_test_marker(self):
         self.b.arm_self_test("MARKER-9f2")
-        self.ask(bash("echo MARKER-9f2"))
-        self.ask({"toolName": "write", "input": {"path": os.path.join(self.wt, "MARKER-9f2.txt")}})
-        self.ask({"toolName": "mystery", "input": {"x": "MARKER-9f2"}})
+        self.ask({"toolName": "mystery", "input": {"x": "MARKER-9f2"}})  # the non-shell text form matches too
         self.ask(bash("ls"))
         self.b.stop()
         d = self.decisions()
-        self.assertEqual([x["self_test"] for x in d], [True, True, True, False])
+        self.assertEqual([x["self_test"] for x in d], [True, False])
         self.assertEqual(self.b.counts()["calls"], 1)
         self.assertEqual(self.b.counts()["decisions"], {"allow": 1})
 
@@ -279,6 +277,16 @@ class TestPauseAndSelfTestReply(BrokerBase):
         self.assertEqual(r["decision"], "block")
         r = self.ask(bash("herdr pane send other"))
         self.assertEqual(r["decision"], "allow")  # shadow still allows everything else
+
+    def test_self_test_marker_is_one_shot(self):
+        self.b.arm_self_test("bw-self-test-abc")
+        self.assertEqual(self.ask(bash("herdr pane send bw-self-test-abc"))["decision"], "block")
+        r = self.ask(bash("herdr pane send bw-self-test-abc"))
+        self.assertEqual(r["decision"], "allow")  # an ordinary call in shadow
+        d = self.decisions()
+        self.assertEqual([x["self_test"] for x in d], [True, False])
+        self.assertEqual(self.b.counts()["calls"], 1)
+        self.assertEqual(self.b.counts()["decisions"], {"block": 1})
 
 
 class TestWorkerErrors(BrokerBase):

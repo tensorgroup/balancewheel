@@ -284,6 +284,16 @@ class GuardRunner(RunnerCase):
         types = [(e["type"], e.get("phase")) for e in log]
         self.assertLess(types.index(("guard", None)), types.index(("session", "end")))
 
+    def test_replaying_the_logged_self_test_marker_is_a_real_counted_call(self):
+        p = self.start("--use", "lb", "--guard", "pi",
+                       env={"FAKE_MODE_b": "guard_probe", "FAKE_STATE": str(self.state)})
+        self.assertEqual(p.wait(30), 0, p.stdout.read())
+        self.assertEqual(self.fake("b")["probe"]["decision"], "allow")  # shadow: no real decision leaked
+        rows = self.guard_log()
+        self.assertEqual([d["self_test"] for d in rows], [True, False])
+        g = self.events("guards")[0]
+        self.assertEqual((g["calls"], g["decisions"]["block"]), (1, 1))
+
     def test_guarded_agy_without_hook_entry_exits_7(self):
         p = self.start("--use", "lc", "--guard", "agy", "--no-hook")
         self.assertEqual(p.wait(15), 7, "")
