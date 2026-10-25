@@ -22,6 +22,12 @@ not against the prose.
   seats gain `plan` and `fallback`. Version-1 files load unchanged as one implicit profile
   with no leads; the v2-only keys are rejected in a version-1 file. Leads name a `runtime`
   (the same names seats use), not the spec draft's `tool`.
+- **Log events `session`, `lead`, `rating`, and `panel.moderator`** (`metrics/log.py`):
+  `session --phase start|end` records a lead session (worktree key, lead, runtime, model and
+  whether it was resolved, plan; `end` carries `exit|switch|lost`); `lead` records every lead
+  change with from, to, reason, and the quota used to decide; `rating` is the user's
+  good/bad for a session. A `panel` may carry `moderator` (lead, runtime, model, resolved,
+  session). `store.load()` returns `sessions`, `leads`, `ratings`. Older logs load unchanged.
 
 - **A decision-model pilot** (reference-implementation.md, "Decision model"): a System One
   model (Jev via OpenRouter by default; Kev, SemIf, OpenJev, Laya as self-hosted options)

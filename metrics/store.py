@@ -142,6 +142,7 @@ def _normalise_panel(e):
         "findings_detail": e.get("findings_detail"),
         "disputes": list(e.get("disputes") or []),
         "notes": e.get("notes", ""),
+        "moderator": e.get("moderator") if isinstance(e.get("moderator"), dict) else None,
         "amendments": [],
     }
 
@@ -198,7 +199,25 @@ def load(path):
         if e.get("status") in WATCH_STATUSES:
             w["status"] = e["status"]
         w["updates"].append({"ts": e.get("ts"), "status": e.get("status"), "note": e.get("note", "")})
-    return {"usage": usage, "panels": panels, "watches": watches, "events": events, "warnings": warnings}
+    sessions, s_by_id = [], {}
+    for e in events:
+        if e.get("type") != "session":
+            continue
+        sid = e.get("session_id")
+        if e.get("phase") == "start":
+            s = {k: e.get(k) for k in ("session_id", "project", "worktree", "lead", "runtime", "model", "resolved", "plan")}
+            s.update({"start": e.get("ts"), "end": None, "end_reason": None})
+            sessions.append(s); s_by_id[sid] = s
+        elif e.get("phase") == "end":
+            s = s_by_id.get(sid)
+            if s is None:  # an end with no start (a session closed as lost after a crash)
+                s = {"session_id": sid, "project": e.get("project"), "start": None}
+                sessions.append(s); s_by_id[sid] = s
+            s.update({"end": e.get("ts"), "end_reason": e.get("reason")})
+    leads = [e for e in events if e.get("type") == "lead"]
+    ratings = [e for e in events if e.get("type") == "rating"]
+    return {"usage": usage, "panels": panels, "watches": watches, "events": events, "warnings": warnings,
+            "sessions": sessions, "leads": leads, "ratings": ratings}
 
 
 def append(path, event):

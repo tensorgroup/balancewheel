@@ -212,6 +212,11 @@ def validate_panel(rec, config, force):
     for extra in (force_note, mismatch_note):
         if extra:
             notes = (notes + " | " if notes else "") + extra
+    mod = rec.get("moderator")
+    if mod is not None:
+        if not isinstance(mod, dict) or not all(isinstance(mod.get(k), str) and mod.get(k) for k in ("lead", "runtime", "model")) \
+                or not isinstance(mod.get("resolved"), bool):
+            _fail("moderator must be an object with lead, runtime, model (strings) and resolved (true/false)")
     out = dict(rec)
     out.update({"type": "panel", "id": uuid.uuid4().hex[:8], "ts": store.now_ts(), "seats": seats,
                 "findings": findings, "findings_detail": fd, "disputes": disputes,
@@ -284,6 +289,46 @@ def cmd_usage(args, config):
         "type": "usage", "seat": args.seat, "model": args.model, "mode": args.mode, "dir": args.dir,
         "duration_s": args.duration, "ok": args.ok.lower() == "true", "reason": args.reason,
     })
+
+
+def cmd_session(args, config):
+    if args.phase == "start":
+        missing = [k for k in ("worktree", "lead", "runtime", "model", "resolved", "plan") if getattr(args, k) is None]
+        if missing:
+            die(f"session start needs --{missing[0].replace('_', '-')}")
+        ev = {"type": "session", "phase": "start", "project": args.project, "session_id": args.session_id,
+              "worktree": args.worktree, "lead": args.lead, "runtime": args.runtime, "model": args.model,
+              "resolved": args.resolved == "true", "plan": args.plan}
+    else:
+        if not args.reason:
+            die("session end needs --reason")
+        ev = {"type": "session", "phase": "end", "project": args.project, "session_id": args.session_id,
+              "reason": args.reason}
+    store.append(store.log_path(config), ev)
+
+
+def _json_arg(name, raw, default=None):
+    if raw is None:
+        return default
+    try:
+        v = json.loads(raw)
+    except json.JSONDecodeError as e:
+        die(f"{name} is not valid JSON: {e}")
+    if not isinstance(v, dict):
+        die(f"{name} must be a JSON object")
+    return v
+
+
+def cmd_lead(args, config):
+    store.append(store.log_path(config), {
+        "type": "lead", "project": args.project, "from": _json_arg("--from-json", args.from_json),
+        "to": _json_arg("--to-json", args.to_json), "reason": args.reason,
+        "quota": _json_arg("--quota-json", args.quota_json, {})})
+
+
+def cmd_rating(args, config):
+    store.append(store.log_path(config), {"type": "rating", "session_id": args.session_id,
+                                          "value": args.value, "note": args.note})
 
 
 def cmd_panel(args, config):
@@ -394,13 +439,28 @@ def main(argv=None):
                     "in on load rather than rewriting the original line.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     a.add_argument("--panel-id", required=True); a.add_argument("--force", action="store_true")
+    s = sub.add_parser("session", help="a lead session started or ended")
+    s.add_argument("--phase", required=True, choices=["start", "end"])
+    s.add_argument("--project", required=True); s.add_argument("--session-id", required=True)
+    for k in ("--worktree", "--lead", "--runtime", "--model", "--plan"):
+        s.add_argument(k, default=None)
+    s.add_argument("--resolved", choices=["true", "false"], default=None)
+    s.add_argument("--reason", choices=["exit", "switch", "lost"], default=None)
+    ld = sub.add_parser("lead", help="the lead for a project changed")
+    ld.add_argument("--project", required=True); ld.add_argument("--from-json", default=None)
+    ld.add_argument("--to-json", required=True); ld.add_argument("--reason", required=True)
+    ld.add_argument("--quota-json", default=None)
+    rt = sub.add_parser("rating", help="the user's one-keypress rating of a lead session")
+    rt.add_argument("--session-id", required=True); rt.add_argument("--value", required=True, choices=["good", "bad"])
+    rt.add_argument("--note", default="")
     args = ap.parse_args(argv)
     try:
         config = cfgmod.load_config()
     except cfgmod.ConfigError as e:
         die(f"config error: {e}")
     {"config": cmd_config, "usage": cmd_usage, "panel": cmd_panel, "check": cmd_check,
-     "watches": cmd_watches, "resolve": cmd_resolve, "amend": cmd_amend}[args.cmd](args, config)
+     "watches": cmd_watches, "resolve": cmd_resolve, "amend": cmd_amend, "session": cmd_session,
+     "lead": cmd_lead, "rating": cmd_rating}[args.cmd](args, config)
 
 
 if __name__ == "__main__":
