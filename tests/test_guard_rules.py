@@ -183,7 +183,17 @@ SHELL = [
     ("mkdir /tmp/d", K, GRAY, "gray:outside-write"), ("touch ../x", K, GRAY, "gray:outside-write"),
     ("echo x > ../out", K, GRAY, "gray:outside-write"), ("echo x > /tmp/out", K, GRAY, "gray:outside-write"),
     ("echo x >> /tmp/out", K, GRAY, "gray:outside-write"), ("ls 2> /tmp/e", K, GRAY, "gray:outside-write"),
-    ("ls &> /tmp/e", K, GRAY, "gray:outside-write"), ("ls > /dev/null", K, GRAY, "gray:outside-write"),
+    ("ls &> /tmp/e", K, GRAY, "gray:outside-write"), ("echo x > /dev/disk0", K, GRAY, "gray:outside-write"),
+    ("ls > /dev/null", A, RULE, SH), ("ls > /dev/null 2>&1", A, RULE, SH), ("npm test 2>/dev/null", A, RULE, SH),
+    ("echo x >/dev/stderr", A, RULE, SH), ("echo x > /dev/stdout", A, RULE, SH), ("echo x >&2", A, RULE, SH),
+    ("cat se*/id_rsa", B, RULE, "block:secret-path"), ("cat se?/id_rsa", B, RULE, "block:secret-path"),
+    ("cat [s]ec/id_rsa", B, RULE, "block:secret-path"), ("echo x > r*", K, GRAY, "gray:outside-write"),
+    ("echo x > sub/.git/hooks/pre-commit", B, RULE, "block:git-hooks-config"),
+    ("cp evil sub/.git/hooks/pre-commit", B, RULE, "block:git-hooks-config"),
+    ("echo x > sub/.git/config", B, RULE, "block:git-hooks-config"),
+    ("echo x > sub/.git/info/exclude", K, GRAY, "gray:outside-write"),
+    ("git -C sub commit -m x", K, GRAY, None), ("cd sub && git commit -m x", K, GRAY, None),
+    ("git -C sub status", K, GRAY, None),
     ("echo x > link/f", K, GRAY, "gray:outside-write"), ("echo x > .git/info/exclude", K, GRAY, "gray:outside-write"),
     ("rm .git/index", K, GRAY, "gray:outside-write"), ("cp a .git/x", K, GRAY, "gray:outside-write"),
     ("mv . x", K, GRAY, "gray:outside-write"),
@@ -217,6 +227,12 @@ class GuardRulesTest(unittest.TestCase):
             os.makedirs(os.path.join(cls.wt, d))
         os.makedirs(cls.outside)
         os.symlink(cls.outside, os.path.join(cls.wt, "link"))
+        os.makedirs(os.path.join(cls.home, ".ssh"))
+        for f in (".ssh/id_rsa", ".bashrc"):
+            open(os.path.join(cls.home, f), "w").close()
+        os.symlink(os.path.join(cls.home, ".ssh"), os.path.join(cls.wt, "sec"))
+        os.symlink(os.path.join(cls.home, ".bashrc"), os.path.join(cls.wt, "rc"))
+        os.makedirs(os.path.join(cls.wt, "sub", ".git", "hooks"))
         for f in ("scripts/test.sh", "scripts/tool.py", "scripts/tool.js", "scripts/new.sh"):
             open(os.path.join(cls.wt, f), "w").close()
         cls.git = os.path.join(cls.wt, ".git")
@@ -357,6 +373,19 @@ class GuardRulesTest(unittest.TestCase):
         os.symlink(real, link)
         self.addCleanup(os.unlink, link)
         self.assertEqual(self.shell("cat %s/k" % real).rule, "block:secret-path")
+
+    def test_firmlink_paths_are_the_same_paths(self):
+        fl = "/System/Volumes/Data"
+        for cmd in (f"cat {fl}{self.home}/.ssh/id_rsa", f"ls {fl}{self.home}/.ssh", f"cat < {fl}{self.home}/.ssh/id_rsa"):
+            self.assertEqual(self.shell(cmd).rule, "block:secret-path", cmd)
+        self.assertEqual(self.shell(f"ls {fl}{self.home}/.config/herdr").rule, "block:canvas-control")
+        self.assertEqual(self.shell(f"ls {fl}{self.home}").source, "gray")
+        self.assertEqual(self.shell(f"echo x > {fl}{self.wt}/ok.txt").decision, "allow")
+        self.assertEqual(self.shell(f"echo x > {fl}{self.git}/hooks/h").rule, "block:git-hooks-config")
+        d = self.other("read", paths=[f"{fl}{self.home}/.ssh/id_rsa"])
+        self.assertEqual(d.rule, "block:secret-path")
+        self.assertEqual(self.other("write", paths=[f"{fl}{self.wt}/b.txt"]).decision, "allow")
+        self.assertEqual(self.other("write", paths=[f"{fl}{self.git}/config"]).decision, "block")
 
     # non-shell
     def test_non_shell_reads(self):

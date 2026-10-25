@@ -10,6 +10,8 @@ only where it provably ran; otherwise the cwd is unknown and path-dependent allo
 ctx.push_dest(remote, refspec) -> branch name or None, and ctx.is_pristine(path) -> bool, are
 called lazily; push_dest may return `origin/main` or `main`.
 """
+import glob
+import itertools
 import os
 import re
 from collections import namedtuple
@@ -48,19 +50,31 @@ def _under(p, d, ci=False):
     return p == d or p.startswith(d + "/")
 
 
+_FIRMLINK = "/System/Volumes/Data"
+_DOTGIT = re.compile(r"(^|/)\.git(/|$)", re.I)
+_GIT_CTRL = re.compile(r"(^|/)\.git/(hooks(/|$)|config(\.worktree)?$)", re.I)
+
+
+def _canon(p):
+    """The one way paths are compared: macOS firmlinks (realpath does not fold them) are stripped."""
+    return p[len(_FIRMLINK):] or "/" if p == _FIRMLINK or p.startswith(_FIRMLINK + "/") else p
+
+
+def _rp(a):
+    try:
+        return _canon(os.path.realpath(a))
+    except (OSError, ValueError):
+        return _canon(os.path.normpath(a))
+
+
 def _paths(text, cwd):
     a = os.path.join(cwd, text)
-    try:
-        return {os.path.normpath(a), os.path.realpath(a), os.path.realpath(os.path.normpath(a))}
-    except (OSError, ValueError):
-        return {os.path.normpath(a)}
+    n = _canon(os.path.normpath(a))
+    return {n, _rp(a), _rp(n)}
 
 
 def _real(text, cwd):
-    try:
-        return os.path.realpath(os.path.join(cwd, text))
-    except (OSError, ValueError):
-        return os.path.normpath(os.path.join(cwd, text))
+    return _rp(os.path.join(cwd, text))
 
 
 def _cluster(x):
@@ -93,11 +107,11 @@ def _nonopt(t):
 
 class _Env:
     def __init__(self, ctx):
-        self.ctx, self.wt = ctx, os.path.realpath(ctx.worktree)
+        self.ctx, self.wt = ctx, _rp(ctx.worktree)
 
         def both(*p):
             j = os.path.join(*p)
-            return {os.path.normpath(j), os.path.realpath(j)}
+            return {_canon(os.path.normpath(j)), _rp(j)}
 
         self.secrets = set().union(*[both(ctx.home, s) for s in SECRET_READS])
         self.canvas = set().union(*[both(ctx.home, s) for s in CANVAS_CONTROL_DIRS])
@@ -121,11 +135,21 @@ class _Env:
         return any(s.lower() != p.lower() and _under(s, p, True) for p in ps for s in self.secrets)
 
     def guarded(self, ps):
-        return (self.hit(ps, self.hooks) or any(p.lower() in self.cfg for p in ps)
+        return (self.hit(ps, self.hooks) or any(p.lower() in self.cfg or _GIT_CTRL.search(p) for p in ps)
                 or (self.dotgit_file and any(p.lower() == self.dotgit.lower() for p in ps)))
 
     def inside(self, real, strict=True):
-        return _under(real, self.wt) and not (strict and real == self.wt) and not self.hit({real}, self.gitdirs)
+        return (_under(real, self.wt) and not (strict and real == self.wt) and not self.hit({real}, self.gitdirs)
+                and not _DOTGIT.search(real[len(self.wt):]))
+
+    def nested(self, d):
+        """True if d is inside a repo nested below the worktree root."""
+        d = _rp(d)
+        while _under(d, self.wt) and d != self.wt:
+            if os.path.lexists(os.path.join(d, ".git")):
+                return True
+            d = os.path.dirname(d)
+        return False
 
 
 class _Seg:
@@ -168,8 +192,12 @@ def _split(toks):
     return segs, sub
 
 
+_NOWRITE = ("/dev/null", "/dev/stdout", "/dev/stderr")
+
+
 def _file_targets(seg):
-    return [w for op, w in seg.redirs if op in _WRITE_OPS and not (op in (">&", "&>") and re.fullmatch(r"\d+|-", w.text))]
+    return [w for op, w in seg.redirs if op in _WRITE_OPS and w.text not in _NOWRITE
+            and not (op in (">&", "&>") and re.fullmatch(r"\d+|-", w.text))]
 
 
 _WRITERS = {"rm", "mkdir", "rmdir", "touch", "mv", "tee", "chmod", "chown", "truncate", "dd", "cp", "ln", "install"}
@@ -313,8 +341,25 @@ def _inline(base, t):
     return False
 
 
+def _matches(env, cwd, t, write):
+    """Judge what a glob really reaches (symlinks included); None if nothing is wrong."""
+    for m in itertools.islice(glob.glob(os.path.join(cwd, t)), 200):
+        ps = _paths(m, cwd)
+        if env.secret(ps):
+            return blk("block:secret-path", f"{t} matches a credential path")
+        if env.canvas_(ps):
+            return blk("block:canvas-control", f"{t} matches a canvas control path")
+        if write and env.guarded(ps):
+            return blk("block:git-hooks-config", f"{t} matches a git hook or config file")
+        if write and not env.inside(_rp(m), strict=False):
+            return gry("gray:outside-write", f"{t} matches a path outside the worktree or in a git dir")
+    return None
+
+
 def _glob(seg, env, cwd, writer):
-    for x in seg.words[1:] + [w for op, w in seg.redirs if op != "<<<"]:
+    items = [(x, writer) for x in seg.words[1:]] + [(x, True) for x in _file_targets(seg)]
+    items += [(w, False) for op, w in seg.redirs if op == "<"]
+    for x, wr in items:
         t = x.text
         idx = [t.find(c) for c in "*?[" if c in t]
         if not idx:
@@ -328,6 +373,9 @@ def _glob(seg, env, cwd, writer):
                or (writer and partial.startswith(".")))
         if bad:
             return gry("gray:glob", f"{t} may match outside the worktree or inside a git dir")
+        m = _matches(env, cwd, t, wr)
+        if m:
+            return m
     return None
 
 
@@ -430,9 +478,11 @@ def _git_ok(sub, rest):
 
 def _h_git(t, args, env, cwd):
     if t[:1] == ["-C"]:
-        if len(t) < 2 or not env.inside(_real(t[1], cwd), strict=False):
+        if len(t) < 2 or not env.inside(_real(t[1], cwd), strict=False) and _real(t[1], cwd) != env.wt:
             return gry("gray:option", "git -C must name a path inside the worktree")
-        t = t[2:]
+        cwd, t = _real(t[1], cwd), t[2:]
+    if env.nested(cwd):
+        return gry("gray:nested-repo", "a repo nested in the worktree has hooks and config the guard does not own")
     sub, rest = _git_parts(t)
     if t[:1] and t[0].startswith("-"):
         return _opt("git global options other than -C are outside the grammar")
@@ -577,7 +627,7 @@ def _shell(call, env):
     segs, sub = _split(toks)
     if not segs:
         return gry("gray:subshell" if sub else "gray:empty", "nothing the guard can judge")
-    cwd, known, tainted, decs = os.path.realpath(call.cwd or env.ctx.worktree), True, False, []
+    cwd, known, tainted, decs = _rp(call.cwd or env.ctx.worktree), True, False, []
     for seg in segs:
         d = _segment(seg, env, cwd)
         if not known and d.decision == "allow":
@@ -618,7 +668,7 @@ def _other(call, env):
             return gry("gray:no-path", f"{call.tool} carried no path")
         worst = allow(f"allow:{kind}", f"{kind} outside secret and git-control paths")
         for p in call.paths:
-            ps = {os.path.normpath(p), os.path.realpath(p)}
+            ps = {_canon(os.path.normpath(p)), _rp(p)}
             if env.secret(ps):
                 return blk("block:secret-path", f"{p} is a credential path")
             if env.canvas_(ps):
@@ -627,7 +677,7 @@ def _other(call, env):
                 return blk("block:git-hooks-config", f"{p} is a git hook or config file")
             if kind == "read" and env.ancestor(ps):
                 worst = gry("gray:secret-ancestor", f"{p} contains credential paths a recursive read would reach")
-            if kind == "write" and not env.inside(os.path.realpath(p)) and _rank(worst) < 1:
+            if kind == "write" and not env.inside(_rp(p)) and _rank(worst) < 1:
                 worst = gry("gray:outside-write", f"{p} is outside the worktree or inside a git dir")
         return worst
     if call.tool == "oversized":
