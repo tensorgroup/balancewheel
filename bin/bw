@@ -7,6 +7,7 @@
   bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
   bw guard install agy                            add the guard hook entry to agy's hooks file
   bw guard uninstall agy                          remove it (other entries are left alone)
+  bw guard verify <runtime> [--lead <lead>]       attack-test the guard on a runtime, record a pass
   bw guard review [--profile P] [--recent 20] [--sample 5] [--list]
                                                   audit stops and sampled allows, one evidence key at a time
 """
@@ -18,6 +19,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from lead import containment, quota, runner, sandbox  # noqa: E402
+from lead.guard import verify as guard_verify  # noqa: E402
 from lead.guard import AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.paths import ConfigError, ROOT, load_config, read_json, state_dir  # noqa: E402
 from lead.projects import resolve_project  # noqa: E402
@@ -90,7 +92,34 @@ def cmd_verify(a, config, state):
     return 1
 
 
+def cmd_guard_verify(a, config, state):
+    ad = ADAPTERS.get(a.runtime)
+    if ad is None or ad.guard_argv is None:
+        print(f"bw: no guard attack for {a.runtime}", file=sys.stderr)
+        return 1
+    if a.runtime == "agy" and not AGY_SPIKE_PASSED:
+        print("bw: agy guard awaits its hook spike (Task 1b); set autonomy manual or bypass", file=sys.stderr)
+        return 1
+    lead = next((l for n, l in config["leads"].items() if l["runtime"] == a.runtime and (not a.lead or n == a.lead)), None)
+    if not lead:
+        print(f"bw: no lead in the config uses runtime {a.runtime}", file=sys.stderr)
+        return 1
+    which = sandbox.backend()
+    argv = guard_verify.script_argv(ROOT, a.runtime, lead, which, "{client}")
+    r = subprocess.run(argv, capture_output=True, text=True, errors="replace")
+    print(r.stdout.strip())
+    if r.returncode == 0 and r.stdout.startswith("PASS"):
+        key = containment.guard_key(a.runtime, ad.version_argv, which, ad.guard_hook_files())
+        containment.record_pass(state, a.runtime, key, r.stdout.split("evidence in ")[-1].strip(), store="guard-verify.json")
+        print(f"bw: recorded a guard pass for {a.runtime} on {which}")
+        return 0
+    print("bw: not recorded — a refusal by the model is inconclusive; re-run", file=sys.stderr)
+    return 1
+
+
 def cmd_guard(a, config, state):
+    if a.sub == "verify":
+        return cmd_guard_verify(a, config, state)
     if a.sub == "review":
         return guard_review.run(state, profile=a.profile, recent=a.recent, sample=a.sample, list_only=a.list)
     path = guard_install.hooks_path()
@@ -126,11 +155,12 @@ def main(argv=None):
     gd = sub.add_parser("guard"); gds = gd.add_subparsers(dest="sub", required=True)
     for name in ("install", "uninstall"):
         gds.add_parser(name).add_argument("runtime", choices=["agy"])
+    gv = gds.add_parser("verify"); gv.add_argument("runtime"); gv.add_argument("--lead", default=None)
     rv = gds.add_parser("review"); rv.add_argument("--profile", default=None)
     rv.add_argument("--recent", type=int, default=20); rv.add_argument("--sample", type=int, default=5)
     rv.add_argument("--list", action="store_true")
     a = ap.parse_args(argv)
-    if a.cmd == "guard" and a.sub != "review":  # touches only the hooks file, so it needs no config
+    if a.cmd == "guard" and a.sub not in ("review", "verify"):  # touches only the hooks file, so it needs no config
         return cmd_guard(a, None, None)
     try:
         config = load_config()
