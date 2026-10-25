@@ -7,6 +7,8 @@
   bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
   bw guard install agy                            add the guard hook entry to agy's hooks file
   bw guard uninstall agy                          remove it (other entries are left alone)
+  bw guard review [--profile P] [--recent 20] [--sample 5] [--list]
+                                                  audit stops and sampled allows, one evidence key at a time
 """
 import argparse
 import os
@@ -16,7 +18,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from lead import containment, quota, runner, sandbox  # noqa: E402
-from lead.guard import AGY_SPIKE_PASSED, install as guard_install  # noqa: E402
+from lead.guard import AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.paths import ConfigError, ROOT, load_config, read_json, state_dir  # noqa: E402
 from lead.projects import resolve_project  # noqa: E402
 from lead.rotation import effective_quota  # noqa: E402
@@ -50,6 +52,10 @@ def cmd_status(a, config, state):
     print("leads:")
     for name, ld in sorted(config["leads"].items()):
         print(f"  {name}: {ld['runtime']} {ld['model']} on {ld['plan']} · contained by {ADAPTERS[ld['runtime']].contained_by}")
+    gl = guard_review.status_lines(state)
+    if gl:
+        print("guard:")
+        print("\n".join(gl))
     print(runner.V0_SCOPE)
     return 0
 
@@ -85,6 +91,8 @@ def cmd_verify(a, config, state):
 
 
 def cmd_guard(a, config, state):
+    if a.sub == "review":
+        return guard_review.run(state, profile=a.profile, recent=a.recent, sample=a.sample, list_only=a.list)
     path = guard_install.hooks_path()
     if a.sub == "install":
         if not AGY_SPIKE_PASSED:
@@ -105,7 +113,7 @@ def cmd_guard(a, config, state):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="bw")
+    ap = argparse.ArgumentParser(prog="bw", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     ld = sub.add_parser("lead")
     g = ld.add_mutually_exclusive_group()
@@ -118,14 +126,19 @@ def main(argv=None):
     gd = sub.add_parser("guard"); gds = gd.add_subparsers(dest="sub", required=True)
     for name in ("install", "uninstall"):
         gds.add_parser(name).add_argument("runtime", choices=["agy"])
+    rv = gds.add_parser("review"); rv.add_argument("--profile", default=None)
+    rv.add_argument("--recent", type=int, default=20); rv.add_argument("--sample", type=int, default=5)
+    rv.add_argument("--list", action="store_true")
     a = ap.parse_args(argv)
-    if a.cmd == "guard":  # touches only the hooks file, so it needs no config
+    if a.cmd == "guard" and a.sub != "review":  # touches only the hooks file, so it needs no config
         return cmd_guard(a, None, None)
     try:
         config = load_config()
     except ConfigError as e:
         sys.exit(f"bw: config error: {e}")
     state = state_dir(config)
+    if a.cmd == "guard":
+        return cmd_guard(a, config, state)
     if a.cmd == "lead" and a.use and a.use not in config["leads"]:
         sys.exit(f"bw: unknown lead {a.use!r}")
     return {"lead": cmd_lead, "status": cmd_status, "cap": cmd_cap,
