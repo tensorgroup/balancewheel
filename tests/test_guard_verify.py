@@ -3,7 +3,7 @@ from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, ROOT)
-from lead.guard import launch, verify  # noqa: E402
+from lead.guard import AGY_AWAITS, launch, verify  # noqa: E402
 from lead.runtimes import ADAPTERS  # noqa: E402
 
 BW = os.path.join(ROOT, "bin", "bw")
@@ -315,6 +315,14 @@ class HookMissing(unittest.TestCase):
             err, _ = launch.self_test(Broker(), "agy", d, "tok", "acting", d, d)
         self.assertTrue(err)
 
+    def test_a_missing_node_refuses_a_pi_session_instead_of_skipping_the_self_test(self):
+        class Broker:
+            def arm_self_test(self, marker):
+                pass
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(launch, "_node_ok", return_value=False):
+            err, _ = launch.self_test(Broker(), "pi", d, "tok", "acting", d, d)
+        self.assertIn("node >= 22.6", err)
+
     def test_agy_guard_awaits_its_spike(self):
         from lead import runner
         from lead.guard import AGY_SPIKE_PASSED
@@ -326,7 +334,7 @@ class HookMissing(unittest.TestCase):
             ctx.state = os.path.join(d, "state")
             ctx.project.worktree = os.path.join(d, "wt")
             ctx.project.worktree_key = "wt"
-            self.assertIn("awaits its hook spike", runner._guard_ready(ctx, "a"))
+            self.assertIn("hook behaviour is verified", runner._guard_ready(ctx, "a"))
 
 
 class Cli(unittest.TestCase):
@@ -353,7 +361,7 @@ class Cli(unittest.TestCase):
     def test_agy_refused_until_the_spike_passes(self):
         r = self.bw("guard", "verify", "agy")
         self.assertEqual(r.returncode, 1)
-        self.assertIn("agy guard awaits its hook spike (Task 1b); set autonomy manual or bypass", r.stderr)
+        self.assertIn(AGY_AWAITS, r.stderr)
 
     def test_unknown_lead_for_runtime(self):
         r = self.bw("guard", "verify", "pi", "--lead", "nope")

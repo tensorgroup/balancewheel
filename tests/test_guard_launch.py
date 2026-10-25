@@ -72,5 +72,21 @@ class PristineTests(unittest.TestCase):
         self.assertFalse(c.is_pristine(os.path.join(wt, "a.sh")))
 
 
+class GitTimeoutTests(unittest.TestCase):
+    def test_a_hung_git_call_returns_a_failure_instead_of_blocking(self):
+        with mock.patch.object(handoff.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 5)) as run:
+            rc, out, err = handoff._git_rc("/tmp", "status")
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(run.call_args.kwargs["timeout"], handoff.GIT_TIMEOUT)
+
+    def test_timeouts_make_push_dest_unknown_and_nothing_pristine(self):
+        with tempfile.TemporaryDirectory() as d:
+            git(d, "init", "-q")
+            c = launch.rule_context(Project(d, d), PROFILE, "abc")
+            with mock.patch.object(handoff.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 5)):
+                self.assertIsNone(c.push_dest("origin", None))
+                self.assertFalse(c.is_pristine(os.path.join(d, "x.sh")))
+
+
 if __name__ == "__main__":
     unittest.main()

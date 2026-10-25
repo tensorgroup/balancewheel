@@ -20,7 +20,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from lead import containment, quota, runner, sandbox  # noqa: E402
 from lead.guard import verify as guard_verify  # noqa: E402
-from lead.guard import AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
+from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.paths import ConfigError, ROOT, load_config, read_json, state_dir  # noqa: E402
 from lead.projects import resolve_project  # noqa: E402
 from lead.rotation import effective_quota  # noqa: E402
@@ -98,7 +98,7 @@ def cmd_guard_verify(a, config, state):
         print(f"bw: no guard attack for {a.runtime}", file=sys.stderr)
         return 1
     if a.runtime == "agy" and not AGY_SPIKE_PASSED:
-        print("bw: agy guard awaits its hook spike (Task 1b); set autonomy manual or bypass", file=sys.stderr)
+        print(f"bw: {AGY_AWAITS}", file=sys.stderr)
         return 1
     lead = next((l for n, l in config["leads"].items() if l["runtime"] == a.runtime and (not a.lead or n == a.lead)), None)
     if not lead:
@@ -125,7 +125,7 @@ def cmd_guard(a, config, state):
     path = guard_install.hooks_path()
     if a.sub == "install":
         if not AGY_SPIKE_PASSED:
-            print("bw: agy guard awaits its hook spike (Task 1b); set autonomy manual or bypass", file=sys.stderr)
+            print(f"bw: {AGY_AWAITS}", file=sys.stderr)
             return 1
         try:
             print(guard_install.install_agy(path, state))

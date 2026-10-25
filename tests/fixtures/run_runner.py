@@ -1,11 +1,12 @@
 """Drive lead.runner.run with fake adapters (tests only).
 
 argv: run_runner.py <config.json> <worktree> [--use LEAD] [--auto] [--contained-by-bw RUNTIME]
-                    [--guard RUNTIME [--no-hook] [--no-spike]] [--fail-after-launch]
+                    [--guard RUNTIME [--no-hook] [--no-spike]] [--fail-after-launch] [--no-client] [--fail-in-poll]
 Every runtime maps to tests/fixtures/fake_lead.py; --contained-by-bw marks one as bw-contained
 (without a containment record), to test the refusal path. --guard RUNTIME makes every lead of that
 runtime guarded (autonomy "guard", source "config"), points BW_AGY_HOOKS at a temp hooks file with
 the entry installed (--no-hook: an empty one) and marks agy's hook spike as passed (--no-spike: not).
+--no-client points the session at an empty client source dir; --fail-in-poll makes the first poll_guard raise.
 --fail-after-launch makes the first give_terminal (called right after the lead is forked) raise.
 """
 import atexit, os, shutil, sys, tempfile
@@ -55,5 +56,13 @@ if "--fail-after-launch" in args:
             f.write(str(pgid))
         raise RuntimeError("injected failure after launch")
     runner.Context.give_terminal = _boom
+if "--no-client" in args:
+    from lead.guard import launch
+    launch.HERE = tempfile.mkdtemp(prefix="bw-noclient-")
+    atexit.register(shutil.rmtree, launch.HERE, ignore_errors=True)
+if "--fail-in-poll" in args:
+    def _poll(self, ctx):
+        raise RuntimeError("injected failure in the poll loop")
+    runner.Session.poll_guard = _poll
 sys.exit(runner.run(config, config["state_dir"], worktree, use=use, auto=auto, rating=False,
                     adapters=adapters, backend="sandbox-exec"))

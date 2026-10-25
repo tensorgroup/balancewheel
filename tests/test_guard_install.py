@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lead.guard import install  # noqa: E402
+from lead.guard import AGY_AWAITS, install  # noqa: E402
 from lead.guard.hook import INERT_ANSWER  # noqa: E402
 
 
@@ -93,7 +93,7 @@ class CliRefusal(unittest.TestCase):
             r = subprocess.run([sys.executable, str(root / "bin" / "bw"), "guard", "install", "agy"],
                                capture_output=True, text=True, env=env)
             self.assertNotEqual(r.returncode, 0)
-            self.assertIn("agy guard awaits its hook spike (Task 1b); set autonomy manual or bypass", r.stdout + r.stderr)
+            self.assertIn(AGY_AWAITS, r.stdout + r.stderr)
             self.assertFalse(os.path.exists(hooks))
             r = subprocess.run([sys.executable, str(root / "bin" / "bw"), "guard", "uninstall", "agy"],
                                capture_output=True, text=True, env=env)

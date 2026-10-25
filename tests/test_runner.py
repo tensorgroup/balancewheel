@@ -6,6 +6,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT)); sys.path.insert(0, str(ROOT / "metrics"))
 import store  # noqa: E402
 from lead import quota  # noqa: E402
+from lead.guard import AGY_AWAITS  # noqa: E402
 
 DRIVER = str(HERE / "fixtures" / "run_runner.py")
 BW = str(ROOT / "bin" / "bw")
@@ -298,6 +299,23 @@ class GuardRunner(RunnerCase):
         self.assertEqual(b["probe"]["decision"], "allow")  # the session's token, not the stale one
         self.assertNotIn("BW_GUARD_EXTRA", b["guard_env"])
 
+    def test_a_missing_client_source_exits_7_not_a_traceback(self):
+        p = self.start("--use", "lb", "--guard", "pi", "--no-client")
+        out = p.communicate(timeout=30)[0]
+        self.assertEqual(p.returncode, 7, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn("guard cannot start", out)
+        self.assertIsNone(self.fake("b"))
+
+    def test_an_exception_in_the_poll_loop_stops_the_lead_and_still_logs_the_guard_event(self):
+        p = self.start("--use", "lb", "--guard", "pi", "--fail-in-poll", env={"FAKE_MODE_b": "sleep"})
+        out = p.communicate(timeout=30)[0]
+        self.assertNotEqual(p.returncode, 0, out)
+        self.assertIn("injected failure in the poll loop", out)
+        self.assertEqual(len(self.events("guards")), 1)
+        self.assertFalse((self.state / "guard" / self.key() / "sock").exists())
+        self.assertFalse(_alive_group(self.fake("b")["pgid"]), "the lead kept running unguarded")
+
     def test_failure_after_launch_stops_the_lead_and_the_broker(self):
         p = self.start("--use", "lb", "--guard", "pi", "--fail-after-launch", env={"FAKE_MODE_b": "sleep"})
         out = p.communicate(timeout=30)[0]
@@ -326,7 +344,7 @@ class GuardRunner(RunnerCase):
     def test_guarded_agy_refused_until_the_hook_spike_passed(self):
         p = self.start("--use", "lc", "--guard", "agy", "--no-spike")
         self.assertEqual(p.wait(15), 7)
-        self.assertIn("agy guard awaits its hook spike (Task 1b); set autonomy manual or bypass", p.stdout.read())
+        self.assertIn(AGY_AWAITS, p.stdout.read())
         self.assertIsNone(self.fake("c"))
 
     def test_cap_switch_onto_unready_guarded_lead_stays_put(self):

@@ -165,12 +165,15 @@ class Session:
         """Clients copied where no lead can write, stale markers reported, the socket bound and
         self-tested, then paused so no thread of ours is alive when the lead is forked."""
         gdir = os.path.join(ctx.state, "guard", ctx.project.worktree_key)
-        os.makedirs(gdir, mode=0o700, exist_ok=True)
-        for name in ("hook.py", "pi_guard.ts"):
-            tmp = os.path.join(gdir, f".{name}.{os.getpid()}.tmp")
-            shutil.copyfile(os.path.join(launch.HERE, name), tmp)
-            os.chmod(tmp, 0o444)
-            os.replace(tmp, os.path.join(gdir, name))
+        try:
+            os.makedirs(gdir, mode=0o700, exist_ok=True)
+            for name in ("hook.py", "pi_guard.ts"):
+                tmp = os.path.join(gdir, f".{name}.{os.getpid()}.tmp")
+                shutil.copyfile(os.path.join(launch.HERE, name), tmp)
+                os.chmod(tmp, 0o444)
+                os.replace(tmp, os.path.join(gdir, name))
+        except OSError as e:
+            raise GuardUnavailable(f"guard cannot start: the guard clients could not be installed ({e})")
         stale = launch.read_markers(self.markers_path)
         if stale:
             ctx.say(launch.marker_notice(stale, "in the previous session"))
@@ -346,7 +349,7 @@ def _guard_ready(ctx, lead_name):
         return f"the guard state dir must be outside the worktree: {e}"
     if lead["runtime"] == "agy":
         if not guardpkg.AGY_SPIKE_PASSED:
-            return "agy guard awaits its hook spike (Task 1b); set autonomy manual or bypass"
+            return guardpkg.AGY_AWAITS
         if not guard_install.agy_installed(guard_install.hooks_path()):
             return "the agy guard hook is not installed; run `bw guard install agy`"
     sock = os.path.join(ctx.state, "guard", ctx.project.worktree_key, "sock")
@@ -446,56 +449,67 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         ctx.say(f"bw: {current} ({session.lead['runtime']}) leading {project.worktree} — {d.reason}")
         switched = False
         next_poll = time.time() + poll_s
-        while session.proc.poll() is None:
-            time.sleep(0.1)
-            if time.time() < next_poll:
-                continue
-            next_poll = time.time() + poll_s
-            session.poll_guard(ctx)
-            # A contained lead cannot write bw's caps; its hook drops cap-signal in its own
-            # checkpoint dir instead, and bw records the cap for the current plan.
-            sig = os.path.join(checkpoint_dir(state, project.worktree_key), "cap-signal")
-            if os.path.lexists(sig):
-                os.remove(sig)
-                quotamod.record_cap(state, session.lead["plan"], time.time(),
-                                    expiry_hours=rot["cap_expiry_hours"], source="lead-hook")
-            q, caps = now_state()
-            d = rotation.decide(profile, config["leads"], rot, current, pinned, q, caps, time.time(), "running")
-            if d.reason == "none-eligible":
-                if not warned:
-                    ctx.say(f"bw: {d.notice}")
-                    warned = True
-                continue
-            if d.lead != current and not _verified(ctx, d.lead):
-                if not warned:
-                    rt = config["leads"][d.lead]["runtime"]
-                    ctx.say(f"bw: {current} is capped but {d.lead} has no verified containment; "
-                            f"run `bw sandbox verify {rt}` (staying on {current})")
-                    warned = True
-                continue
-            why = _guard_ready(ctx, d.lead) if d.lead != current else None
-            if why:
-                if not warned:
-                    ctx.say(f"bw: {current} is capped but {d.lead} cannot start: {why} (staying on {current})")
-                    warned = True
-                continue
-            if d.lead != current:
-                # The terminal goes back to bw only after the lead's group is gone: a TUI that
-                # restores the terminal on SIGTERM must still own it, or it stops on SIGTTOU.
-                session.stop(grace)
+        try:
+            while session.proc.poll() is None:
+                time.sleep(0.1)
+                if time.time() < next_poll:
+                    continue
+                next_poll = time.time() + poll_s
+                session.poll_guard(ctx)
+                # A contained lead cannot write bw's caps; its hook drops cap-signal in its own
+                # checkpoint dir instead, and bw records the cap for the current plan.
+                sig = os.path.join(checkpoint_dir(state, project.worktree_key), "cap-signal")
+                if os.path.lexists(sig):
+                    os.remove(sig)
+                    quotamod.record_cap(state, session.lead["plan"], time.time(),
+                                        expiry_hours=rot["cap_expiry_hours"], source="lead-hook")
+                q, caps = now_state()
+                d = rotation.decide(profile, config["leads"], rot, current, pinned, q, caps, time.time(), "running")
+                if d.reason == "none-eligible":
+                    if not warned:
+                        ctx.say(f"bw: {d.notice}")
+                        warned = True
+                    continue
+                if d.lead != current and not _verified(ctx, d.lead):
+                    if not warned:
+                        rt = config["leads"][d.lead]["runtime"]
+                        ctx.say(f"bw: {current} is capped but {d.lead} has no verified containment; "
+                                f"run `bw sandbox verify {rt}` (staying on {current})")
+                        warned = True
+                    continue
+                why = _guard_ready(ctx, d.lead) if d.lead != current else None
+                if why:
+                    if not warned:
+                        ctx.say(f"bw: {current} is capped but {d.lead} cannot start: {why} (staying on {current})")
+                        warned = True
+                    continue
+                if d.lead != current:
+                    # The terminal goes back to bw only after the lead's group is gone: a TUI that
+                    # restores the terminal on SIGTERM must still own it, or it stops on SIGTTOU.
+                    session.stop(grace)
+                    ctx.take_terminal()
+                    session.finish_guard(ctx)
+                    ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
+                             "session_id": session.id, "reason": "switch"})
+                    ctx.log({"type": "lead", "project": project.worktree_key,
+                             "from": {"lead": current, "runtime": session.lead["runtime"], "model": session.lead["model"]},
+                             "to": {"lead": d.lead, "runtime": config["leads"][d.lead]["runtime"],
+                                    "model": config["leads"][d.lead]["model"]},
+                             "reason": d.reason, "quota": q})
+                    handoff = build_handoff(project.worktree, session.head, state, project.worktree_key, [])
+                    ctx.say(f"bw: {current} is capped; handing off to {d.lead}")
+                    current, switched = d.lead, True
+                    break
+        except BaseException:
+            # bw is failing with a lead running: stop it (and its broker) rather than leave it
+            # running unguarded with no log, then let the error surface
+            try:
+                if session.group_alive():
+                    session.stop(grace)
+            finally:
                 ctx.take_terminal()
                 session.finish_guard(ctx)
-                ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
-                         "session_id": session.id, "reason": "switch"})
-                ctx.log({"type": "lead", "project": project.worktree_key,
-                         "from": {"lead": current, "runtime": session.lead["runtime"], "model": session.lead["model"]},
-                         "to": {"lead": d.lead, "runtime": config["leads"][d.lead]["runtime"],
-                                "model": config["leads"][d.lead]["model"]},
-                         "reason": d.reason, "quota": q})
-                handoff = build_handoff(project.worktree, session.head, state, project.worktree_key, [])
-                ctx.say(f"bw: {current} is capped; handing off to {d.lead}")
-                current, switched = d.lead, True
-                break
+            raise
         if switched:
             continue
         ctx.take_terminal()

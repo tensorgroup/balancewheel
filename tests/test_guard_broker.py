@@ -369,5 +369,15 @@ class TestRecord(unittest.TestCase):
         self.assertNotEqual(a, record.policy_digest(["main"], []))
 
 
+class TestBindFailure(BrokerBase):
+    def test_a_failed_chmod_after_bind_leaves_no_socket_behind(self):
+        b = brk.Broker(self.state, os.path.join(self.tmp, "g2"), TOKEN, "shadow", dict(SESSION), self.ctx())
+        with mock.patch("lead.guard.broker.os.chmod", side_effect=OSError("no")):
+            with self.assertRaises(OSError):
+                b.bind()
+        self.assertFalse(os.path.lexists(b.sock_path))
+
+
 if __name__ == "__main__":
     unittest.main()
+

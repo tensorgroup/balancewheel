@@ -128,7 +128,7 @@ def _self_test(broker, runtime, guard_dir, token, mode, worktree, state_dir):
     try:
         if runtime == "pi":
             if not _node_ok():
-                return None, "bw: node >= 22.6 not found; the pi guard client was not self-tested"
+                return "node >= 22.6 not found; the pi guard client needs it", note
             with tempfile.TemporaryDirectory(prefix="bw-selftest-") as d:
                 sc = os.path.join(d, "scenario.json")
                 with open(sc, "w") as f:

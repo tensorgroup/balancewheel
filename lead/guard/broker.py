@@ -87,6 +87,10 @@ class Broker:
             s.settimeout(0.1)
         except BaseException:
             s.close()
+            try:
+                os.unlink(self.sock_path)  # bound but not usable: do not leave it for the next start to trip on
+            except OSError:
+                pass
             raise
         self._listener = s
 

@@ -8,6 +8,7 @@ import hashlib
 import os
 
 AGY_SPIKE_PASSED = False
+AGY_AWAITS = "agy guard is unavailable until agy's hook behaviour is verified; set autonomy manual or bypass"
 DECIDING = ("lexer.py", "rules.py", "normalise.py", "redact.py")
 HERE = os.path.dirname(os.path.realpath(__file__))
 

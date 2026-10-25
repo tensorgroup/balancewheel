@@ -12,6 +12,7 @@ import subprocess
 HERE = os.path.dirname(os.path.realpath(__file__))
 SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
         "-c", "core.attributesFile=/dev/null", "--no-pager"]
+GIT_TIMEOUT = 5  # seconds: a hung git call must not hold a broker worker or bw
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # attributes read from here: no filters run
 
 
@@ -20,7 +21,11 @@ def _git_rc(worktree, *args):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["GIT_OPTIONAL_LOCKS"] = "0"
     env["GIT_ATTR_SOURCE"] = EMPTY_TREE  # git >= 2.42: ignore the worktree's .gitattributes (clean/smudge filters)
-    r = subprocess.run(["git", "-C", worktree, *SAFE, *args], capture_output=True, text=True, env=env)
+    try:
+        r = subprocess.run(["git", "-C", worktree, *SAFE, *args], capture_output=True, text=True, env=env,
+                           timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return 124, "", f"git {args[0]} timed out after {GIT_TIMEOUT}s"
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
 
