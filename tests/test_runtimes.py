@@ -83,7 +83,7 @@ class Flags(unittest.TestCase):
 
     def test_guard_argv(self):
         pi = A["pi"].guard_argv(lead("pi", "guard"), "/c")
-        self.assertEqual(pi, ["pi", "-p", "--model", "m1", "-e", "/c/pi_guard.ts"])
+        self.assertEqual(pi, ["pi", "-p", "--mode", "json", "--model", "m1", "-e", "/c/pi_guard.ts"])
         self.assertNotIn("--no-extensions", pi)
         self.assertEqual(A["agy"].guard_argv(lead("agy", "guard"), "/c"),
                          ["agy", "-p", "--model", "m1", "--sandbox", "--dangerously-skip-permissions"])

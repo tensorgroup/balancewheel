@@ -101,7 +101,7 @@ ADAPTERS = {
         verify_argv=lambda lead: ["pi", "-p", "--model", lead["model"], "--no-session", "--no-extensions"],
         verify_flags=lambda lead: ["--read", _real("~/.volta"), "--write", _real("~/.pi/agent")]
                                   + [f for p in PI_CODE for f in ("--deny-write", _real(f"~/.pi/agent/{p}"))],
-        guard_argv=lambda lead, client_dir: ["pi", "-p", "--model", lead["model"], "-e", os.path.join(client_dir, "pi_guard.ts")],
+        guard_argv=lambda lead, client_dir: ["pi", "-p", "--mode", "json", "--model", lead["model"], "-e", os.path.join(client_dir, "pi_guard.ts")],
         guard_hook_files=lambda: [os.path.join(_guard_install.pi_agent_dir(), "settings.json"),
                                   os.path.join(_guard_install.pi_agent_dir(), "extensions")]),
     "kimi": Adapter(
