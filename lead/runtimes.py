@@ -38,12 +38,16 @@ def autonomy_flags(runtime, lead, client_dir):
         return []
     flags = AUTONOMY_FLAGS.get(runtime, {}).get(lead.get("autonomy"), [])
     if "{client}" in " ".join(flags) and not client_dir:
-        return []  # a guarded pi lead is launched with its client dir (Task 7); without one, nothing to load
+        raise ValueError("guarded pi lead needs a client dir")
     return [f.replace("{client}", os.path.join(client_dir or "", "pi_guard.ts")) for f in flags]
 
 
-def _guarded_pi(lead):
-    return lead.get("autonomy_source", "legacy") != "legacy" and lead.get("autonomy") == "guard"
+def _pi_read_grants(lead, client_dir):
+    if lead.get("autonomy_source", "legacy") != "legacy" and lead.get("autonomy") == "guard":
+        if not client_dir:
+            raise ValueError("guarded pi lead needs a client dir")
+        return [client_dir]
+    return []
 
 
 def _real(p):
@@ -90,7 +94,7 @@ ADAPTERS = {
             ["pi", "--model", lead["model"], *autonomy_flags("pi", lead, client_dir), *lead.get("args", [])], prompt),
         contained_by="bw",
         grants=lambda lead, client_dir=None: RuntimeGrants(
-            read=["~/.volta"] + ([client_dir] if client_dir and _guarded_pi(lead) else []),
+            read=["~/.volta"] + _pi_read_grants(lead, client_dir),
             write=[_real("~/.pi/agent")], env={}, private_home=False,
             deny_write=[_real(f"~/.pi/agent/{p}") for p in PI_CODE]),
         prompt_mode="arg", version_argv=["pi", "--version"],

@@ -46,18 +46,25 @@ def verification_key(runtime, version_argv, backend):
             "adapter_sha": _sha(os.path.join(HERE, "runtimes.py"))}
 
 
-def _manifest(path):
-    """Content manifest for one hook file or directory: shas, sorted relative paths, links recorded as links."""
+def _manifest(path, seen=()):
+    """Content manifest for one hook file or directory: shas, sorted relative paths, links recorded as
+    links and followed (a linked directory is hashed too; a cycle is recorded, not followed)."""
+    real = os.path.realpath(path)
     if os.path.islink(path):
-        return {"link": os.readlink(path), "target": _manifest(os.path.realpath(path))}
+        return {"link": os.readlink(path), "target": _manifest(real, seen)}
     if os.path.isdir(path):
+        if real in seen:
+            return {"cycle": True}
+        seen = seen + (real,)
         out = {}
         for root, dirs, files in os.walk(path):
             dirs.sort()
-            for n in sorted(files + [d for d in dirs if os.path.islink(os.path.join(root, d))]):
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+            linked = [d for d in sorted(os.listdir(root)) if os.path.islink(os.path.join(root, d)) and os.path.isdir(os.path.join(root, d))]
+            for n in sorted(files) + linked:
                 full = os.path.join(root, n)
                 rel = os.path.relpath(full, path)
-                out[rel] = ("link:" + os.readlink(full) + ":" + _sha(os.path.realpath(full))) if os.path.islink(full) else _sha(full)
+                out[rel] = _manifest(full, seen) if os.path.islink(full) else _sha(full)
         return {"dir": out}
     return {"sha": _sha(path), "scripts": _named_scripts(path)}
 

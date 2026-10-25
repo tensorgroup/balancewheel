@@ -67,8 +67,15 @@ class Flags(unittest.TestCase):
         g = A["pi"].grants(lead("pi", "guard"), client_dir="/c")
         self.assertIn("/c", g.read)
         self.assertNotIn("/c", A["pi"].grants(lead("pi", "bypass"), client_dir="/c").read)
-        self.assertNotIn("/c", A["pi"].grants(lead("pi", "guard")).read)
         self.assertEqual(A["pi"].grants(lead("pi", "bypass", "legacy")), A["pi"].grants(lead("pi", "bypass")))
+
+    def test_guarded_pi_without_client_dir_raises(self):
+        with self.assertRaisesRegex(ValueError, "guarded pi lead needs a client dir"):
+            A["pi"].grants(lead("pi", "guard"))
+        with self.assertRaisesRegex(ValueError, "guarded pi lead needs a client dir"):
+            runtimes.autonomy_flags("pi", lead("pi", "guard"), None)
+        with self.assertRaises(ValueError):
+            A["pi"].argv(lead("pi", "guard"), "hi", [])
 
     def test_other_grants_accept_client_dir(self):
         for rt in ("claude-code", "codex", "agy", "kimi"):

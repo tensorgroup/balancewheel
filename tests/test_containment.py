@@ -48,6 +48,16 @@ class GuardKey(unittest.TestCase):
         k = self.key(); os.unlink(self.ext / "l.ts"); (self.ext / "l.ts").symlink_to(self.script)
         self.assertNotEqual(k, self.key())
 
+    def test_changes_on_edit_inside_linked_extension_dir(self):
+        other = self.d / "other"; other.mkdir(); (other / "x.ts").write_text("a")
+        (self.ext / "linked").symlink_to(other)
+        k = self.key(); (other / "x.ts").write_text("b")
+        self.assertNotEqual(k, self.key())
+
+    def test_symlink_cycle_terminates(self):
+        (self.ext / "loop").symlink_to(self.ext)
+        self.key()
+
     def test_changes_on_guard_version_and_runtime_version(self):
         k = self.key()
         with mock.patch.object(containment, "guard_version", return_value="other"):
