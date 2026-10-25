@@ -4,7 +4,8 @@ shlex would read a newline as whitespace and drop the difference between `;` and
 second command into an argument of the first. This one yields Word(text, quoted, unexpanded) and
 Op(op). A word is unexpanded when the shell would rewrite it in a way the guard cannot see: an
 unquoted or double-quoted `$` or backtick, an unquoted backslash, an unquoted `{` (brace
-expansion), or a `~user`. A leading `~` or `~/` becomes `home`. Quoted text is data. Unterminated
+expansion), or a `~user`. A leading `~` or `~/` becomes `home`. Quoted text is data. An unquoted `#` at the start of a word begins a comment that runs to the end of the line.
+Unterminated
 quotes raise ValueError; heredoc and subshell bodies are not parsed (the rules treat them as gray).
 """
 from collections import namedtuple
@@ -42,6 +43,9 @@ def lex(command, home):
             flush()
             out.append(Op("\n"))
             i += 1
+        elif c == "#" and not have:  # a comment: the rest of the line is not the shell's input
+            j = command.find("\n", i)
+            i = n if j < 0 else j
         elif c == "'":
             j = command.find("'", i + 1)
             if j < 0:

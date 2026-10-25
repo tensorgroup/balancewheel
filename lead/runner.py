@@ -184,7 +184,7 @@ class Session:
                    "lead": self.lead_name, "runtime": rt, "runtime_version": version}
         token = secrets.token_hex(16)
         try:
-            rules_ctx = launch.rule_context(ctx.project, ctx.config["profiles"][profile])
+            rules_ctx = launch.rule_context(ctx.project, ctx.config["profiles"][profile], self.head)
             self.broker = brk.Broker(ctx.state, gdir, token, mode, session, rules_ctx)
             self.broker.bind()
         except (ValueError, OSError, subprocess.SubprocessError) as e:

@@ -25,8 +25,29 @@ class GuardUnavailable(Exception):
     """A guarded lead cannot start; the message is what bw prints."""
 
 
-def rule_context(project, profile):
+def head_of(worktree):
+    rc, out, _ = _git_rc(worktree, "rev-parse", "HEAD")
+    return out if rc == 0 and out else None
+
+
+def pristine_checker(worktree, head):
+    """is_pristine(path): the path is tracked at `head` (the commit the session started on) and
+    the working tree has not changed it since. Comparing to the moving HEAD would let a lead
+    commit a script it wrote and then run it as repo code."""
+    def is_pristine(path):
+        rel = os.path.relpath(path, worktree)
+        if rel.startswith("..") or not head:
+            return False
+        if _git_rc(worktree, "cat-file", "-e", f"{head}:{rel}")[0] != 0:
+            return False
+        return _git_rc(worktree, "diff", "--quiet", "--no-ext-diff", "--no-textconv", head, "--", rel)[0] == 0
+    return is_pristine
+
+
+def rule_context(project, profile, head=None):
+    """`head` is the commit the session started on (the standalone broker passes None: HEAD now)."""
     wt = project.worktree
+    head = head or head_of(wt)
 
     def push_dest(remote, refspec):
         rc, out, _ = _git_rc(wt, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}")
@@ -35,17 +56,9 @@ def rule_context(project, profile):
         rc, out, _ = _git_rc(wt, "branch", "--show-current")  # a bare `push`/`HEAD` lands on the same name
         return out if rc == 0 and out else None
 
-    def is_pristine(path):
-        rel = os.path.relpath(path, wt)
-        if rel.startswith(".."):
-            return False
-        if _git_rc(wt, "ls-files", "--error-unmatch", "--", rel)[0] != 0:
-            return False
-        return _git_rc(wt, "diff", "--quiet", "--no-ext-diff", "--no-textconv", "HEAD", "--", rel)[0] == 0
-
     return RuleContext(worktree=wt, git_dir=sandbox._git_dir(wt), common_dir=project.common_dir,
                        home=os.path.expanduser("~"), protected_branches=list(profile["protected_branches"]),
-                       deploy_commands=list(profile["deploy_commands"]), push_dest=push_dest, is_pristine=is_pristine)
+                       deploy_commands=list(profile["deploy_commands"]), push_dest=push_dest, is_pristine=pristine_checker(wt, head))
 
 
 def read_markers(path):

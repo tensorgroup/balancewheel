@@ -25,6 +25,13 @@ class LexerTest(unittest.TestCase):
         self.assertFalse(lex("echo '$X'", H)[1].unexpanded)
         self.assertEqual(lex('echo "a\\"b"', H)[1], Word('a"b', True, False))
 
+    def test_an_unquoted_hash_at_a_word_start_ends_the_command_at_the_line_end(self):
+        self.assertEqual(lex("ls # ~/.ssh", H), [Word("ls", False, False)])
+        self.assertEqual(lex("ls #x\nb", H), [Word("ls", False, False), Op("\n"), Word("b", False, False)])
+        self.assertEqual(lex("ls;#x", H), [Word("ls", False, False), Op(";")])
+        for src, n in (("echo a#b", 2), ("echo '#x'", 2), ('echo "#x"', 2), ("echo \\#x", 2), ("echo $#", 2)):
+            self.assertEqual(len(lex(src, H)), n, src)
+
     def test_tilde_expands_only_at_word_start(self):
         self.assertEqual(lex("cat ~/x", H)[1], Word("/home/u/x", False, False))
         self.assertEqual(lex("cat ~", H)[1], Word("/home/u", False, False))

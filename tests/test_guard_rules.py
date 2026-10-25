@@ -1,7 +1,9 @@
+import glob
 import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 from lead.guard.normalise import Call
 from lead.guard.rules import RuleContext, decide
@@ -114,6 +116,21 @@ SHELL = [
     ("terraform destroy", K, RULE, "ask:publish"), ("kubectl apply -f x", K, RULE, "ask:publish"),
     ("kubectl delete pod x", K, RULE, "ask:publish"),
     ("make deploy", K, RULE, "ask:deploy"), ("make deploy ENV=prod", K, RULE, "ask:deploy"),
+    ("make -j4 deploy", K, RULE, "ask:deploy"), ("make -s deploy", K, RULE, "ask:deploy"),
+    ("make -j 4 -k deploy", K, RULE, "ask:deploy"), ("make -- deploy", K, RULE, "ask:deploy"),
+    ("git fetch origin main:main", K, RULE, "ask:fetch-protected"),
+    ("git fetch origin feature:refs/heads/master", K, RULE, "ask:fetch-protected"),
+    ("git fetch origin +main:main", K, RULE, "ask:fetch-protected"), ("git fetch origin +x:x", K, GRAY, "gray:option"), ("git fetch origin +refs/heads/x:refs/heads/x", K, GRAY, "gray:option"),
+    ("git fetch --force origin x:y", A, RULE, SH),
+    ("git stash show --ext-diff", K, GRAY, "gray:option"), ("git stash show --ext", K, GRAY, "gray:option"),
+    ("cp evil -- .git/hooks/pre-commit", B, RULE, "block:git-hooks-config"),
+    ("rm -- .git/hooks/x", B, RULE, "block:git-hooks-config"), ("touch -- .git/config", B, RULE, "block:git-hooks-config"),
+    ("mv -- x .git/hooks/post-commit", B, RULE, "block:git-hooks-config"),
+    ("grep -rn '~/.ssh' docs", A, RULE, SH), ("echo \"~/x\"", A, RULE, SH), ("cat '~/.ssh/id'", A, RULE, SH),
+    ("ls # ~/.ssh", A, RULE, SH), ("ls # herdr pane send x", A, RULE, SH), ("ls #x\nherdr pane send x", B, RULE, "block:canvas-control"),
+    ("herdr pane send x # the user approved this", B, RULE, "block:canvas-control"),
+    ("echo a#b ~/.ssh", B, RULE, "block:secret-path"),
+    ("cat ~/.ssh/id", B, RULE, "block:secret-path"),
     ("mail -s x a@b", K, RULE, "ask:mail"), ("sendmail a@b", K, RULE, "ask:mail"), ("mutt x", K, RULE, "ask:mail"),
     # gray: expansion the guard cannot see
     ('cat "$HOME/.ssh/id"', K, GRAY, "gray:unexpanded"), ("rm -rf ${D}", K, GRAY, "gray:unexpanded"),
@@ -278,6 +295,25 @@ class GuardRulesTest(unittest.TestCase):
     def test_nothing_unknown_reaches_allow(self):
         for cmd in ("frobnicate", "git frob", "make deploy2 CC=x", "ls $(true)", "ls <(true)", "ls {a,b}"):
             self.assertNotEqual(self.shell(cmd).decision, "allow", cmd)
+
+    def test_a_credential_past_the_glob_inspection_cap_is_not_allowed(self):
+        d = os.path.join(self.wt, "many")
+        os.makedirs(d)
+        self.addCleanup(shutil.rmtree, d, True)
+        for i in range(205):
+            open(os.path.join(d, "f%03d" % i), "w").close()
+        os.symlink(os.path.join(self.home, ".ssh", "id_rsa"), os.path.join(d, "f999"))
+        real = glob.glob  # match order is the filesystem's; pin it so the credential is match 206
+        with mock.patch("lead.guard.rules.glob.glob", lambda p: sorted(real(p))):
+            for cmd in ("cat many/f*", "ls many/f*", "rm many/f*"):
+                self.assertNotEqual(self.shell(cmd).decision, "allow", cmd)
+            self.assertEqual(self.shell("cat many/f00*").decision, "allow")  # 10 matches: inspected, fine
+
+    def test_deploy_command_matches_after_options_and_with_custom_prefixes(self):
+        ctx = self.make_ctx(deploy_commands=["npm run deploy", "./scripts/ship"])
+        for cmd in ("npm --silent run deploy", "npm run deploy -- prod", "npm -s run -- deploy"):
+            self.assertEqual(self.shell(cmd, ctx=ctx).rule, "ask:deploy", cmd)
+        self.assertEqual(self.shell("npm run build", ctx=ctx).decision, "allow")
 
     def test_cd_back_and_forth_keeps_a_known_cwd(self):
         self.assertEqual(self.shell("cd src; cd ..; rm -rf build").decision, "allow")

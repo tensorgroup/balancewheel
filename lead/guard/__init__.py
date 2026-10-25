@@ -12,8 +12,9 @@ DECIDING = ("lexer.py", "rules.py", "normalise.py", "redact.py")
 HERE = os.path.dirname(os.path.realpath(__file__))
 
 
-def _hash(directory, names):
+def _hash(directory, names, extra=""):
     h = hashlib.sha256()
+    h.update(extra.encode() + b"\0")
     for n in names:
         h.update(n.encode() + b"\0")
         with open(os.path.join(directory, n), "rb") as f:
@@ -22,7 +23,9 @@ def _hash(directory, names):
 
 
 def rules_version(directory=None):
-    return _hash(directory or HERE, DECIDING)
+    # the rules import these lists from the sandbox module: a change there changes decisions
+    from lead import sandbox
+    return _hash(directory or HERE, DECIDING, repr((sandbox.SECRET_READS, sandbox.CANVAS_CONTROL_DIRS)))
 
 
 def guard_version(directory=None):

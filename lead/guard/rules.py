@@ -95,6 +95,17 @@ def _has(t, shorts="", longs=()):
     return False
 
 
+def _operands(t):
+    """Every non-option word, including all of those after `--` (where a leading dash is data)."""
+    out, end = [], False
+    for x in t:
+        if not end and x == "--":
+            end = True
+        elif end or not x.startswith("-"):
+            out.append(x)
+    return out
+
+
 def _nonopt(t):
     out = []
     for x in t:
@@ -210,12 +221,17 @@ def _s_block(seg, env, cwd):
     base, args = os.path.basename(name), [x.text for x in w[1:]]
     if (base.lower() == "orca" and "terminal" in args) or (base.lower() == "herdr" and "pane" in args):
         return blk("block:canvas-control", f"{base} drives the canvas")
-    texts = [x.text for x in w] + [x.text for op, x in seg.redirs if op not in ("<<", "<<<")]
-    for t in texts:
+    words = list(w) + [x for op, x in seg.redirs if op not in ("<<", "<<<")]
+    for word in words:
+        t = word.text
         if "core.hookspath" in t.lower():
             return blk("block:hooks-path", "core.hooksPath would run attacker-chosen hooks")
         for c in {t, t.partition("=")[2]}:
+            # the lexer expanded a leading unquoted ~; this is for the one after `=`, which a quoted
+            # word never has (inside quotes `~` is literal to the shell)
             if c.startswith("~") and c[1:2] in ("", "/"):
+                if word.quoted:
+                    continue
                 c = env.ctx.home + c[1:]
             if not c:
                 continue
@@ -226,7 +242,7 @@ def _s_block(seg, env, cwd):
                 return blk("block:canvas-control", f"{c} is a canvas control path")
     targets = [x.text for x in _file_targets(seg)]
     if base in _WRITERS:
-        pos = [a[3:] if base == "dd" and a.startswith("of=") else a for a in _nonopt(args)]
+        pos = [a[3:] if base == "dd" and a.startswith("of=") else a for a in _operands(args)]
         targets += pos[-1:] if base in _LAST_ONLY else pos
     for t in targets:
         if env.guarded(_paths(t, cwd)):
@@ -292,6 +308,10 @@ def _ask_git(t, lit, env):
     sub, rest = _git_parts(t)
     if sub == "push":
         return _push(rest, lit, env)
+    if sub == "fetch":
+        for s in _operands(rest)[1:]:
+            if ":" in s and _branch_name(s.rpartition(":")[2]) in env.ctx.protected_branches:
+                return ask("ask:fetch-protected", f"git fetch {s} would update the protected branch {s.rpartition(':')[2]}")
     if sub == "reset" and "--hard" in rest:
         return ask("ask:hard-reset", "git reset --hard discards work")
     if sub == "clean":
@@ -303,6 +323,13 @@ def _ask_git(t, lit, env):
     return None
 
 
+def _in_order(want, args):
+    """True if the words of `want` occur in `args` in that order (options and other words may sit
+    between them), so `make -j4 deploy` and `npm --silent run deploy` match their deploy prefixes."""
+    it = iter(args)
+    return all(any(a == x for a in it) for x in want)
+
+
 def _s_ask(seg, env, cwd):
     w = seg.words
     if not w:
@@ -311,7 +338,7 @@ def _s_ask(seg, env, cwd):
     lit = not any(x.unexpanded for x in w)
     for dc in env.ctx.deploy_commands:
         toks = dc.split()
-        if toks and [x.text for x in w[:len(toks)]] == toks:
+        if toks and name == toks[0] and _in_order(toks[1:], t):
             return ask("ask:deploy", f"matches the deploy command {dc!r}")
     if "/" in name:
         return None
@@ -341,9 +368,13 @@ def _inline(base, t):
     return False
 
 
+GLOB_CAP = 200
+
+
 def _matches(env, cwd, t, write):
     """Judge what a glob really reaches (symlinks included); None if nothing is wrong."""
-    for m in itertools.islice(glob.glob(os.path.join(cwd, t)), 200):
+    found = list(itertools.islice(glob.glob(os.path.join(cwd, t)), GLOB_CAP + 1))
+    for m in found[:GLOB_CAP + 1]:
         ps = _paths(m, cwd)
         if env.secret(ps):
             return blk("block:secret-path", f"{t} matches a credential path")
@@ -353,6 +384,8 @@ def _matches(env, cwd, t, write):
             return blk("block:git-hooks-config", f"{t} matches a git hook or config file")
         if write and not env.inside(_rp(m), strict=False):
             return gry("gray:outside-write", f"{t} matches a path outside the worktree or in a git dir")
+    if len(found) > GLOB_CAP:
+        return gry("gray:glob", f"{t} matches more than {GLOB_CAP} paths; the guard does not inspect them all")
     return None
 
 
@@ -457,11 +490,11 @@ def _git_ok(sub, rest):
         return not _has(rest, "eSpt", ("--edit", "--gpg-sign", "--template", "--interactive", "--patch"))
     if sub == "fetch":
         pos = _only(rest, "apqvtfn", _FETCH_L)
-        return pos is not None and not any("::" in x for x in pos)
+        return pos is not None and not any("::" in x or x.startswith("+") for x in pos)
     if sub == "worktree":
         return rest[:1] == ["list"] and _only(rest[1:], "v", ("--porcelain", "--verbose")) == []
     if sub == "stash":
-        return rest[:1] in (["list"], ["show"]) and not _has(rest, "", ("--output",))
+        return rest[:1] in (["list"], ["show"]) and not _has(rest, "", ("--output", "--ext-diff"))
     if sub == "branch":
         return _only(rest, "arvlqi", _BRANCH_L) is not None
     if sub == "tag":

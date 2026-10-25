@@ -158,6 +158,18 @@ class VersionTest(unittest.TestCase):
         self.assertEqual(guard.rules_version(self.dir), before[0])
         self.assertNotEqual(guard.guard_version(self.dir), before[1])
 
+    def test_rules_version_changes_with_the_imported_path_lists(self):
+        from lead import sandbox
+        base = guard.rules_version()
+        for name in ("SECRET_READS", "CANVAS_CONTROL_DIRS"):
+            old = getattr(sandbox, name)
+            setattr(sandbox, name, list(old) + [".bw-test-extra"])
+            try:
+                self.assertNotEqual(guard.rules_version(), base, name)
+            finally:
+                setattr(sandbox, name, old)
+        self.assertEqual(guard.rules_version(), base)
+
     def test_rules_version_changes_with_a_deciding_file(self):
         before = guard.rules_version(self.dir)
         with open(os.path.join(self.dir, "rules.py"), "a") as f:

@@ -282,11 +282,13 @@ def main(argv=None):
     token = os.environ.get(a.token_env)
     if not token:
         sys.exit("token env %s is empty" % a.token_env)
+    from lead.guard import launch  # lazy: launch imports the rules, which the broker module does not need
     wt = os.path.realpath(a.worktree)
+    head = launch.head_of(wt)  # "unchanged" means unchanged since the broker started
     ctx = RuleContext(worktree=wt, git_dir=os.path.join(wt, ".git"), common_dir=os.path.join(wt, ".git"),
                       home=os.path.expanduser("~"), protected_branches=["main", "master"],
                       deploy_commands=[], push_dest=lambda remote, refspec: None,
-                      is_pristine=lambda p: False)
+                      is_pristine=launch.pristine_checker(wt, head))
     session = {"session_id": "standalone", "project": wt, "profile": "standalone", "lead": "standalone",
                "runtime": a.runtime, "runtime_version": "standalone"}
     b = Broker(a.state_dir, a.guard_dir, token, a.mode, session, ctx, reply_garbage=a.reply_garbage)
