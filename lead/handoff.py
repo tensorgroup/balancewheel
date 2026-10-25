@@ -15,12 +15,18 @@ SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "c
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # attributes read from here: no filters run
 
 
-def _git(worktree, *args):
+def _git_rc(worktree, *args):
+    """(returncode, stdout, stderr), run the safe way: nothing the lead planted in the repo runs."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["GIT_OPTIONAL_LOCKS"] = "0"
     env["GIT_ATTR_SOURCE"] = EMPTY_TREE  # git >= 2.42: ignore the worktree's .gitattributes (clean/smudge filters)
     r = subprocess.run(["git", "-C", worktree, *SAFE, *args], capture_output=True, text=True, env=env)
-    return r.stdout.strip() if r.returncode == 0 else f"(git {args[0]} failed: {r.stderr.strip()[:200]})"
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+
+def _git(worktree, *args):
+    rc, out, err = _git_rc(worktree, *args)
+    return out if rc == 0 else f"(git {args[0]} failed: {err[:200]})"
 
 
 def checkpoint_dir(state_dir, worktree_key):

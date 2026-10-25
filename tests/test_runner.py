@@ -21,22 +21,28 @@ def wait_for(pred, timeout=15):
     return False
 
 
-class Runner(unittest.TestCase):
+class RunnerCase(unittest.TestCase):
+    def make_tmp(self):
+        return tempfile.TemporaryDirectory()
+
+    def config(self, root):
+        return {"schema_version": 2,
+                "plans": {"pa": {"billing": "plan", "quota": "statusline"}, "pb": {"billing": "plan", "quota": "probe"}},
+                "leads": {"la": {"runtime": "codex", "model": "a", "plan": "pa"},
+                          "lb": {"runtime": "pi", "model": "b", "plan": "pb"}},
+                "seats": {"s1": {"runtime": "codex", "model": "x", "roles": ["review"]}},
+                "profiles": {"p": {"lead_order": ["la", "lb"]}}, "default_profile": "p",
+                "state_dir": str(root / "state"), "metrics_log": str(root / "metrics.jsonl")}
+
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = self.make_tmp()
         root = Path(os.path.realpath(self.tmp.name))
         self.repo = root / "app"; self.repo.mkdir()
         for a in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "init"]):
             subprocess.run(["git", "-C", str(self.repo), *a], check=True, env=GITENV)
         self.state = root / "state"; self.out = root / "out"; self.out.mkdir()
         self.log = root / "metrics.jsonl"
-        cfg = {"schema_version": 2,
-               "plans": {"pa": {"billing": "plan", "quota": "statusline"}, "pb": {"billing": "plan", "quota": "probe"}},
-               "leads": {"la": {"runtime": "codex", "model": "a", "plan": "pa"},
-                         "lb": {"runtime": "pi", "model": "b", "plan": "pb"}},
-               "seats": {"s1": {"runtime": "codex", "model": "x", "roles": ["review"]}},
-               "profiles": {"p": {"lead_order": ["la", "lb"]}}, "default_profile": "p",
-               "state_dir": str(self.state), "metrics_log": str(self.log)}
+        cfg = self.config(root)
         self.cfg = root / "config.json"; self.cfg.write_text(json.dumps(cfg))
         self.env = {**os.environ, "FAKE_OUT": str(self.out), "BW_PROBE_SECONDS": "0.3", "BW_STOP_GRACE": "0.5",
                     "BALANCEWHEEL_CONFIG": str(self.cfg)}
@@ -69,6 +75,8 @@ class Runner(unittest.TestCase):
     def events(self, kind):
         return store.load(str(self.log))[kind] if self.log.exists() else []
 
+
+class Runner(RunnerCase):
     def test_second_runner_refused_while_first_holds_lock(self):
         self.start()
         self.assertTrue(wait_for(lambda: self.fake("a")))
@@ -217,6 +225,160 @@ class Runner(unittest.TestCase):
         r = subprocess.run([sys.executable, BW, "cap", "pb"], env=self.env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("pb", quota.read_caps(str(self.state), time.time(), 5))
+
+class UnguardedRunner(RunnerCase):
+    def test_unguarded_session_has_autonomy_but_no_guard_env_or_event(self):
+        p = self.start("--use", "la", env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        self.assertEqual(self.fake("a")["guard_env"], [])
+        self.assertEqual(self.events("guards"), [])
+        start = self.events("sessions")[0]
+        self.assertEqual(start["autonomy"], {"requested": None, "effective": "manual"})
+        self.assertIsNone(start["guard_version"])
+        self.assertFalse((self.state / "guard").exists())
+
+
+class GuardRunner(RunnerCase):
+    def make_tmp(self):
+        return tempfile.TemporaryDirectory(dir="/tmp")  # unix socket paths are short-limited
+
+    def config(self, root):
+        cfg = super().config(root)
+        cfg["plans"]["pc"] = {"billing": "plan", "quota": "probe"}
+        cfg["leads"]["lc"] = {"runtime": "agy", "model": "c", "plan": "pc"}
+        cfg["profiles"]["p"]["lead_order"] = ["la", "lb", "lc"]
+        return cfg
+
+    def key(self):
+        import hashlib
+        return hashlib.sha1(os.path.realpath(str(self.repo)).encode()).hexdigest()[:12]
+
+    def guard_log(self):
+        from lead.guard import record
+        return record.load(str(self.state))["decisions"]
+
+    def test_guarded_call_is_logged_counted_and_the_socket_removed(self):
+        p = self.start("--use", "lb", "--guard", "pi", env={"FAKE_MODE_b": "guard_probe"})
+        self.assertEqual(p.wait(30), 0, p.stdout.read())
+        b = self.fake("b")
+        self.assertEqual(b["guard_env"], ["BW_GUARD_DIR", "BW_GUARD_MARKERS", "BW_GUARD_MODE", "BW_GUARD_SOCKET", "BW_GUARD_TOKEN"])
+        self.assertEqual(b["probe"]["decision"], "allow")
+        sid = self.events("sessions")[0]["session_id"]
+        rows = self.guard_log()
+        real = [d for d in rows if not d["self_test"]]
+        self.assertEqual([(d["session_id"], d["outcome"], d["call"]) for d in real], [(sid, "shadow-allowed", "ls")])
+        self.assertEqual(len([d for d in rows if d["self_test"]]), 1)
+        g = self.events("guards")
+        self.assertEqual(len(g), 1)
+        self.assertEqual((g[0]["session_id"], g[0]["calls"], g[0]["decisions"], g[0]["mode"], g[0]["unreachable"]),
+                         (sid, 1, {"allow": 1, "ask": 0, "block": 0}, "shadow", 0))
+        for k in ("project", "profile", "lead", "runtime", "guard_version", "rules_version", "gray", "latency_ms"):
+            self.assertIn(k, g[0])
+        start = self.events("sessions")[0]
+        self.assertEqual(start["autonomy"], {"requested": "guard", "effective": "guard"})
+        self.assertEqual(start["guard_version"], g[0]["guard_version"])
+        self.assertFalse((self.state / "guard" / self.key() / "sock").exists())
+        for name in ("hook.py", "pi_guard.ts"):
+            self.assertTrue((self.state / "guard" / self.key() / name).exists())
+        log = [json.loads(l) for l in self.log.read_text().splitlines()]
+        types = [(e["type"], e.get("phase")) for e in log]
+        self.assertLess(types.index(("guard", None)), types.index(("session", "end")))
+
+    def test_guarded_agy_without_hook_entry_exits_7(self):
+        p = self.start("--use", "lc", "--guard", "agy", "--no-hook")
+        self.assertEqual(p.wait(15), 7, "")
+        self.assertIn("bw guard install agy", p.stdout.read())
+        self.assertIsNone(self.fake("c"))
+
+    def test_guarded_agy_refused_until_the_hook_spike_passed(self):
+        p = self.start("--use", "lc", "--guard", "agy", "--no-spike")
+        self.assertEqual(p.wait(15), 7)
+        self.assertIn("agy guard awaits its hook spike (Task 1b); set autonomy manual or bypass", p.stdout.read())
+        self.assertIsNone(self.fake("c"))
+
+    def test_cap_switch_onto_unready_guarded_lead_stays_put(self):
+        self.cfg_lead_order(["la", "lc"])
+        p = self.start("--guard", "agy", "--no-hook", env={"FAKE_MODE_a": "sleep"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        time.sleep(1.5)
+        self.assertIsNone(p.poll(), "the current lead was stopped")
+        self.assertTrue(_alive(self.fake("a")["pid"]))
+        self.assertIsNone(self.fake("c"))
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        self.assertEqual(p.wait(10), 0)
+        out = p.stdout.read()
+        self.assertIn("bw guard install agy", out)
+        self.assertEqual(out.count("bw guard install agy"), 1, "the reason should be printed once")
+        self.assertEqual(self.events("leads"), [])
+
+    def cfg_lead_order(self, order):
+        c = json.loads(self.cfg.read_text())
+        c["profiles"]["p"]["lead_order"] = order
+        self.cfg.write_text(json.dumps(c))
+
+    def test_too_long_state_path_exits_7_naming_the_path(self):
+        c = json.loads(self.cfg.read_text())
+        c["state_dir"] = str(self.state.parent / ("deep" * 25) / "state")
+        self.cfg.write_text(json.dumps(c))
+        p = self.start("--use", "lb", "--guard", "pi")
+        self.assertEqual(p.wait(15), 7)
+        out = p.stdout.read()
+        self.assertIn("deepdeep", out)
+        self.assertIn("sock", out)
+        self.assertIsNone(self.fake("b"))
+
+    def test_state_dir_inside_the_worktree_exits_7(self):
+        c = json.loads(self.cfg.read_text())
+        c["state_dir"] = str(self.repo / ".bwstate")
+        self.cfg.write_text(json.dumps(c))
+        p = self.start("--use", "lb", "--guard", "pi")
+        self.assertEqual(p.wait(15), 7)
+        self.assertIn("overlaps", p.stdout.read())
+        self.assertIsNone(self.fake("b"))
+
+    def test_stale_socket_from_a_killed_run_does_not_stop_the_next_start(self):
+        gdir = self.state / "guard" / self.key()
+        gdir.mkdir(parents=True)
+        (gdir / "sock").write_text("left behind")
+        p = self.start("--use", "lb", "--guard", "pi", env={"FAKE_MODE_b": "guard_probe"})
+        self.assertEqual(p.wait(30), 0, p.stdout.read())
+        self.assertEqual(self.fake("b")["probe"]["decision"], "allow")
+
+    def test_stale_markers_reported_once_and_removed(self):
+        cp = self.state / "handoffs" / self.key()
+        cp.mkdir(parents=True)
+        line = json.dumps({"ts": "t", "runtime": "pi", "mode": "shadow", "why": "x"}) + "\n"
+        (cp / "guard-unreachable").write_text(line * 2)
+        p = self.start("--use", "lb", "--guard", "pi", env={"FAKE_MODE_b": "exit"})
+        out = p.communicate(timeout=30)[0]
+        self.assertEqual(p.returncode, 0, out)
+        self.assertEqual(out.count("guard was unreachable"), 1, out)
+        self.assertFalse((cp / "guard-unreachable").exists())
+        again = self.start("--use", "lb", "--guard", "pi", env={"FAKE_MODE_b": "exit"})
+        self.assertNotIn("unreachable", again.communicate(timeout=30)[0])
+
+    def test_fifo_in_place_of_the_markers_file_does_not_hang(self):
+        cp = self.state / "handoffs" / self.key()
+        cp.mkdir(parents=True)
+        os.mkfifo(str(cp / "guard-unreachable"))
+        p = self.start("--use", "lb", "--guard", "pi", env={"FAKE_MODE_b": "exit"})
+        self.assertEqual(p.wait(30), 0, p.stdout.read())
+        self.assertFalse((cp / "guard-unreachable").exists())
+
+    def test_markers_written_during_the_session_are_noticed_once_and_counted(self):
+        cp = self.state / "handoffs" / self.key()
+        env = {"FAKE_MODE_b": "sleep"}
+        p = self.start("--use", "lb", "--guard", "pi", env=env)
+        self.assertTrue(wait_for(lambda: self.fake("b")))
+        line = json.dumps({"ts": "t", "runtime": "pi", "mode": "shadow", "why": "gone"}) + "\n"
+        with open(cp / "guard-unreachable", "a") as f:
+            f.write(line * 2)
+        time.sleep(1.2)
+        os.killpg(self.fake("b")["pgid"], signal.SIGTERM)
+        out = p.communicate(timeout=30)[0]
+        self.assertEqual(out.count("guard was unreachable"), 1, out)
+        self.assertEqual(self.events("guards")[0]["unreachable"], 2)
 
 
 def _alive(pid):

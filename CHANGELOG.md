@@ -15,6 +15,14 @@ not against the prose.
 
 ### Added
 
+- **Log event `guard` and `session.autonomy`** (`lead/runner.py`, `metrics/store.py`): a `session`
+  start now carries `autonomy: {requested, effective}` (`requested` is null unless the lead's config
+  names it) and, for a guarded lead, `guard_version`. A guarded session adds one `guard` event
+  before its `session` end: `{session_id, project, profile, lead, runtime, mode, guard_version,
+  rules_version, calls, decisions: {allow, ask, block}, gray, unreachable, latency_ms: {p50, p95}}`,
+  counts only, self-test call excluded. `store.load()` keeps `autonomy` and `guard_version` on
+  sessions (absent: null) and returns `guards`. `bw lead` exits 7 when a guarded lead cannot start.
+  Older logs load unchanged.
 - **Config schema 3** (`metrics/config.py`): per-lead `autonomy` (`native`, `guard`, `bypass`,
   `manual`; checked against what each runtime supports), a `guard` block (`mode` per profile,
   `model`, `on_judge_failure` (default `allow`), `rules_on_native`), and per-profile `protected_branches` and

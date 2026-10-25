@@ -205,7 +205,8 @@ def load(path):
             continue
         sid = e.get("session_id")
         if e.get("phase") == "start":
-            s = {k: e.get(k) for k in ("session_id", "project", "worktree", "lead", "runtime", "model", "resolved", "plan")}
+            s = {k: e.get(k) for k in ("session_id", "project", "worktree", "lead", "runtime", "model", "resolved", "plan",
+                                   "autonomy", "guard_version")}
             s.update({"start": e.get("ts"), "end": None, "end_reason": None})
             sessions.append(s); s_by_id[sid] = s
         elif e.get("phase") == "end":
@@ -216,8 +217,9 @@ def load(path):
             s.update({"end": e.get("ts"), "end_reason": e.get("reason")})
     leads = [e for e in events if e.get("type") == "lead"]
     ratings = [e for e in events if e.get("type") == "rating"]
+    guards = [e for e in events if e.get("type") == "guard"]
     return {"usage": usage, "panels": panels, "watches": watches, "events": events, "warnings": warnings,
-            "sessions": sessions, "leads": leads, "ratings": ratings}
+            "sessions": sessions, "leads": leads, "ratings": ratings, "guards": guards}
 
 
 def append(path, event):

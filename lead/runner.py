@@ -12,6 +12,8 @@ crashed bw cannot let a second writable lead into the same worktree.
 import fcntl
 import json
 import os
+import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -20,8 +22,10 @@ import tempfile
 import time
 import uuid
 
-from . import containment, quota as quotamod, rotation, sandbox
+from . import containment, guard as guardpkg, quota as quotamod, rotation, sandbox
 from .handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text
+from .guard import broker as brk, install as guard_install, launch
+from .guard.launch import GuardUnavailable
 from .paths import locked_dir, read_json, write_json_atomic
 from .projects import resolve_project
 from .runtimes import ADAPTERS
@@ -29,7 +33,7 @@ from .runtimes import ADAPTERS
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "metrics"))
 import store  # noqa: E402
 
-LOCKED, UNVERIFIED, NO_LEADS, ALL_CAPPED = 3, 4, 5, 6
+LOCKED, UNVERIFIED, NO_LEADS, ALL_CAPPED, GUARD_UNAVAILABLE = 3, 4, 5, 6, 7
 V0_SCOPE = ("v0: automatic switching for leads that report usage through the Claude Code statusline; "
             "for other leads record a cap with `bw cap <plan>`")
 
@@ -92,6 +96,17 @@ class Session:
         self.head = ctx.git_head()
         cp_dir = checkpoint_dir(ctx.state, ctx.project.worktree_key)
         os.makedirs(cp_dir, exist_ok=True)
+        self.broker, self._guard_done = None, False
+        self.markers_path = os.path.join(cp_dir, "guard-unreachable")
+        self.marker_notice_sent = False
+        try:
+            client_dir = self._guard_start(ctx) if _guarded(self.lead) else None
+            self._launch(ctx, lead_name, handoff, cp_dir, client_dir)
+        except BaseException:
+            self._guard_abort()
+            raise
+
+    def _launch(self, ctx, lead_name, handoff, cp_dir, client_dir):
         prompt = first_prompt(handoff, protocol_text())
         argv_prompt = prompt
         if self.adapter.prompt_mode == "file":
@@ -102,11 +117,15 @@ class Session:
             argv_prompt = None
         # pi/Kimi get the checkpoint dir through bw sandbox grants; self-contained runtimes whose
         # own sandbox stops at the worktree (Codex, agy) get it as an extra writable dir.
-        argv = self.adapter.argv(self.lead, argv_prompt, [cp_dir] if self.adapter.contained_by == "self" else [])
+        argv = self.adapter.argv(self.lead, argv_prompt, [cp_dir] if self.adapter.contained_by == "self" else [],
+                                 client_dir=client_dir)
         env = dict(os.environ, BW_CHECKPOINT=os.path.join(cp_dir, "checkpoint.md"), BW_SESSION=self.id)
+        if self.broker is not None:
+            env.update(BW_GUARD_SOCKET=self.broker.sock_path, BW_GUARD_TOKEN=self.broker.token,
+                       BW_GUARD_MODE=self.broker.mode, BW_GUARD_DIR=client_dir, BW_GUARD_MARKERS=self.markers_path)
         self.cleanup = lambda: None
         if self.adapter.contained_by == "bw":
-            rg = self.adapter.grants(self.lead)
+            rg = self.adapter.grants(self.lead, client_dir=client_dir)
             home = os.path.expanduser("~")
             if rg.private_home:
                 home = os.path.join(ctx.state, "homes", ctx.project.worktree_key)
@@ -119,6 +138,8 @@ class Session:
         self.argv = argv
         self.proc = subprocess.Popen(argv, cwd=ctx.project.worktree, env=env, pass_fds=(ctx.lock.fd,),
                                      preexec_fn=_child_setup)
+        if self.broker is not None:
+            self.broker.serve()  # started only now: no thread of ours exists while preexec_fn runs
         self.pgid = self.proc.pid
         ctx.give_terminal(self.pgid)
         model = self.lead["model"]
@@ -129,9 +150,85 @@ class Session:
                 model, resolved = seen, True
         ctx.log({"type": "session", "phase": "start", "project": ctx.project.worktree_key, "session_id": self.id,
                  "worktree": ctx.project.worktree, "lead": lead_name, "runtime": self.lead["runtime"],
-                 "model": model, "resolved": resolved, "plan": self.lead["plan"]})
+                 "model": model, "resolved": resolved, "plan": self.lead["plan"],
+                 "autonomy": {"requested": self.lead.get("autonomy") if self.lead.get("autonomy_source") == "config" else None,
+                              "effective": self.lead.get("autonomy", "unknown")},
+                 **({"guard_version": self.broker.guard_v} if self.broker is not None else {})})
         ctx.lock.write({"pid": os.getpid(), "child": self.proc.pid, "lead": lead_name, "session_id": self.id,
                         "worktree": ctx.project.worktree, "started": time.time()})
+
+    def _guard_start(self, ctx):
+        """Clients copied where no lead can write, stale markers reported, the socket bound and
+        self-tested, then paused so no thread of ours is alive when the lead is forked."""
+        gdir = os.path.join(ctx.state, "guard", ctx.project.worktree_key)
+        os.makedirs(gdir, mode=0o700, exist_ok=True)
+        for name in ("hook.py", "pi_guard.ts"):
+            tmp = os.path.join(gdir, f".{name}.{os.getpid()}.tmp")
+            shutil.copyfile(os.path.join(launch.HERE, name), tmp)
+            os.chmod(tmp, 0o444)
+            os.replace(tmp, os.path.join(gdir, name))
+        stale = launch.read_markers(self.markers_path)
+        if stale:
+            ctx.say(launch.marker_notice(stale, "in the previous session"))
+        if os.path.lexists(self.markers_path):
+            launch.clear_markers(self.markers_path)
+        rt = self.lead["runtime"]
+        profile = ctx.project.profile
+        mode = ctx.config.get("guard", {}).get("mode", {}).get(profile, "shadow")
+        version = containment._first_line(self.adapter.version_argv)
+        session = {"session_id": self.id, "project": ctx.project.worktree_key, "profile": profile,
+                   "lead": self.lead_name, "runtime": rt, "runtime_version": version}
+        token = secrets.token_hex(16)
+        try:
+            rules_ctx = launch.rule_context(ctx.project, ctx.config["profiles"][profile])
+            self.broker = brk.Broker(ctx.state, gdir, token, mode, session, rules_ctx)
+            self.broker.bind()
+        except (ValueError, OSError, subprocess.SubprocessError) as e:
+            raise GuardUnavailable(f"guard cannot start: {e}")
+        self.broker.serve()
+        err, note = launch.self_test(self.broker, rt, gdir, token, mode, ctx.project.worktree, ctx.state)
+        if note:
+            ctx.say(note)
+        if err:
+            raise GuardUnavailable(f"{err}; refusing to start {self.lead_name}")
+        self.broker.pause()
+        key = containment.guard_key(rt, self.adapter.version_argv, ctx.backend, self.adapter.guard_hook_files())
+        if not containment.is_verified(ctx.state, rt, key, store="guard-verify.json"):
+            ctx.say(f"bw: the {rt} guard is not verified on this version; run `bw guard verify {rt}`")
+        if rt == "agy":
+            others = guard_install.other_pretooluse_entries(guard_install.hooks_path())
+            if others:
+                ctx.say(f"bw: other agy PreToolUse hooks are installed ({', '.join(others)}); "
+                        "the guard does not cover what they allow")
+        return gdir
+
+    def _guard_abort(self):
+        if self.broker is not None:
+            self.broker.stop()
+            self.broker = None
+
+    def poll_guard(self, ctx):
+        if self.broker is not None and not self.marker_notice_sent:
+            lines = launch.read_markers(self.markers_path)
+            if lines:
+                ctx.say(launch.marker_notice(lines, "this session"))
+                self.marker_notice_sent = True
+
+    def finish_guard(self, ctx):
+        """Stop the broker and log the guard event; call before logging `session end`."""
+        if self.broker is None or self._guard_done:
+            return
+        self._guard_done = True
+        self.broker.stop()
+        lines = launch.read_markers(self.markers_path)
+        launch.clear_markers(self.markers_path)
+        c = self.broker.counts()
+        by = c["decisions"]
+        ctx.log({"type": "guard", "session_id": self.id, "project": ctx.project.worktree_key,
+                 "profile": ctx.project.profile, "lead": self.lead_name, "runtime": self.lead["runtime"],
+                 "mode": self.broker.mode, "guard_version": self.broker.guard_v, "rules_version": self.broker.rules_v,
+                 "calls": c["calls"], "decisions": {k: by.get(k, 0) for k in ("allow", "ask", "block")},
+                 "gray": c["gray"], "unreachable": len(lines), "latency_ms": c["latency_ms"]})
 
     def group_alive(self):
         try:
@@ -221,6 +318,31 @@ def write_pin(state, key, lead):
         write_json_atomic(_pins_path(state), pins)
 
 
+def _guarded(lead):
+    return lead.get("autonomy_source", "legacy") != "legacy" and lead.get("autonomy") == "guard"
+
+
+def _guard_ready(ctx, lead_name):
+    """Why a guarded lead cannot start (None when it can or is not guarded)."""
+    lead = ctx.config["leads"][lead_name]
+    if not _guarded(lead):
+        return None
+    try:
+        sandbox.refuse_overlap(ctx.state, [ctx.project.worktree])
+    except ValueError as e:
+        return f"the guard state dir must be outside the worktree: {e}"
+    if lead["runtime"] == "agy":
+        if not guardpkg.AGY_SPIKE_PASSED:
+            return "agy guard awaits its hook spike (Task 1b); set autonomy manual or bypass"
+        if not guard_install.agy_installed(guard_install.hooks_path()):
+            return "the agy guard hook is not installed; run `bw guard install agy`"
+    sock = os.path.join(ctx.state, "guard", ctx.project.worktree_key, "sock")
+    n = len(os.fsencode(sock))
+    if n > brk.MAX_PATH:
+        return f"guard socket path is {n} bytes, over the {brk.MAX_PATH}-byte limit: {sock}"
+    return None
+
+
 def _verified(ctx, lead_name):
     lead = ctx.config["leads"][lead_name]
     ad = ctx.adapters[lead["runtime"]]
@@ -294,10 +416,20 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         rt = config["leads"][d.lead]["runtime"]
         ctx.say(f"bw: {rt} has no verified containment for this version; run `bw sandbox verify {rt}`")
         return UNVERIFIED
+    why = _guard_ready(ctx, d.lead)
+    if why:
+        ctx.say(f"bw: {d.lead} cannot start: {why}")
+        lock.write({})
+        return GUARD_UNAVAILABLE
     session, handoff, warned = None, None, False
     current = d.lead
     while True:
-        session = Session(ctx, current, handoff)
+        try:
+            session = Session(ctx, current, handoff)
+        except GuardUnavailable as e:
+            ctx.say(f"bw: {e}")
+            lock.write({})
+            return GUARD_UNAVAILABLE
         ctx.say(f"bw: {current} ({session.lead['runtime']}) leading {project.worktree} — {d.reason}")
         switched = False
         next_poll = time.time() + poll_s
@@ -306,6 +438,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
             if time.time() < next_poll:
                 continue
             next_poll = time.time() + poll_s
+            session.poll_guard(ctx)
             # A contained lead cannot write bw's caps; its hook drops cap-signal in its own
             # checkpoint dir instead, and bw records the cap for the current plan.
             sig = os.path.join(checkpoint_dir(state, project.worktree_key), "cap-signal")
@@ -327,11 +460,18 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                             f"run `bw sandbox verify {rt}` (staying on {current})")
                     warned = True
                 continue
+            why = _guard_ready(ctx, d.lead) if d.lead != current else None
+            if why:
+                if not warned:
+                    ctx.say(f"bw: {current} is capped but {d.lead} cannot start: {why} (staying on {current})")
+                    warned = True
+                continue
             if d.lead != current:
                 # The terminal goes back to bw only after the lead's group is gone: a TUI that
                 # restores the terminal on SIGTERM must still own it, or it stops on SIGTTOU.
                 session.stop(grace)
                 ctx.take_terminal()
+                session.finish_guard(ctx)
                 ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
                          "session_id": session.id, "reason": "switch"})
                 ctx.log({"type": "lead", "project": project.worktree_key,
@@ -350,6 +490,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
             session.stop(grace)
         else:
             session.cleanup()
+        session.finish_guard(ctx)
         ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
                  "session_id": session.id, "reason": "exit"})
         lock.write({})

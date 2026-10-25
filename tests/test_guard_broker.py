@@ -251,6 +251,36 @@ class TestBroker(BrokerBase):
         self.assertEqual(self.b.counts()["decisions"], {"allow": 1})
 
 
+class TestPauseAndSelfTestReply(BrokerBase):
+    mode = "shadow"
+
+    def test_pause_keeps_the_socket_and_resume_answers_a_waiting_connection(self):
+        self.b.pause()
+        self.assertEqual(threading.active_count(), self.base_threads)
+        self.assertTrue(os.path.exists(os.path.join(self.gdir, "sock")))
+        s = socket.socket(socket.AF_UNIX)
+        s.settimeout(5)
+        s.connect(os.path.join(self.gdir, "sock"))
+        req = {"v": 1, "token": TOKEN, "runtime": "pi", "cwd": self.wt, "payload": bash("ls")}
+        s.sendall(json.dumps(req).encode() + b"\n")
+        time.sleep(0.3)
+        self.assertEqual(self.decisions(), [])  # nobody is serving while paused
+        self.b.serve()
+        buf = b""
+        while not buf.endswith(b"\n"):
+            buf += s.recv(65536)
+        s.close()
+        self.assertEqual(json.loads(buf)["decision"], "allow")
+        self.assertEqual(len(self.decisions()), 1)
+
+    def test_self_test_call_gets_the_real_decision_in_shadow(self):
+        self.b.arm_self_test("bw-self-test-abc")
+        r = self.ask(bash("herdr pane send bw-self-test-abc"))
+        self.assertEqual(r["decision"], "block")
+        r = self.ask(bash("herdr pane send other"))
+        self.assertEqual(r["decision"], "allow")  # shadow still allows everything else
+
+
 class TestWorkerErrors(BrokerBase):
     def ctx(self):
         def boom(remote, refspec):

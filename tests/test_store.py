@@ -8,6 +8,37 @@ import store  # noqa: E402
 FX = HERE / "fixtures"
 
 
+class GuardEvents(unittest.TestCase):
+    def log(self, events):
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, ignore_errors=True)
+        p = os.path.join(d, "m.jsonl")
+        for e in events:
+            store.append(p, e)
+        return store.load(p)
+
+    def test_session_autonomy_round_trips_and_guards_fold(self):
+        guard = {"type": "guard", "session_id": "s1", "project": "k", "profile": "p", "lead": "l", "runtime": "pi",
+                 "mode": "shadow", "guard_version": "g", "rules_version": "r", "calls": 3,
+                 "decisions": {"allow": 2, "ask": 0, "block": 1}, "gray": 1, "unreachable": 0,
+                 "latency_ms": {"p50": 1.0, "p95": 2.0}}
+        d = self.log([{"type": "session", "phase": "start", "session_id": "s1", "project": "k", "lead": "l",
+                       "autonomy": {"requested": None, "effective": "guard"}, "guard_version": "g"},
+                      guard, {"type": "session", "phase": "end", "session_id": "s1", "reason": "exit"}])
+        s = d["sessions"][0]
+        self.assertEqual(s["autonomy"], {"requested": None, "effective": "guard"})
+        self.assertEqual(s["guard_version"], "g")
+        self.assertEqual(len(d["guards"]), 1)
+        self.assertEqual(d["guards"][0]["calls"], 3)
+
+    def test_legacy_log_has_no_autonomy_and_no_guards(self):
+        d = store.load(str(FX / "modern.jsonl"))
+        self.assertEqual(d["guards"], [])
+        d = self.log([{"type": "session", "phase": "start", "session_id": "s1", "project": "k", "lead": "l"}])
+        self.assertIsNone(d["sessions"][0]["autonomy"])
+        self.assertIsNone(d["sessions"][0]["guard_version"])
+
+
 class ReadAndLoad(unittest.TestCase):
     def test_modern_log_loads_and_folds(self):
         d = store.load(str(FX / "modern.jsonl"))

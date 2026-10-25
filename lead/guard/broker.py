@@ -58,6 +58,7 @@ class Broker:
         self._accept = None
         self._workers = []
         self._stopped = threading.Event()
+        self._paused = threading.Event()
         self._lock = threading.Lock()
         self._sem = threading.Semaphore(MAX_WORKERS)
         self._marker = None
@@ -90,11 +91,17 @@ class Broker:
         self._listener = s
 
     def serve(self):
+        self._paused.clear()
         self._accept = threading.Thread(target=self._accept_loop, daemon=True)
         self._accept.start()
 
-    def stop(self):
-        self._stopped.set()
+    def pause(self):
+        """Stop serving but keep the socket listening: no thread of ours is alive (bw forks the
+        lead now), and a connection made meanwhile waits in the backlog until serve() resumes."""
+        self._paused.set()
+        self._join_threads()
+
+    def _join_threads(self):
         if self._accept is not None:
             self._accept.join()
             self._accept = None
@@ -102,6 +109,10 @@ class Broker:
             workers, self._workers = self._workers, []
         for w in workers:
             w.join()
+
+    def stop(self):
+        self._stopped.set()
+        self._join_threads()
         if self._listener is not None:
             self._listener.close()
             self._listener = None
@@ -116,7 +127,7 @@ class Broker:
                     "latency_ms": {"p50": _pct(self._latency, 0.5), "p95": _pct(self._latency, 0.95)}}
 
     def _accept_loop(self):
-        while not self._stopped.is_set():
+        while not (self._stopped.is_set() or self._paused.is_set()):
             if not self._sem.acquire(timeout=0.1):
                 continue
             try:
@@ -248,7 +259,8 @@ class Broker:
                 self._latency.append(latency)
         if self.reply_garbage:
             return self._send(conn, b"garbage, not json\n")
-        shown = "allow" if self.mode == "shadow" else d.decision
+        # the self-test must see what the rules decided, whatever the mode
+        shown = "allow" if self.mode == "shadow" and not self_test else d.decision
         self._send(conn, {"v": 1, "id": did, "decision": shown, "reason": d.reason})
 
 
