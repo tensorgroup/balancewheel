@@ -338,12 +338,22 @@ schema 2) names its leads in order, and `bw lead` picks one:
   schema-2 file keeps today's argv exactly. In v0 the guard runs **in shadow**: for a pi lead
   it logs what it would have decided and allows everything (prompts off, plus logging);
   nothing is blocked or asked. `bw guard review` shows the stops and a sample of the allows,
-  you mark each right or wrong, and the evidence accumulates per profile, lead, and version
-  of the rules. A guarded agy lead is refused until agy's hook behaviour has been observed
-  (a usage-capped spike), so `bw guard install agy` and `bw guard verify agy` refuse for the
-  same reason and an agy lead should be `manual` or `bypass` for now. `bw status` prints a
-  `guard:` line per evidence key, and `bw lead` exits 7 when a guarded lead cannot start
-  (the broker cannot bind, a client is missing, the start-time self-test fails).
+  you mark each right or wrong, and the evidence accumulates per evidence key: profile,
+  runtime, runtime version, rules version, and policy digest (not per lead). A guarded agy lead
+  is refused until agy's hook behaviour has been observed (a usage-capped spike), so
+  `bw guard install agy` and `bw guard verify agy` refuse for the same reason; **under
+  schema 3 an agy lead must set `autonomy` explicitly (`manual` or `bypass`) until agy's
+  hooks are verified**, because its default is `guard`. `bw status` prints a `guard:` line
+  per evidence key, and `bw lead` exits 7 when a guarded lead cannot start: the state dir
+  overlaps the worktree, the socket path is over the length limit, agy's hook or spike is not
+  ready, the guard clients could not be copied, the start-time self-test fails, or Node 22.6+
+  is missing (a guarded pi lead needs it). Two per-profile keys steer the rules:
+  `protected_branches` (default `main`, `master`; a push or a fetch into one asks) and
+  `deploy_commands` (command prefixes such as `make deploy`; matched after the command's
+  options, so `make -j4 deploy` asks too). See `balancewheel.example.json`.
+  **Guarded pi leads run with `--no-extensions`:** a project-local extension in the worktree
+  would load into the guard client's process, so pi's discovered extensions stop loading for
+  a guarded lead; one you still want goes in the lead's `args` as `-e <path>`.
   Details: `docs/superpowers/specs/2026-10-25-bw-guard-design.md`.
   - **After upgrading.** pi and Kimi leads need `bw sandbox verify` again (the adapter hash
     changed); run `bw guard verify pi` once to record a guard pass; and launch a Claude
@@ -359,6 +369,8 @@ schema 2) names its leads in order, and `bw lead` picks one:
     sandbox-level gap the guard did not create. A pi lead on the `sandbox-exec` backend can
     read `guard.jsonl` (nono denies it). The log has no retention in v0. Expect a large gray
     share: the allow grammar is deliberately small, so most unfamiliar commands start gray.
+    Another agent runtime started by the lead (a second `claude`, `codex`, or `pi`) is
+    outside the guard: it is gray, so it asks, and what it does inside is not judged.
     Once acting exists (not in v0), a false block is worked around by hand, outside the lead.
 - **Where you watch it: Orca (recommended, never required).** [Orca](https://github.com/stablyai/orca)
   is an MIT desktop app that hosts agent panes per worktree, with notifications and a

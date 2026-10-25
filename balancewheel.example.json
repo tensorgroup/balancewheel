@@ -140,7 +140,14 @@
         }
       },
       "depth": "deep-on-stakes",
-      "router": "shadow"
+      "router": "shadow",
+      "protected_branches": [
+        "main",
+        "master"
+      ],
+      "deploy_commands": [
+        "make deploy"
+      ]
     },
     "product": {
       "lead_order": [
@@ -158,7 +165,12 @@
         }
       },
       "depth": "standard",
-      "router": "shadow"
+      "router": "shadow",
+      "protected_branches": [
+        "main",
+        "master"
+      ],
+      "deploy_commands": []
     }
   },
   "projects": {

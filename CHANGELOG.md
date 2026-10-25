@@ -22,7 +22,10 @@ not against the prose.
   `guard:` lines in `bw status`. agy's side refuses until its hook spike runs. `guard.jsonl`,
   `guard-verify.json`, and the per-worktree `guard/` directory are live state and stay out
   of `setup/paths.txt`. After upgrading, pi and Kimi leads need `bw sandbox verify` again
-  (the adapter hash changed).
+  (the adapter hash changed). Guarded pi leads (and the pi guard attack) run with
+  `--no-extensions`, so pi's discovered extensions, including project-local ones in the
+  worktree, stop loading for them; the guard client still loads through `-e`, and an
+  extension you want back goes in the lead's `args` as `-e <path>`.
 - **Log event `guard` and `session.autonomy`** (`lead/runner.py`, `metrics/store.py`): a `session`
   start now carries `autonomy: {requested, effective}` (`requested` is null unless the lead's config
   names it) and, for a guarded lead, `guard_version`. A guarded session adds one `guard` event
@@ -42,8 +45,7 @@ not against the prose.
   (`custom` when `args` already carry a permission flag) and no flags are added. The new keys are
   rejected in a version-2 file with "(needs schema_version 3)"; `guard.mode: "acting"` and
   `guard.rules_on_native: true` are rejected until built. `balancewheel.example.json` is now
-  schema 3, with the agy lead set to `manual` until its guard hook is verified. No runtime or
-  adapter code changes in this entry.
+  schema 3, with the agy lead set to `manual` until its guard hook is verified.
 - **Config schema 2** (`metrics/config.py`): `plans` (billing `plan`|`metered`, quota source,
   metered budget), `leads` (runtime, model, plan), `tools` (update argv), `profiles` (lead
   order, per-checkpoint seats with `required` and `min_seats`, depth, router mode),

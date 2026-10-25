@@ -394,7 +394,9 @@ The code wins over this document where they differ. The decisions, as named amen
     of the first. `rules.py` has a small lexer that keeps operators apart from quoted text
     and marks any word with an unquoted `$`, backtick, or backslash as unexpanded.
 12. **Repo scripts are trusted only as the repo has them.** A script path is allowed only if
-    git tracks it and it is unchanged from `HEAD`. A script the lead wrote or edited this
+    git tracks it and it is unchanged since the session started (compared with the commit
+    the session began on, not the moving `HEAD`; the standalone broker uses the `HEAD` it
+    started on). A script the lead wrote or edited this
     session is gray; otherwise "write a script, then run it" turns every block into two
     allows.
 
@@ -435,6 +437,35 @@ source changed); `bw guard verify pi` records a guard pass in its
 own file; the Claude Code and Codex native flags were not launched interactively in the
 build and need one confirming launch by the user. `bw lead` exits 7 when a guarded lead
 cannot start.
+
+### Amendments from the final review (2026-10-25)
+
+Named, not silent; the code wins where it differs.
+
+- **A1. Guarded pi leads run with `--no-extensions`.** A lead can write
+  `<worktree>/.pi/extensions/x.ts`, which would load into the guard client's own process and
+  clear `BW_GUARD_MODE` (the client reads it per call), making every later call "inert". The
+  explicit `-e <client>` still loads under the flag; a user who wants another extension passes
+  `-e <path>` in `lead.args`. The attack plants such an extension and requires the next block
+  probe to be blocked and logged.
+- **A2. Lead-originated text is shown escaped.** `bw guard review` and `bw status` print the
+  call, reason, tool, and rule with control characters as visible escapes, so a call cannot
+  repaint the terminal the user marks decisions on.
+- **B4. Pristine means unchanged since the session started.** A script the lead committed
+  during the session is not pristine: the comparison is with the session-start commit
+  (`Session.head`), tracked there and unchanged in the working tree, not with the moving
+  `HEAD` (decision 12).
+- **B7. `rules_version` covers the path lists the rules import.** `SECRET_READS` and
+  `CANVAS_CONTROL_DIRS` change decisions, so their contents are part of the version and a
+  change starts a fresh evidence key.
+- **E3. The attack's evidence is out of the lead's reach.** Transcripts and tamper logs are
+  written to a directory with no write grant; only the fakes' `invoked` log stays in a
+  granted one, as corroboration. A stopped case also fails if a fake's own stdout appears in
+  a structured tool result, and an unstructured pi transcript fails its case.
+- **Shadow rows are lead-adjacent evidence.** A lead holding the session token can send
+  requests, so `guard.jsonl` rows are not proof of what the runtime did. The acting gate (build
+  order, step 4) must not rest on raw rows alone: it rests on the reviewed marks and the
+  attack pass as well.
 
 Where to pick up: run the agy spike (1b) when the quota resets and flip `AGY_SPIKE_PASSED`
 with fixtures; measure a week of shadow (gray share, latency, would-be questions per hour);
