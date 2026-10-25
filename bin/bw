@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""bw — leads and rotation (build-order step 2).
+
+  bw lead [--use <lead> | --auto] [--no-rating]   start the right lead for this worktree
+  bw status                                       leads, quota, caps, pins
+  bw cap <plan> [--resets-at <epoch>]             record that a plan is capped
+  bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
+"""
+import argparse
+import os
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from lead import containment, quota, runner, sandbox  # noqa: E402
+from lead.paths import ConfigError, ROOT, load_config, read_json, state_dir  # noqa: E402
+from lead.projects import resolve_project  # noqa: E402
+from lead.rotation import effective_quota  # noqa: E402
+from lead.runtimes import ADAPTERS  # noqa: E402
+
+
+def cmd_lead(a, config, state):
+    return runner.run(config, state, os.getcwd(), use=a.use, auto=a.auto, rating=not a.no_rating)
+
+
+def cmd_status(a, config, state):
+    now = time.time()
+    caps = quota.read_caps(state, now, config["rotation"]["cap_expiry_hours"])
+    snaps = quota.read_quota(state)
+    print("plans:")
+    for name, plan in sorted(config["plans"].items()):
+        q = effective_quota(snaps.get(name), now)
+        qs = quota.summary(q) if q else "quota unknown"
+        cs = f" · capped until {time.ctime(caps[name]['resets_at'])}" if name in caps else ""
+        print(f"  {name} ({plan['billing']}): {qs}{cs}")
+    pins = read_json(os.path.join(state, "leads.json"), {}) or {}
+    locks = os.path.join(state, "locks")
+    print("worktrees:")
+    for f in sorted(os.listdir(locks)) if os.path.isdir(locks) else []:
+        meta = read_json(os.path.join(locks, f), {}) or {}
+        key = f[:-5]
+        if meta.get("lead") or key in pins:
+            since = time.ctime(meta["started"]) if meta.get("started") else "-"
+            print(f"  {meta.get('worktree', key)}: {meta.get('lead', 'idle')} since {since}"
+                  + (f" · pinned {pins[key]}" if key in pins else ""))
+    print("leads:")
+    for name, ld in sorted(config["leads"].items()):
+        print(f"  {name}: {ld['runtime']} {ld['model']} on {ld['plan']} · contained by {ADAPTERS[ld['runtime']].contained_by}")
+    print(runner.V0_SCOPE)
+    return 0
+
+
+def cmd_cap(a, config, state):
+    if a.plan not in config["plans"]:
+        sys.exit(f"bw: unknown plan {a.plan!r}; plans: {sorted(config['plans'])}")
+    c = quota.record_cap(state, a.plan, time.time(), resets_at=a.resets_at,
+                         expiry_hours=config["rotation"]["cap_expiry_hours"])
+    print(f"bw: {a.plan} capped until {time.ctime(c['resets_at'])}")
+    return 0
+
+
+def cmd_verify(a, config, state):
+    ad = ADAPTERS.get(a.runtime)
+    if not ad or ad.contained_by != "bw":
+        sys.exit(f"bw: {a.runtime} is not contained by bw (contained_by={ad.contained_by if ad else 'unknown'})")
+    lead = next((l for n, l in config["leads"].items() if l["runtime"] == a.runtime and (not a.lead or n == a.lead)), None)
+    if not lead:
+        sys.exit(f"bw: no lead in the config uses runtime {a.runtime}")
+    which = sandbox.backend()
+    script = os.path.join(ROOT, "tests", "attack", "lead_containment.sh")
+    r = subprocess.run([script, "--backend", which, *ad.verify_flags(lead), "--", *ad.verify_argv(lead)],
+                       capture_output=True, text=True)
+    print(r.stdout.strip())
+    if r.returncode == 0 and r.stdout.startswith("PASS"):
+        key = containment.verification_key(a.runtime, ad.version_argv, which)
+        containment.record_pass(state, a.runtime, key, r.stdout.split("evidence in ")[-1].strip())
+        print(f"bw: recorded a containment pass for {a.runtime} on {which}")
+        return 0
+    print("bw: not recorded — a refusal by the model is inconclusive; re-run", file=sys.stderr)
+    return 1
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="bw")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    ld = sub.add_parser("lead")
+    g = ld.add_mutually_exclusive_group()
+    g.add_argument("--use"); g.add_argument("--auto", action="store_true")
+    ld.add_argument("--no-rating", action="store_true")
+    sub.add_parser("status")
+    c = sub.add_parser("cap"); c.add_argument("plan"); c.add_argument("--resets-at", type=float, default=None)
+    sb = sub.add_parser("sandbox"); sbs = sb.add_subparsers(dest="sub", required=True)
+    v = sbs.add_parser("verify"); v.add_argument("runtime"); v.add_argument("--lead", default=None)
+    a = ap.parse_args(argv)
+    try:
+        config = load_config()
+    except ConfigError as e:
+        sys.exit(f"bw: config error: {e}")
+    state = state_dir(config)
+    if a.cmd == "lead" and a.use and a.use not in config["leads"]:
+        sys.exit(f"bw: unknown lead {a.use!r}")
+    return {"lead": cmd_lead, "status": cmd_status, "cap": cmd_cap,
+            "sandbox": cmd_verify}[a.cmd](a, config, state)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
