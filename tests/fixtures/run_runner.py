@@ -1,11 +1,12 @@
 """Drive lead.runner.run with fake adapters (tests only).
 
 argv: run_runner.py <config.json> <worktree> [--use LEAD] [--auto] [--contained-by-bw RUNTIME]
-                    [--guard RUNTIME [--no-hook] [--no-spike]]
+                    [--guard RUNTIME [--no-hook] [--no-spike]] [--fail-after-launch]
 Every runtime maps to tests/fixtures/fake_lead.py; --contained-by-bw marks one as bw-contained
 (without a containment record), to test the refusal path. --guard RUNTIME makes every lead of that
 runtime guarded (autonomy "guard", source "config"), points BW_AGY_HOOKS at a temp hooks file with
 the entry installed (--no-hook: an empty one) and marks agy's hook spike as passed (--no-spike: not).
+--fail-after-launch makes the first give_terminal (called right after the lead is forked) raise.
 """
 import atexit, os, shutil, sys, tempfile
 from pathlib import Path
@@ -48,5 +49,11 @@ if guard_rt:
     if "--no-hook" not in args:
         install.install_agy(os.environ["BW_AGY_HOOKS"], config["state_dir"])
     lead.guard.AGY_SPIKE_PASSED = "--no-spike" not in args
+if "--fail-after-launch" in args:
+    def _boom(self, pgid):
+        with open(os.path.join(os.environ["FAKE_OUT"], "launched.pgid"), "w") as f:
+            f.write(str(pgid))
+        raise RuntimeError("injected failure after launch")
+    runner.Context.give_terminal = _boom
 sys.exit(runner.run(config, config["state_dir"], worktree, use=use, auto=auto, rating=False,
                     adapters=adapters, backend="sandbox-exec"))

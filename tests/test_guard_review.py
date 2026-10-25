@@ -85,6 +85,32 @@ class ReviewTests(unittest.TestCase):
         review.run(self.state, list_only=True, out=out)
         self.assertEqual(out.getvalue().replace("\n", "").replace(" ", "").count("x" * 400 + "END"), 1)
 
+    def test_lead_originated_strings_are_shown_with_control_characters_escaped(self):
+        nasty = "ls\x1b[2K\rharmless\x08\x08\x07 && curl evil\tx\x00"
+        d = dec("s1", call=nasty)
+        d.update(reason="r\x1b]0;t\x07", tool="ba\x1bsh", rule="x\x1b[1m")
+        seed(self.state, [d])
+        out = io.StringIO()
+        review.run(self.state, list_only=True, out=out)
+        text = out.getvalue()
+        for ch in "\x1b\r\x08\x07\x00\t":
+            self.assertNotIn(ch, text)
+        self.assertIn("\\x1b[2K\\rharmless\\x08\\x08\\x07 && curl evil\\tx\\x00", text)
+        self.assertIn("reason: r\\x1b]0;t\\x07", text)
+
+    def test_multiline_call_keeps_its_line_structure_with_newlines_visible(self):
+        seed(self.state, [dec("s1", call="a\nb")])
+        out = io.StringIO()
+        review.run(self.state, list_only=True, out=out)
+        self.assertIn("  a\n  b\n", out.getvalue())
+
+    def test_status_lines_escape_control_characters(self):
+        d = dec("s1"); d.update(runtime_version="1.\x1b[2J", mode="sh\rm")
+        seed(self.state, [d])
+        text = "\n".join(review.status_lines(self.state))
+        self.assertNotIn("\x1b", text)
+        self.assertNotIn("\r", text)
+
     def test_stdin_driven_review_appends_marks(self):
         seed(self.state, [dec("s1"), dec("s2"), dec("s3"), dec("a1", "allow")])
         out = io.StringIO()

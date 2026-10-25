@@ -21,6 +21,8 @@ Adapter = namedtuple("Adapter", "argv contained_by grants prompt_mode version_ar
 # this runtime); guard_hook_files() -> files and dirs whose content decides what the guard hooks run.
 Adapter.__new__.__defaults__ = (None, lambda: [])
 
+# Guarded pi leads run with --no-extensions (the explicit -e client still loads): a project-local
+# extension the lead wrote into its worktree would otherwise run in the guard client's own process.
 # Permission posture per runtime and autonomy (schema 3). "{client}" is the session's pi_guard.ts.
 # Schema-2 (legacy) and custom leads get no flags: their argv is what it always was.
 AUTONOMY_FLAGS = {
@@ -28,7 +30,7 @@ AUTONOMY_FLAGS = {
                     "manual": ["--permission-mode", "default"]},
     "codex": {"native": ["--approve-for-me"], "manual": []},
     "agy": {"guard": ["--dangerously-skip-permissions"], "bypass": ["--dangerously-skip-permissions"], "manual": []},
-    "pi": {"guard": ["-e", "{client}"], "bypass": []},
+    "pi": {"guard": ["--no-extensions", "-e", "{client}"], "bypass": []},
     "kimi": {"native": ["--yolo"], "bypass": ["--auto"], "manual": []},
 }
 
@@ -101,7 +103,8 @@ ADAPTERS = {
         verify_argv=lambda lead: ["pi", "-p", "--model", lead["model"], "--no-session", "--no-extensions"],
         verify_flags=lambda lead: ["--read", _real("~/.volta"), "--write", _real("~/.pi/agent")]
                                   + [f for p in PI_CODE for f in ("--deny-write", _real(f"~/.pi/agent/{p}"))],
-        guard_argv=lambda lead, client_dir: ["pi", "-p", "--mode", "json", "--model", lead["model"], "-e", os.path.join(client_dir, "pi_guard.ts")],
+        guard_argv=lambda lead, client_dir: ["pi", "-p", "--mode", "json", "--model", lead["model"], "--no-extensions",
+                                                      "-e", os.path.join(client_dir, "pi_guard.ts")],
         guard_hook_files=lambda: [os.path.join(_guard_install.pi_agent_dir(), "settings.json"),
                                   os.path.join(_guard_install.pi_agent_dir(), "extensions")]),
     "kimi": Adapter(

@@ -97,13 +97,14 @@ class Session:
         cp_dir = checkpoint_dir(ctx.state, ctx.project.worktree_key)
         os.makedirs(cp_dir, exist_ok=True)
         self.broker, self._guard_done = None, False
+        self.proc = None
         self.markers_path = os.path.join(cp_dir, "guard-unreachable")
         self.marker_notice_sent = False
         try:
             client_dir = self._guard_start(ctx) if _guarded(self.lead) else None
             self._launch(ctx, lead_name, handoff, cp_dir, client_dir)
         except BaseException:
-            self._guard_abort()
+            self._abort(ctx)
             raise
 
     def _launch(self, ctx, lead_name, handoff, cp_dir, client_dir):
@@ -119,7 +120,10 @@ class Session:
         # own sandbox stops at the worktree (Codex, agy) get it as an extra writable dir.
         argv = self.adapter.argv(self.lead, argv_prompt, [cp_dir] if self.adapter.contained_by == "self" else [],
                                  client_dir=client_dir)
-        env = dict(os.environ, BW_CHECKPOINT=os.path.join(cp_dir, "checkpoint.md"), BW_SESSION=self.id)
+        # Every BW_GUARD_* in bw's own environment is stale for this lead; only a guarded session's
+        # own values (below) are real.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("BW_GUARD_")}
+        env.update(BW_CHECKPOINT=os.path.join(cp_dir, "checkpoint.md"), BW_SESSION=self.id)
         if self.broker is not None:
             env.update(BW_GUARD_SOCKET=self.broker.sock_path, BW_GUARD_TOKEN=self.broker.token,
                        BW_GUARD_MODE=self.broker.mode, BW_GUARD_DIR=client_dir, BW_GUARD_MARKERS=self.markers_path)
@@ -138,9 +142,9 @@ class Session:
         self.argv = argv
         self.proc = subprocess.Popen(argv, cwd=ctx.project.worktree, env=env, pass_fds=(ctx.lock.fd,),
                                      preexec_fn=_child_setup)
+        self.pgid = self.proc.pid
         if self.broker is not None:
             self.broker.serve()  # started only now: no thread of ours exists while preexec_fn runs
-        self.pgid = self.proc.pid
         ctx.give_terminal(self.pgid)
         model = self.lead["model"]
         resolved = False
@@ -202,10 +206,19 @@ class Session:
                         "the guard does not cover what they allow")
         return gdir
 
-    def _guard_abort(self):
-        if self.broker is not None:
-            self.broker.stop()
-            self.broker = None
+    def _abort(self, ctx):
+        """A failure while starting: once the lead exists it must stop too (the broker going away
+        under a running lead would leave it unguarded); before the fork only the broker needs to."""
+        try:
+            if self.proc is not None:
+                try:
+                    self.stop(5)
+                finally:
+                    ctx.take_terminal()
+        finally:
+            if self.broker is not None:
+                self.broker.stop()
+                self.broker = None
 
     def poll_guard(self, ctx):
         if self.broker is not None and not self.marker_notice_sent:

@@ -41,7 +41,7 @@ class Flags(unittest.TestCase):
             ("codex", "manual", ["codex", "-m", "m1", "--sandbox", "workspace-write", "--x", "hi"]),
             ("agy", "guard", ["agy", "--model", "m1", "--sandbox", "--dangerously-skip-permissions", "--x", "-i", "hi"]),
             ("agy", "manual", ["agy", "--model", "m1", "--sandbox", "--x", "-i", "hi"]),
-            ("pi", "guard", ["pi", "--model", "m1", "-e", "/c/pi_guard.ts", "--x", "hi"]),
+            ("pi", "guard", ["pi", "--model", "m1", "--no-extensions", "-e", "/c/pi_guard.ts", "--x", "hi"]),
             ("pi", "bypass", ["pi", "--model", "m1", "--x", "hi"]),
             ("kimi", "native", ["kimi", "-m", "m1", "--yolo", "--x"]),
             ("kimi", "bypass", ["kimi", "-m", "m1", "--auto", "--x"]),
@@ -83,8 +83,7 @@ class Flags(unittest.TestCase):
 
     def test_guard_argv(self):
         pi = A["pi"].guard_argv(lead("pi", "guard"), "/c")
-        self.assertEqual(pi, ["pi", "-p", "--mode", "json", "--model", "m1", "-e", "/c/pi_guard.ts"])
-        self.assertNotIn("--no-extensions", pi)
+        self.assertEqual(pi, ["pi", "-p", "--mode", "json", "--model", "m1", "--no-extensions", "-e", "/c/pi_guard.ts"])
         self.assertEqual(A["agy"].guard_argv(lead("agy", "guard"), "/c"),
                          ["agy", "-p", "--model", "m1", "--sandbox", "--dangerously-skip-permissions"])
         for rt in ("claude-code", "codex", "kimi"):

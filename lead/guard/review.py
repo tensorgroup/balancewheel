@@ -16,6 +16,21 @@ from lead.guard import record  # noqa: E402
 MIN_REVIEWED, MIN_SAMPLED, MAX_FALSE_STOP = 50, 20, 0.10
 
 
+def safe(value):
+    """A lead-originated string with every control character shown as an escape (a lead must not
+    be able to repaint the terminal the user marks decisions on). Printable text is unchanged."""
+    out = []
+    for ch in str(value):
+        o = ord(ch)
+        if ch == "\\":
+            out.append(ch)
+        elif o < 0x20 or o == 0x7f or 0x80 <= o < 0xa0 or ch in "\u2028\u2029":
+            out.append({9: "\\t", 13: "\\r"}.get(o) or (f"\\x{o:02x}" if o < 0x100 else f"\\u{o:04x}"))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def real(decisions):
     return [d for d in decisions if not d.get("self_test")]
 
@@ -89,18 +104,18 @@ def key_label(key):
 def show(d, out, n, total):
     tag = "allow (sampled)" if d.get("sampled") else d.get("decision")
     print(f"--- {n}/{total}  id={d['id']}", file=out)
-    print(f"runtime={d.get('runtime')} tool={d.get('tool')} decision={tag} "
-          f"source={d.get('source')} rule={d.get('rule')}", file=out)
+    print(safe(f"runtime={d.get('runtime')} tool={d.get('tool')} decision={tag} "
+               f"source={d.get('source')} rule={d.get('rule')}"), file=out)
     print("call:", file=out)
-    for line in str(d.get("call", "")).splitlines() or [""]:
-        print(textwrap.fill(line, 100, initial_indent="  ", subsequent_indent="  ",
+    for line in str(d.get("call", "")).split("\n") or [""]:
+        print(textwrap.fill(safe(line), 100, initial_indent="  ", subsequent_indent="  ",
                             break_long_words=True, replace_whitespace=False) or "  ", file=out)
-    print(f"reason: {d.get('reason')}", file=out)
+    print(safe(f"reason: {d.get('reason')}"), file=out)
 
 
 def print_summary(decisions, key, out):
     s = summary(decisions, key)
-    print(f"summary for {key_label(key)}", file=out)
+    print(safe(f"summary for {key_label(key)}"), file=out)
     print(f"  reviewed {s['reviewed']} · sampled allows {s['sampled_allows']} · stops reviewed "
           f"{s['stops_reviewed']} · false stops {s['false_stops']} · false allows {s['false_allows']} "
           f"· gray share {s['gray_share'] * 100:.0f}%", file=out)
@@ -122,7 +137,7 @@ def run(state_dir, profile=None, recent=20, sample=5, list_only=False, stdin=Non
     if key is None:
         print("bw: no guard decisions to review" + (f" for profile {profile}" if profile else ""), file=out)
         return 0
-    print(f"reviewing {key_label(key)}", file=out)
+    print(safe(f"reviewing {key_label(key)}"), file=out)
     items = pick(loaded["decisions"], key, recent, sample, rng)
     for i, d in enumerate(items, 1):
         show(d, out, i, len(items))
@@ -155,6 +170,6 @@ def status_lines(state_dir):
     for key in keys(decisions):
         ds = of_key(decisions, key)
         s = summary(decisions, key)
-        lines.append(f"  {key[1]} {key[2]} (profile {key[0]}) · {ds[-1].get('mode')} · {s['decisions']} decisions · "
-                     f"gray {s['gray_share'] * 100:.0f}% · {promotion_line(s)}")
+        lines.append(safe(f"  {key[1]} {key[2]} (profile {key[0]}) · {ds[-1].get('mode')} · {s['decisions']} decisions · "
+                          f"gray {s['gray_share'] * 100:.0f}% · {promotion_line(s)}"))
     return lines

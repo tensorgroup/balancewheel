@@ -287,14 +287,14 @@ class Collect(unittest.TestCase):
 
 
 class Argv(unittest.TestCase):
-    def test_pi_argv_loads_the_client_and_keeps_extensions_on(self):
+    def test_pi_argv_loads_the_client_and_turns_discovered_extensions_off(self):
         argv = verify.script_argv(ROOT, "pi", PI_LEAD, "nono", "{client}")
         self.assertEqual(argv[0], os.path.join(ROOT, "tests", "attack", "guard_attack.sh"))
         self.assertIn("--runtime", argv)
         self.assertEqual(argv[argv.index("--backend") + 1], "nono")
         self.assertIn("-e", argv)
         self.assertEqual(argv[argv.index("-e") + 1], "{client}/pi_guard.ts")
-        self.assertNotIn("--no-extensions", argv)
+        self.assertIn("--no-extensions", argv)
         self.assertEqual(argv[argv.index("--mode") + 1], "json")
         i = argv.index("--read", argv.index("--write") if "--write" in argv else 0)
         self.assertIn("{client}", argv[:argv.index("--")])

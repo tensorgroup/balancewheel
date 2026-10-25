@@ -237,6 +237,12 @@ class UnguardedRunner(RunnerCase):
         self.assertIsNone(start["guard_version"])
         self.assertFalse((self.state / "guard").exists())
 
+    def test_stale_guard_variables_in_bws_own_environment_do_not_reach_an_unguarded_lead(self):
+        poisoned = {f"BW_GUARD_{k}": "stale" for k in ("SOCKET", "TOKEN", "MODE", "DIR", "MARKERS", "EXTRA")}
+        p = self.start("--use", "la", env={"FAKE_MODE_a": "exit", **poisoned})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        self.assertEqual(self.fake("a")["guard_env"], [])
+
 
 class GuardRunner(RunnerCase):
     def make_tmp(self):
@@ -283,6 +289,23 @@ class GuardRunner(RunnerCase):
         log = [json.loads(l) for l in self.log.read_text().splitlines()]
         types = [(e["type"], e.get("phase")) for e in log]
         self.assertLess(types.index(("guard", None)), types.index(("session", "end")))
+
+    def test_stale_guard_variables_are_replaced_by_the_sessions_own_for_a_guarded_lead(self):
+        p = self.start("--use", "lb", "--guard", "pi", env={"FAKE_MODE_b": "guard_probe", "BW_GUARD_TOKEN": "stale",
+                                                          "BW_GUARD_EXTRA": "stale"})
+        self.assertEqual(p.wait(30), 0, p.stdout.read())
+        b = self.fake("b")
+        self.assertEqual(b["probe"]["decision"], "allow")  # the session's token, not the stale one
+        self.assertNotIn("BW_GUARD_EXTRA", b["guard_env"])
+
+    def test_failure_after_launch_stops_the_lead_and_the_broker(self):
+        p = self.start("--use", "lb", "--guard", "pi", "--fail-after-launch", env={"FAKE_MODE_b": "sleep"})
+        out = p.communicate(timeout=30)[0]
+        self.assertNotEqual(p.returncode, 0, out)
+        self.assertIn("injected failure after launch", out)
+        pgid = int((self.out / "launched.pgid").read_text())
+        self.assertTrue(wait_for(lambda: not _alive_group(pgid), 5), "the lead kept running unguarded")
+        self.assertFalse((self.state / "guard" / self.key() / "sock").exists())
 
     def test_replaying_the_logged_self_test_marker_is_a_real_counted_call(self):
         p = self.start("--use", "lb", "--guard", "pi",
@@ -389,6 +412,14 @@ class GuardRunner(RunnerCase):
         out = p.communicate(timeout=30)[0]
         self.assertEqual(out.count("guard was unreachable"), 1, out)
         self.assertEqual(self.events("guards")[0]["unreachable"], 2)
+
+
+def _alive_group(pgid):
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
 
 
 def _alive(pid):
