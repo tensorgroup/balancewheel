@@ -6,7 +6,8 @@ its checkpoint dir — nothing else. Git control files stay write-denied, becaus
 lets a later rule override an earlier one, which is how a linked worktree gets its own admin
 dir back after the shared `worktrees/` dir is denied. Both backends also deny asking other
 processes to act (LaunchServices opens, Apple Events, preference writes, launchctl): a payload
-written to scratch could otherwise run unsandboxed.
+written to scratch could otherwise run unsandboxed. For the same reason they hide a canvas's
+control token and refuse its socket (CANVAS_CONTROL_DIRS).
 
     python3 -m lead.sandbox run --worktree DIR --state-dir DIR [--read P]... [--write P]...
         [--env K=V]... [--private-home] [--backend nono|sandbox-exec] -- argv...
@@ -29,6 +30,11 @@ IPC_DENIES = ["(deny lsopen)", "(deny appleevent-send)", "(deny user-preference-
               # launchctl has no operation-level deny like lsopen; a copy of the binary would run
               # from a writable dir, so it is unreadable too.
               '(deny file-read* (literal "/bin/launchctl"))']
+# Canvases that run commands on request: Orca (terminal create/send over a unix socket and a
+# localhost WebSocket, token in its dir) and herdr (pane input/read over an unauthenticated
+# socket under its config dir). A filesystem allow-list does not cover asking an uncontained
+# process to write: hide the token and refuse the socket. Denied whether or not installed.
+CANVAS_CONTROL_DIRS = ["Library/Application Support/orca", ".config/herdr"]
 SECRET_READS = [".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker/config.json",
                 ".codex/auth.json", ".claude/.credentials.json", ".kimi-code/credentials", ".pi/agent/auth.json",
                 ".gemini/oauth_creds.json", ".config/gcloud"]
@@ -105,6 +111,16 @@ def _rule(action, kind, path):
     return f'({action} file-write* ({kind} "{path}"))'
 
 
+def canvas_denies():
+    home = os.path.expanduser("~")
+    out = []
+    for d in CANVAS_CONTROL_DIRS:
+        p = check_path(os.path.realpath(os.path.join(home, d)))
+        out += [f'(deny file-read* (subpath "{p}"))',
+                f'(deny network-outbound (remote unix-socket (subpath "{p}")))']
+    return out
+
+
 def seatbelt_profile(grants, scratch):
     home = os.path.expanduser("~")
     parts = ["(version 1)", "(allow default)", "(deny file-write*)",
@@ -115,7 +131,7 @@ def seatbelt_profile(grants, scratch):
     paths = [p for p in paths if not any(p == o or p.startswith(o.rstrip("/") + "/") for o in own)]
     secrets = " ".join(f'(subpath "{check_path(p)}")' for p in paths)
     parts.append(f"(deny file-read* {secrets})")
-    parts += IPC_DENIES
+    parts += IPC_DENIES + canvas_denies()
     return "".join(parts)
 
 
@@ -139,7 +155,7 @@ def nono_profile(grants, scratch):
                        "read_file": [p for p in grants.read if not os.path.islink(p) and os.path.isfile(p)]},
         # nono resolves grants to real paths; the link node itself needs a raw read rule.
         "unsafe_macos_seatbelt_rules": [f'(allow file-read* (literal "{p}"))' for p in grants.read if os.path.islink(p)]
-                                       + ordered + IPC_DENIES,
+                                       + ordered + IPC_DENIES + canvas_denies(),
     }
 
 

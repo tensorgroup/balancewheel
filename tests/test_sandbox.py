@@ -1,5 +1,6 @@
-import json, os, shutil, subprocess, sys, tempfile, unittest
+import json, os, shutil, socket, subprocess, sys, tempfile, unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -78,6 +79,16 @@ class Grants(unittest.TestCase):
             self.assertIn(rule, prof)
         self.assertNotIn("regex", prof)
         self.assertTrue(prof.index("(deny file-write*)") < prof.index(f'(subpath "{self.wt}")'))
+
+    def test_both_backends_deny_canvas_control_channels(self):
+        prof = sandbox.seatbelt_profile(self.grants(self.wt), str(self.root / "scratch"))
+        raw = "\n".join(sandbox.nono_profile(self.grants(self.wt), str(self.root / "scratch"))["unsafe_macos_seatbelt_rules"])
+        for d in ("~/Library/Application Support/orca", "~/.config/herdr"):
+            p = os.path.realpath(os.path.expanduser(d))
+            for rule in (f'(deny file-read* (subpath "{p}"))',
+                         f'(deny network-outbound (remote unix-socket (subpath "{p}")))'):
+                self.assertIn(rule, prof)
+                self.assertIn(rule, raw)
 
     def test_nono_profile_shape(self):
         p = sandbox.nono_profile(self.grants(self.wt), str(self.root / "scratch"))
@@ -219,6 +230,34 @@ class EscapesUnderSeatbelt(unittest.TestCase):
         r = self.sh(self.wt, f"cp /bin/launchctl {self.scratch}/l && {self.scratch}/l version")
         self.assertNotEqual(r.returncode, 0)
         self.assertFalse((self.scratch / "l").exists())
+
+    def test_canvas_control_channel_unreachable(self):
+        # A canvas (Orca) that runs commands on request is a way out that no write rule
+        # covers: its token file and socket must be unreadable and unconnectable inside.
+        home = self.root / "h"
+        ctl = home / "Library" / "Application Support" / "orca"
+        ctl.mkdir(parents=True)
+        (ctl / "orca-runtime.json").write_text("TOKEN-c4n4ry")
+        server = socket.socket(socket.AF_UNIX)
+        cwd = os.getcwd()
+        os.chdir(ctl)  # bind relative: the full path is longer than sun_path allows
+        try:
+            server.bind("c.sock")
+        finally:
+            os.chdir(cwd)
+        server.listen(1)
+        probe = (f'cd "{ctl}" && cat orca-runtime.json; cd "{ctl}" && /usr/bin/python3 -c '
+                 '"import socket; s=socket.socket(socket.AF_UNIX); s.connect(\'c.sock\'); print(\'CONNECTED\')"')
+        try:
+            control = subprocess.run(["/bin/sh", "-c", probe], capture_output=True, text=True)
+            self.assertIn("CONNECTED", control.stdout)  # the probe works outside, so a pass means something
+            self.assertIn("TOKEN-c4n4ry", control.stdout)
+            with mock.patch.dict(os.environ, {"HOME": str(home)}):
+                r = self.sh(self.wt, probe)
+            self.assertNotIn("TOKEN-c4n4ry", r.stdout)
+            self.assertNotIn("CONNECTED", r.stdout)
+        finally:
+            server.close()
 
     def test_commit_inside_still_works(self):
         r = self.sh(self.wt, "echo y > g && git add g && git -c user.email=t@t -c user.name=t commit -qm in")
