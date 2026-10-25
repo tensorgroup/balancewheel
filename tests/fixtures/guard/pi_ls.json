@@ -1,0 +1,14 @@
+{
+  "event": {
+    "type": "tool_call",
+    "toolName": "ls",
+    "toolCallId": "call_synthetic_ls",
+    "input": {
+      "path": "."
+    }
+  },
+  "ctx": {
+    "hasUI": false,
+    "cwd": "/work/wt"
+  }
+}

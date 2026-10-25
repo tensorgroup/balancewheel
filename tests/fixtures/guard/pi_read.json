@@ -1,0 +1,14 @@
+{
+  "event": {
+    "type": "tool_call",
+    "toolName": "read",
+    "toolCallId": "call_synthetic_read",
+    "input": {
+      "path": "a.txt"
+    }
+  },
+  "ctx": {
+    "hasUI": false,
+    "cwd": "/work/wt"
+  }
+}

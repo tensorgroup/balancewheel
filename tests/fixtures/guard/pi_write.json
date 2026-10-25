@@ -1,0 +1,15 @@
+{
+  "event": {
+    "type": "tool_call",
+    "toolName": "write",
+    "toolCallId": "call_synthetic_write",
+    "input": {
+      "path": "b.txt",
+      "content": "hi"
+    }
+  },
+  "ctx": {
+    "hasUI": false,
+    "cwd": "/work/wt"
+  }
+}

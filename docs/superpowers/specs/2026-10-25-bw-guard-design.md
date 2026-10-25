@@ -7,7 +7,7 @@ The findings are folded in, not appended; "Decisions from the review" lists the 
 The user skipped the question round, so intent below is from their own words and every
 other choice is marked as the author's call. Versions read on the author's machine this
 date: Claude Code 2.1.310, Codex CLI 0.154.0, agy 1.4.7, pi 0.85.1, Kimi Code CLI 2.3.1.
-Builds on `2026-10-24-profiles-lead-rotation-cockpit-design.md` (leads, profiles,
+Revised again 2026-10-25 after spike 1a: pi hook behaviour observed (see "What exists today"); agy spike 1b pending quota reset. Builds on `2026-10-24-profiles-lead-rotation-cockpit-design.md` (leads, profiles,
 `bw sandbox`, handoffs, the inbox) and `docs/orca.md`.*
 
 ## Intent
@@ -45,6 +45,36 @@ the 2026-10-25 spike).
 | Kimi Code | `--yolo` = "Ask When Needed": routine actions run, risky ones ask | `[[hooks]] PreToolUse` — fail-open by Kimi's own docs | n/a (advisory only) |
 | agy | none: prompts, `--dangerously-skip-permissions`, or `--sandbox` | `PreToolUse` in its hooks config answering `{"decision":"allow\|ask\|deny"}` | yes (`ask`) |
 | pi | none: no permission system | an extension's `tool_call` handler (`{block, reason}`) | yes: `ctx.ui.select` when `ctx.hasUI` (pi's own `permission-gate.ts` example) |
+
+### pi hook spike (1a, 2026-10-25, pi 0.85.1)
+
+Observed with a throwaway extension loaded by `-e`, DeepSeek V4.1 Flash through OpenRouter,
+`pi -p` with stdin closed. The agy half (1b) is pending until Google quota resets
+(about 2026-10-31); nothing in the agy row above is verified yet.
+
+- **Event shape.** `tool_call` carries `{type, toolName, toolCallId, input}`; no cwd. The
+  handler's second argument (`ctx`) has `hasUI` (false under `-p`) and `cwd` (the process cwd).
+  Inputs: `bash {command}`, `read {path}`, `write {path, content}`,
+  `edit {path, edits:[{oldText,newText}]}`, `grep {pattern}`, `find {pattern}`, `ls {path}`
+  (path may be absent on `grep`/`find`). Fixtures: `tests/fixtures/guard/pi_*.json`.
+- **Default tools.** Only `bash`, `read`, `write`, `edit` are on by default; `grep`, `find`,
+  `ls` appear only with `--tools`. A guard sees whatever is enabled.
+- **`-e` and `--no-extensions`.** An explicit `-e` still loads with `--no-extensions`.
+- **Fail closed at load.** A missing `-e` path or one that fails to parse makes pi print
+  `Failed to load extension` and exit 1 before any model call, so a lead cannot run
+  unguarded through a bad path. A handler that throws at run time blocks the call (the model
+  sees the error text as the tool result).
+- **Block reaches the model.** `{block:true, reason}` comes back as the tool result text,
+  and the command does not run.
+- **Order.** Several `-e` extensions run in the order given; project-local extensions load
+  after them. The first extension to block short-circuits later ones (a later extension never
+  sees a blocked call). User-level extensions were not exercised.
+- **Resume.** `-c` (continue) or `--session <id|path>` with `--session-dir`; `-e` applies
+  to the resumed run as to a fresh one.
+- **Under `bw sandbox`, both backends (nono, sandbox-exec).** The extension connected to a
+  unix socket in a directory with no write grant, on both. From inside, `rm` of the socket and
+  creating a file in that directory failed (`Operation not permitted`); the socket survived.
+  Gate for pi: passed.
 
 Judge measurement: DeepSeek V4.1 Flash on OpenRouter, five representative commands at a
 60-token output cap: 0.67–1.15 s and about $0.00004 per call; four correct verdicts, one
