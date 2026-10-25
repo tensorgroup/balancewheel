@@ -95,7 +95,7 @@ def cmd_verify(a, config, state):
         containment.record_pass(state, a.runtime, key, r.stdout.split("evidence in ")[-1].strip())
         print(f"bw: recorded a containment pass for {a.runtime} on {which}")
         return 0
-    print("bw: not recorded — a refusal by the model is inconclusive; re-run", file=sys.stderr)
+    print("bw: " + guard_verify.failure_message(r.stdout), file=sys.stderr)
     return 1
 
 
