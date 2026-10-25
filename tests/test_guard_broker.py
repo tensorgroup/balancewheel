@@ -136,10 +136,10 @@ class TestBroker(BrokerBase):
         self.assertEqual((d["kind"], d["tool"]), ("other", "oversized"))
 
     def test_2mib_request_refused(self):
-        big = b'{"v":1,"token":"%s","payload":"' % TOKEN.encode() + b"x" * (2 * 1024 * 1024) + b'"}\n'
-        r = self.raw(big)
-        if r is not None:
-            self.assertIn("error", r)
+        req = {"v": 1, "token": TOKEN, "runtime": "pi", "cwd": self.wt,
+               "payload": bash("x" * (2 * 1024 * 1024))}
+        r = self.raw(json.dumps(req).encode() + b"\n")
+        self.assertEqual(r, {"v": 1, "error": "request too large"})
         self.assertEqual(self.decisions(), [])
 
     def test_long_socket_path_raises_before_binding(self):
@@ -249,6 +249,36 @@ class TestBroker(BrokerBase):
         self.assertEqual([x["self_test"] for x in d], [True, True, True, False])
         self.assertEqual(self.b.counts()["calls"], 1)
         self.assertEqual(self.b.counts()["decisions"], {"allow": 1})
+
+
+class TestWorkerErrors(BrokerBase):
+    def ctx(self):
+        def boom(remote, refspec):
+            raise RuntimeError("push_dest exploded TOKEN=abc123")
+        return super().ctx()._replace(push_dest=boom)
+
+    def test_decide_error_replies_and_records(self):
+        r = self.ask(bash("git push"))
+        self.assertEqual(r, {"v": 1, "error": "internal error"})
+        loaded = record.load(self.state)
+        self.assertEqual(loaded["decisions"], [])
+        self.assertEqual(len(loaded["errors"]), 1)
+        e = loaded["errors"][0]
+        self.assertEqual((e["type"], e["where"], e["session_id"]), ("error", "decide", "s1"))
+        self.assertTrue(e["error"].startswith("RuntimeError: push_dest exploded"))
+        self.assertNotIn("abc123", e["error"])
+        self.assertNotIn("git push", json.dumps(e))
+
+    def test_record_error_replies_and_records_where_record(self):
+        with mock.patch.object(brk.record, "append", side_effect=[OSError("disk"), None]) as ap:
+            r = self.ask(bash("ls"))
+        self.assertEqual(r, {"v": 1, "error": "internal error"})
+        self.assertEqual(ap.call_args_list[1][0][1]["where"], "record")
+
+    def test_error_record_failure_swallowed(self):
+        with mock.patch.object(brk.record, "append", side_effect=OSError("disk")):
+            r = self.ask(bash("ls"))
+        self.assertEqual(r, {"v": 1, "error": "internal error"})
 
 
 class TestShadow(BrokerBase):

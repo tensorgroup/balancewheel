@@ -136,7 +136,7 @@ class Broker:
     def _work(self, conn):
         try:
             self._handle(conn)
-        except Exception:
+        except Exception:  # _handle reports its own failures; this is the last resort
             pass
         finally:
             conn.close()
@@ -204,9 +204,27 @@ class Broker:
         cwd = req.get("cwd")
         if not isinstance(cwd, str) or not cwd:
             return self._send(conn, {"v": 1, "error": "bad cwd"})
-        t0 = time.monotonic()
-        call = normalise(self.session["runtime"], req.get("payload"), cwd, self.ctx.worktree)
-        d = decide(call, self.ctx)
+        where = "decide"
+        try:
+            t0 = time.monotonic()
+            call = normalise(self.session["runtime"], req.get("payload"), cwd, self.ctx.worktree)
+            d = decide(call, self.ctx)
+            where = "record"
+            self._finish(conn, call, d, t0)
+        except Exception as exc:
+            self._fail(conn, where, exc)
+
+    def _fail(self, conn, where, exc):
+        """Reply with an error and leave one error record (no call text, no stderr)."""
+        try:
+            record.append(self.state_dir, {
+                "type": "error", "session_id": self.session["session_id"], "where": where,
+                "error": "%s: %s" % (type(exc).__name__, redact(str(exc))[:300])})
+        except Exception:
+            pass
+        self._send(conn, {"v": 1, "error": "internal error"})
+
+    def _finish(self, conn, call, d, t0):
         latency = round((time.monotonic() - t0) * 1000, 3)
         text = _text(call)
         self_test = bool(self._marker) and self._marker in text

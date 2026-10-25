@@ -38,7 +38,9 @@ def load(state_dir):
             orphans.append(m)
         else:
             d["mark"] = {"verdict": m.get("verdict"), "sampled": m.get("sampled")}
-    return {"decisions": decisions, "marks": marks, "orphan_marks": orphans, "warnings": warnings}
+    errors = [e for e in events if e["type"] == "error"]
+    return {"decisions": decisions, "marks": marks, "orphan_marks": orphans, "errors": errors,
+            "warnings": warnings}
 
 
 def policy_digest(protected_branches, deploy_commands):
