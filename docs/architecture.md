@@ -15,7 +15,9 @@ shared brief became a pre-built, cached artifact every seat starts from (protoco
 with the finding that resuming a session is not a cache, and the stand-in rule for a seat
 whose subscription window is exhausted. Updated 2026-10-24: leads and rotation — the lead is
 the moderator; a project's profile may make a non-primary vendor's agent the default lead,
-which narrows "driver mode is failover, not promotion" to drivers outside a profile.*
+which narrows "driver mode is failover, not promotion" to drivers outside a profile.
+Updated 2026-10-25: Orca named as the recommended canvas, and canvas control channels added
+to what a sandbox must deny (`docs/orca.md`).*
 
 ## The problem
 
@@ -87,7 +89,10 @@ lead, and returns to the preferred one after its cap resets. Decisions are a pur
 of quota, caps, and time (`lead/rotation.py`); thresholds are on *remaining* quota. Leads
 are contained like drivers, by their own sandbox or by `bw sandbox` after an attack-verified
 pass; leads never share a worktree (an inherited lock). Design and amendments:
-`docs/superpowers/specs/2026-10-24-profiles-lead-rotation-cockpit-design.md`.
+`docs/superpowers/specs/2026-10-24-profiles-lead-rotation-cockpit-design.md`. Where the
+user watches leads is a canvas's job, not balancewheel's: Orca is the recommended one
+(`docs/orca.md`), hosting `bw lead` panes; a canvas is also a host that a contained process
+could ask to run commands, so every sandbox denies its control channel.
 
 ### Seat mode and driver mode are different things
 

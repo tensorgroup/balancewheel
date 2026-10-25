@@ -100,6 +100,7 @@ is a liability. In the reference setup the paths are:
 | `~/.codex/config.toml`, `~/.codex/review.config.toml` | default profile, read-only review profile | edits / creates |
 | `~/.pi/agent/settings.json`, `~/.pi/agent/models.json` | pi defaults and model pins | edits — *only if pi runs from its default agent dir; the reference setup gives each pi seat its own agent dir under the state dir, so these stay untouched there* |
 | `~/.config/git/ignore` | tool-litter patterns | appends |
+| `~/.codex/hooks.json`, `~/.gemini/settings.json`, `~/.gemini/config/hooks.json`, `~/.kimi-code/config.toml` | vendor hook config | *nothing* — listed because [Orca](docs/orca.md), the recommended canvas, adds its status hooks here (and to the Claude Code settings and Codex config above) on first launch; back up before installing it |
 | `~/.codex/auth.json`, `~/.pi/agent/auth.json`, your secrets file | credentials | reads only; never written, never backed up |
 
 Everything on that list is under your home directory. A repo's own instruction files
@@ -325,6 +326,13 @@ schema 2) names its leads in order, and `bw lead` picks one:
   `bw sandbox verify` passed on their current version: writes stop at the worktree, the git
   data a commit needs, the runtime's own state, and the checkpoint dir; git hooks and
   config stay read-only; no app launches, Apple Events, or preference writes.
+- **Where you watch it: Orca (recommended, never required).** [Orca](https://github.com/stablyai/orca)
+  is an MIT desktop app that hosts agent panes per worktree, with notifications and a
+  per-plan quota view. Run `bw lead` inside an Orca terminal (`orca terminal create --command
+  "bw lead"`), never through Orca's own agent launch, which bypasses permissions and bw's
+  worktree lock. Orca adds hooks to every vendor's config when it first starts, and a
+  sandboxed process can drive Orca's control channel unless the sandbox denies it — read
+  [docs/orca.md](docs/orca.md) before installing it. Plain terminal tabs work the same.
 
 ## Working with OpenEscapement
 

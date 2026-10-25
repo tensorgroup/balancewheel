@@ -9,6 +9,12 @@ otherwise. Tool versions were read on the author's machine on this date: Claude 
 2.1.310, Codex CLI 0.154.0, agy 1.4.7, pi 0.85.1, Kimi Code CLI 2.3.1, nodeterm
 (self-updating), cc-switch 4.0.15 (source read at commit `85ad496`).*
 
+*Amended 2026-10-25: Orca (1.4.240, MIT) replaces nodeterm as the recommended, optional
+canvas, and the cockpit, inbox, and quota-probe work it duplicates is trimmed. A spike and a
+deep four-seat review (43 raw findings, 17 after dedupe) shaped the change; the sections
+below are edited in place and the "Orca as the default canvas" amendment lists every change.
+The integration guide is `docs/orca.md`.*
+
 ## Intent
 
 A developer who already pays for one or more vendor plans (Claude, ChatGPT, Google,
@@ -38,15 +44,18 @@ macOS only for now.
    logged both ways, with a manual override.
 3. **One starter.** `bw start [project]` checks every CLI for updates, re-verifies any
    seat whose runtime changed, picks the lead, and opens the workspace.
-4. **A cockpit.** A local web page: quota and reset countdowns per plan, spend per
-   metered key, per-model quality (confirmed findings, unique catches, standout panels,
-   redundancy), the connection graph, and an inbox of questions waiting on the human.
+4. **A cockpit.** A local, read-only web page: per-model quality (confirmed findings,
+   unique catches, standout panels, redundancy), lead scores, spend per metered key, and
+   the connection graph. Live quota bars and "an agent is waiting" belong to the canvas
+   (Orca); the facts rotation acts on are in `bw status`.
 5. **Terse inter-agent messages.** One small envelope for briefs, claims, challenges,
    verdicts, handoffs, and questions for the human.
 6. **Jev used dynamically, under evidence.** The decision model moves from advice-only to
    shaping the seat mix within a profile's bounds, once its shadow record earns it.
 7. **Reuse before build.** cc-switch supplies usage and cost for the user's own
-   sessions; nodeterm supplies the live canvas; vendor CLIs supply everything model-side.
+   sessions; Orca (optional, recommended) supplies the live canvas, notifications, and a
+   quota snapshot for plans with no documented surface; vendor CLIs supply everything
+   model-side.
    Balancewheel adds only the policy, the scoreboard, and the glue.
 
 ## Non-goals
@@ -64,7 +73,8 @@ macOS only for now.
 - **Network traffic Balancewheel itself causes**, the complete list: each tool's own
   update command; quota probes to each vendor's own host; Jev calls to OpenRouter when a
   profile's router is not `off`; the opt-in daily team summary to an esc portal the user
-  configures. Nothing else.
+  configures. Nothing else. (A canvas's own traffic is the canvas's: Orca polls vendor
+  usage endpoints and sends telemetry unless turned off; setup turns its telemetry off.)
 
 ## Anti-goals
 
@@ -75,16 +85,19 @@ macOS only for now.
 - A credential read that is logged, written, refreshed, cached, or sent anywhere but the
   vendor that issued it — or one that teaches the user to widen a Keychain ACL.
 - Two writable agents in one worktree at once.
-- A second tool writing a file Balancewheel or esc owns.
+- A second tool writing a file Balancewheel or esc owns. (Precisely, since 2026-10-25: a
+  key or line bw writes — the statusline entry, a seat's own config home. A canvas adding
+  its own entries to a shared vendor file, as Orca does, is tolerated only because the
+  file is backed up, hashed into the seat verification key, and never loaded by a seat.)
 
 ## The pieces and how they fit
 
 ```
                        you
-                        │  type in the lead · answer the inbox
+                        │  type in the lead · bw answer
          ┌──────────────┴───────────────┐
-   nodeterm canvas (optional)     terminal tabs (fallback)
-         │  one frame per project: the lead; the cockpit as a web node
+   Orca (recommended, optional)   terminal tabs (fallback)
+         │  one pane per worktree running `bw lead`; Orca's quota view and notifications
          ▼
    bw start ─ update check ─ re-verify ─ pick lead ─ open workspace ─► bw lead <project>
                                                                         │ owns the worktree lock,
@@ -97,7 +110,7 @@ macOS only for now.
              session, lead, ask/answer ◄────────────────────┘
                          │
    bw cockpit (127.0.0.1) ◄── cc-switch db (read-only, user's own sessions)
-                          ◄── quota.json (statusline + probes)
+                          ◄── quota.json (statusline + documented probes + Orca snapshot)
                           ◄── registry.json (derived)
          └── opt-in daily summary ──► esc portal (team view)
 ```
@@ -149,6 +162,27 @@ win; every path resolved with `pwd -P` first, because Seatbelt matches real path
 A linked worktree adds its `<git-common-dir>` (writable, minus the denies) so commits
 work. Seats get the same profile with **no** worktree entry: everything in the reviewed
 repo is read-only to the OS.
+
+**Host control channels are part of containment (added 2026-10-25).** A filesystem
+allow-list does not stop a contained process from asking another, uncontained process to
+write for it. Orca's runtime takes `terminal create`/`send`/`read` over a unix socket and a
+localhost WebSocket, authenticated by a token in a readable file under
+`~/Library/Application Support/orca/`. On 2026-10-25, with the Orca app running, a process
+under this `sandbox-exec` profile (and under the reference agy seat's profile) ran `orca
+terminal create --command "touch <outside>"` and the file appeared outside the worktree,
+while its own direct write was denied. nono denied it only because its defaults happened to
+block reading that directory; Codex's sandbox refused the connection. Every profile, nono
+and `sandbox-exec`, lead and seat, therefore adds:
+
+```text
+(deny file-read* (subpath "<home>/Library/Application Support/orca"))   ; hides the auth token
+(deny network-outbound (remote unix-socket (subpath "<home>/Library/Application Support/orca")))
+```
+
+Both were verified to block the attack (each alone suffices; both are kept). `bw sandbox
+verify` and the seat attack test gain a case that tries `orca terminal create` from inside
+when the `orca` binary is present. A canvas added later gets the same treatment before it is
+recommended: find its control channel, deny it, attack it.
 
 **Verified by attack on 2026-10-24** (filesystem-decided, kernel `EPERM` as the
 mechanism evidence):
@@ -227,9 +261,9 @@ user's current behaviour".
   "schema_version": 2,
   "plans": {
     "claude-max": {"vendor": "anthropic",  "billing": "plan",    "quota": "statusline"},
-    "chatgpt":    {"vendor": "openai",     "billing": "plan",    "quota": "probe"},
+    "chatgpt":    {"vendor": "openai",     "billing": "plan",    "quota": "orca"},
     "google":     {"vendor": "google",     "billing": "plan",    "quota": "probe"},
-    "kimi-code":  {"vendor": "moonshot",   "billing": "plan",    "quota": "probe"},
+    "kimi-code":  {"vendor": "moonshot",   "billing": "plan",    "quota": "orca"},
     "openrouter": {"vendor": "openrouter", "billing": "metered", "quota": "probe", "budget_usd_month": 20}
   },
   "tools": {
@@ -238,7 +272,7 @@ user's current behaviour".
     "agy":       {"update": ["agy", "update"]},
     "pi":        {"update": ["<detected by setup; pi runs on its own pinned node>"]},
     "kimi":      {"update": ["<detected by setup>"]},
-    "nodeterm":  {"app": "/Applications/nodeterm.app", "self_updating": true},
+    "orca":      {"app": "/Applications/Orca.app", "self_updating": true},
     "cc-switch": {"update": ["brew", "upgrade", "--cask", "cc-switch"]}
   },
   "leads": {
@@ -279,8 +313,10 @@ user's current behaviour".
 
 Rules (the loader rejects anything else, naming the key path, as v1 does):
 
-- `plans.*.billing` ∈ {`plan`, `metered`}; `quota` ∈ {`statusline`, `probe`,
-  `none`}; `budget_usd_month` only on metered plans.
+- `plans.*.billing` ∈ {`plan`, `metered`}; `quota` ∈ {`statusline`, `probe`, `orca`,
+  `none`}; `budget_usd_month` only on metered plans. `orca` reads Orca's snapshot under
+  the rules in "Quota probes"; without Orca it reads `unknown`. Optional
+  `plans.*.orca_windows` maps an Orca model-pool bucket to a lead or seat (below).
 - `tools.*.update` is an argv list, run without a shell. Setup detects each tool's
   install method on first run and writes a suggested value; it never guesses silently.
 - `leads.*` reference a tool and a plan; `model` is passed to the runtime verbatim and
@@ -366,7 +402,7 @@ as evidence.
 
 - holds the project's **worktree lock** (`state_dir/locks/<repo-id>.lock`) for as long
   as any lead runs there, so two writable leads never share a worktree;
-- runs the lead runtime as its child in the foreground terminal (or nodeterm node);
+- runs the lead runtime as its child in the foreground terminal (an Orca pane or a plain tab);
 - reads quota signals while the lead runs (below) every `probe_every_min`;
 - records `session` events (start and end: `project`, `worktree`, `lead`, `runtime`,
   resolved `model`, `plan`, `session_id`), so every lead minute is attributable;
@@ -381,7 +417,8 @@ as evidence.
   `quota.json`. No credential is touched. The field is absent before the first response
   of a session and has regressed in at least one release (anthropics/claude-code#45133),
   so absence is `unknown`, never zero.
-- `probe` (Codex, Kimi, agy, OpenRouter): see "Quota probes".
+- `probe` (agy, OpenRouter: documented surfaces) and `orca` (Codex, Kimi: Orca's
+  snapshot): see "Quota probes".
 - **Cap observed**: a usage-limit message from the lead runtime (detected by the
   runtime's hook where one exists, or by the statusline reaching 100%). The cap record
   stores the window and its `resets_at` (from the message or the probe; if neither,
@@ -419,21 +456,45 @@ itself. Preference per plan:
 
 1. **A documented surface**: Claude's statusline (above); `agy --print /usage
    --output-format json`; OpenRouter's documented `GET /api/v1/key`.
-2. **The vendor endpoint the vendor's own CLI uses**, for plans with no documented
-   surface (ChatGPT's usage endpoint for Codex, Kimi Code's `/coding/v1/usages`),
-   reading the credential from the **file** the vendor CLI keeps (`~/.codex/auth.json`,
-   the Kimi credentials file). These are on by default for those plans and can be turned
-   off with `quota: "none"`.
-3. **Keychain-held credentials are not read** in this design. Where a plan's credential
-   lives only in the Keychain and no documented surface exists, quota is `unknown` and
-   rotation relies on observed caps.
+2. **Orca's snapshot** (`quota: "orca"`), for plans with no documented surface (Codex,
+   Kimi): `orca account list --json` → `result.rateLimits.<provider>`. Orca already
+   polls these vendors (amended 2026-10-25; this replaces the earlier plan to read
+   `~/.codex/auth.json` and the Kimi credentials file and call the vendors ourselves, so
+   bw now reads no vendor credential at all). Without Orca, these plans read `unknown`.
+3. **Keychain-held credentials are not read** by Balancewheel. Orca reads Claude's token
+   from the Keychain for its own display (through `/usr/bin/security`; its source has no
+   Claude or Kimi token refresh); bw does not use Orca's Claude numbers for decisions —
+   the statusline stays the only Claude input — and shows them only as a cross-check.
 
-Rules for (2): the credential is read in-process for one TLS request to the issuing
-vendor's host; never logged, written, cached, placed in argv or environment, or
-**refreshed** (a second refresher rotates the refresh token out from under the vendor's
-CLI and logs the user out; a 401 is `unknown`, full stop). Only percentages, windows, and
-reset times are kept, in `state_dir/quota.json` with a timestamp. A failed probe is
-`unknown` with its reason; nothing retries in a loop. Parsers are tested against
+Rules for (2), because the field is not a documented Orca interface (its CLI help says
+listing "shows no usage") and Orca updates itself:
+
+- Accept a provider entry only with `status: "ok"` and no `error`; anything else is
+  `unknown` with Orca's reason.
+- `observed_at` is the entry's `updatedAt` (Orca's poll time, epoch ms ÷ 1000), never the
+  time bw ran the command; the CLI returns Orca's cache (`refreshUsage: false`), so a
+  re-read is not a fresh observation. Older than 2 × `probe_every_min` is `unknown`.
+- `resetsAt` is epoch **milliseconds**; convert and bounds-check. `usedPercent` must be
+  finite and within 0–100.
+- Only account-wide windows (`session`, `weekly`) feed rotation. Model-pool windows —
+  Claude's Fable-only weekly window, agy's per-pool buckets — are ignored unless
+  `plans.*.orca_windows` maps one to the leads or seats it limits; a full pool then takes
+  out only those, never the plan.
+- Orca readings never create, extend, or clear a cap record; caps come from first-party
+  signals (statusline, the runtime's own limit message, `bw cap`). A cached percentage
+  never triggers a mid-session switch.
+- Each snapshot records `source: "orca"` and the Orca version; a version change re-runs the
+  shape check (synthetic fixtures) before the next reading is trusted.
+- Precedence when a plan has several sources: statusline → documented surface → Orca →
+  `unknown`. Each source writes its own snapshot; the arbiter picks, so a stale reading
+  never overwrites a fresher one.
+- A plan whose only source has been `unknown` for more than one probe interval gets one
+  notice in `bw status` ("no quota reading since <t>; rotation is using observed caps
+  only"), not a silent fallback.
+
+Rules for every probe: only percentages, windows, and reset times are kept, in
+`state_dir/quota/<plan>.json` with a timestamp. A failed probe is `unknown` with its
+reason; nothing retries in a loop. Parsers are tested against
 **synthetic** responses written by hand from the documented or observed schema — never
 captured responses, redacted or not (privacy firewall).
 
@@ -449,7 +510,14 @@ that changed under it.
 version, hashes of the guard files and the seat's settings or profile files, and for pi
 the Node version it runs on. `seat` recomputes the key at every invocation and refuses
 on mismatch or on an **unreadable version** (a half-finished install reads as
-unreadable).
+unreadable). **Amended 2026-10-25:** the key also hashes every user-level config and hook
+file the runtime loads (for Claude Code the user settings file, for Codex `config.toml` and
+`hooks.json`, for agy its settings and hooks, for Kimi Code its `config.toml`), because a
+canvas can edit those without any update (Orca adds hooks to all of them on first launch).
+A changed file makes the seat `pending` until the attack test passes again. Seats are
+built to load no user-level hooks at all (seat-owned config homes; for agy, its own
+configuration directory), and `seat` and `bw lead` drop `ORCA_*` and other canvas variables
+from the environment they pass to a seat, so a gated canvas hook stays inert inside one.
 
 **`bw start` steps.**
 
@@ -459,8 +527,8 @@ unreadable).
    share a lock, so they never wait on each other), with a per-tool timeout and one
    live status line per tool. Tools that share an installer (two Homebrew casks, two npm
    globals) are serialised within that installer only, because Homebrew and npm take
-   their own global locks. Record before and after versions. nodeterm updates itself;
-   the starter reports its version only. A failed or timed-out update is reported; the
+   their own global locks. Record before and after versions. Orca updates itself;
+   the starter reports its version only (and a change re-runs the quota shape check). A failed or timed-out update is reported; the
    tool is then re-checked for a readable version. Steps 3 and 4 for a tool start as soon
    as that tool's update finishes, not after the slowest one.
 3. Recompute every seat's verification key. A changed key runs the attack test (fresh
@@ -470,10 +538,16 @@ unreadable).
    the containment test (both directions) on their key change.
 4. Read quota for every plan the profile touches; pick the lead per the transitions.
 5. Refresh `registry.json`.
-6. Open the workspace: with nodeterm, its control CLI opens a frame for the project with
-   `bw lead <project>` and, if not already open, the cockpit as a web node; without it, a
-   terminal tab with `bw lead` and the cockpit in the browser.
-7. Ensure `bw cockpit` is running.
+6. Open the workspace: with Orca running, `orca terminal create --worktree
+   path:<worktree> --title "<project> lead" --command "bw lead"` (verified 2026-10-25: the
+   lead runs in bw's own permission mode and Orca still shows its status); without it, a
+   terminal tab with `bw lead`. This is the **only** way bw work starts in Orca: Orca's
+   `agent launch` (permission bypass by default), orchestration workers, automations, and
+   session restore start agents without bw's worktree lock or containment and are not used
+   on a worktree bw manages. Setup checks that Orca's agent permission default is Manual
+   and its automatic account switching is off (an account changing under a running lead
+   would make the logged `plan` wrong), and says so in `bw status` when either is not.
+7. The cockpit is opened on demand (`bw cockpit`); it is read-only and need not run.
 8. Once per day, if team reporting is configured, send the summary (below).
 
 On a day with no updates, steps 1–7 should add only a few seconds (version checks and
@@ -498,12 +572,20 @@ seats to answer in the same shape, which also fills `findings_detail` more direc
 ## The inbox
 
 An `ask` addressed to `@human` from a lead is appended to `state_dir/inbox.jsonl` (`id`,
-`ts`, `project`, `from`, `text`, `status`). It surfaces in the cockpit, as a macOS
-notification (`osascript`), and through nodeterm's own "needs you" badge where nodeterm
-watches the runtime. The user answers in the cockpit or with `bw answer <id> "<text>"`;
-the answer is appended as an `answer` record. The asking lead reads answers with `bw
-inbox --project`, and its instructions say an answer is **the user's words relayed by
-the cockpit**, to be treated like anything else the user types. Seats never ask.
+`ts`, `project`, `from`, `text`, `status`). It surfaces in `bw status` and `bw inbox`; a
+lead asking in an Orca pane also shows as "waiting" there, through Orca's own hooks. The
+user answers with `bw answer <id> "<text>"`; the answer is appended as an `answer` record.
+The asking lead reads answers with `bw inbox --project`, and its instructions say an
+answer is **the user's words relayed by bw**, to be treated like anything else the user
+types. Seats never ask. Rotation notices (all leads capped, a pinned lead capped, the
+router returned to shadow) are inbox items too, so they survive the terminal they were
+printed in.
+
+*Amended 2026-10-25:* the records and the two commands stay — they feed handoffs ("open
+questions"), rotation notices, and the Human load and Continuity columns of lead scoring,
+and Orca's inbox shows agent state, not bw's questions. What is cut is the cockpit's inbox
+view, its answer endpoint, and the `osascript` notifications; Orca's notifications cover
+"an agent is waiting".
 
 ## The registry (`state_dir/registry.json`, derived)
 
@@ -544,16 +626,20 @@ clean URL, so the token does not stay in history or a referrer. Every request mu
 the cookie and a `Host` header equal to `127.0.0.1:<port>` or `localhost:<port>` (blocks
 DNS rebinding). Responses send a nonce-based `Content-Security-Policy` (`default-src
 'none'`, scripts and styles by nonce, `connect-src 'self'`), `Referrer-Policy:
-no-referrer`, and no CORS headers; `OPTIONS` is refused. The one write endpoint (inbox
-answers) additionally requires a per-page token in a custom header. **Every** value from
+no-referrer`, and no CORS headers; `OPTIONS` is refused. The cockpit is **read-only**
+(amended 2026-10-25: the inbox-answer endpoint is gone; answers go through `bw answer`),
+so it accepts `GET` only. **Every** value from
 every source — logs, cc-switch rows, probe results, handoffs, inbox text — reaches the
 DOM through `textContent` or an escaping helper, never `innerHTML`.
 
 **Views.**
 
 1. **Now** — per project: profile, current lead (pinned or auto) and why, next eligible;
-   per plan: each window's remaining quota with its reset countdown or "unknown";
-   OpenRouter spend this month against `budget_usd_month`; the inbox; open watches.
+   per plan, one line: remaining per window, cap-until, **source and age** of the reading
+   (live bars and countdowns are Orca's; this line exists so a stale or mis-mapped reading
+   is visible where decisions are explained); OpenRouter spend this month against
+   `budget_usd_month` (Orca has no OpenRouter); open watches. `bw status` prints the same
+   facts as text and is the sanctioned surface for every rotation-relevant fact.
 2. **Models** — seat rows: panels attended, confirmed findings, unique catches,
    **standout panels** (a unique confirmed finding at major or above), dispute win share,
    the redundancy meter, and cost (dollars per confirmed finding when metered; tokens per
@@ -573,9 +659,10 @@ functions.
 
 | Tool | Role here | Settings setup requires |
 |---|---|---|
-| **nodeterm** | optional live canvas; `bw start` drives its control CLI | none; BUSL license, so never a hard dependency |
+| **Orca** (MIT) | recommended, optional canvas: one pane per worktree running `bw lead`; notifications; quota snapshot for `quota: "orca"` plans | agent permissions **Manual**; automatic account switching **off**; orchestration, automations, and `agent launch` unused on bw-managed worktrees; telemetry off (`DO_NOT_TRACK=1` at launch and the in-app switch). It adds status hooks to every vendor's user config on first launch and pre-trusts its Codex hooks (setup backs up first; `orca agent hooks off` removes them; seats never load them). Every sandbox denies its control channel. Never a hard dependency. Guide: `docs/orca.md` |
+| **nodeterm** | another canvas that can host `bw lead` in a terminal frame; no longer driven by `bw start` | BUSL license, so never a hard dependency; it also adds a Claude Code hook, and its control CLI gets the same deny-and-attack treatment before any use |
 | **cc-switch** | usage and cost for the user's own sessions (read-only SQLite) | routing, failover, aggregation **off**; provider management **off for Codex** (it migrates Codex history and writes Codex profiles); prompt, MCP, and skills sync **off** for any file Balancewheel or esc manages |
-| **Vendor CLIs** | leads and seats | per the 2026-09-03 seat homes; setup never edits a user-global config except the statusline line it asks the user to accept |
+| **Vendor CLIs** | leads and seats | per the 2026-09-03 seat homes; Balancewheel's setup never edits a user-global config except the statusline line it asks the user to accept (a canvas may — Orca does — which is why those files are in `setup/paths.txt` and in the seat verification key) |
 | **Jev** (OpenRouter) | decision model | metered on the user's key |
 | AWS CLI Agent Orchestrator | not adopted now: the lead relays messages; revisit if relay becomes a bottleneck | — |
 | tokscale | superseded by cc-switch's usage view | — |
@@ -622,6 +709,39 @@ telemetry work; this document fixes only the payload.
 - v0 detects caps automatically only through the Claude Code statusline; other leads use
   `bw cap`. `task` events and `panel.subject` move to later steps.
 
+### Orca as the default canvas (2026-10-25)
+
+Decided by the user: Orca is the recommended, default canvas and never a requirement.
+Evidence: a spike on Orca 1.4.240 and a deep panel (Astra, an Opus 5.5 stand-in for the
+Fable seat, Kimi, DeepSeek Flash; Argon absent on a usage cap). Every seat put the same
+preconditions on a "default"; they are now part of this design rather than reasons to drop
+it. Changes, by section:
+
+- **Goals 4 and 7, the diagram, the config example, `bw start` step 6, the third-party
+  table**: nodeterm → Orca. `bw start` opens `orca terminal create --command "bw lead"`;
+  nodeterm can still host `bw lead` but is not driven.
+- **The sandbox**: every profile denies Orca's control channel (read of its runtime dir,
+  connect to its socket). Found by the panel (Astra) and confirmed by attack: under
+  `sandbox-exec`, a contained process had Orca write outside the worktree.
+- **Verification key**: hashes the user-level config and hook files each runtime loads;
+  seats load none and get no `ORCA_*` variables.
+- **Quota probes**: `quota: "orca"` replaces the planned credential-file probes for Codex
+  and Kimi (bw now reads no vendor credential); agy keeps its documented `/usage`,
+  OpenRouter its key endpoint, Claude its statusline. Orca readings are advisory under the
+  freshness, units, window-scope, and no-cap rules there.
+- **The inbox**: records, `bw inbox`, `bw answer`, and rotation notices stay; the cockpit's
+  inbox view, answer endpoint, and `osascript` notifications are cut.
+- **The cockpit**: read-only; Now keeps one per-plan line with source and age instead of
+  live bars and countdowns.
+- **Launch rules**: Orca's `agent launch`, orchestration, automations, and session restore
+  are not used on bw-managed worktrees; setup checks Manual permissions and account
+  auto-switch off.
+- **`setup/paths.txt`** gains the vendor hook files Orca edits (CHANGELOG `[Unreleased]`).
+- **Open**: Orca's agy hook answers `ask` to PreToolUse before its own gate, which can stall
+  a headless agy run outside Orca (untested live: Google quota capped); the agy seat's own
+  configuration directory covers seats, and the agy lead needs `orca agent hooks off` or an
+  upstream fix. `BW_STATE_DIR` does not yet redirect the metrics log.
+
 ## Extraction gate
 
 Roadmap criterion 4 (a second user has run setup from the README) is not met, and the
@@ -643,10 +763,18 @@ step has data to show:
    checkpoints, `session`/`lead`/`task`/`rating` events. No cockpit yet; `bw status`
    prints the same facts as text.
 3. **Seat runtimes and the three new seats** (`bin/seat`, setup-by-attack, runtime locks,
-   verification keys), `panel.moderator`, `usage` token and cost fields — trials start.
-4. **The starter** (`bw start`: update checks, re-verify, lead pick, workspace).
-5. **Quota probes** for Codex, Kimi, agy, OpenRouter; the inbox.
-6. **Registry and cockpit** (Now, Models, Usage, History first; Graph last).
+   verification keys including user-level config hashes, no user hooks and no canvas
+   variables in seats), `panel.moderator`, `usage` token and cost fields — trials start.
+   (Done 2026-10-25 as a fix to step 2: the Orca control-channel denies in both sandbox
+   backends, `lead/sandbox.py` `CANVAS_CONTROL_DIRS`, with a model-free escape test and an
+   `orca terminal create` probe in the attack script.)
+4. **The starter** (`bw start`: update checks, re-verify, lead pick, workspace — an Orca
+   pane when Orca runs, a terminal tab otherwise; Orca settings check).
+5. **Quota sources and the inbox**: the Orca snapshot adapter (shape check, freshness,
+   units, window scope, per-source snapshots and arbitration), agy `/usage`, OpenRouter
+   key; `ask`/`answer`, `bw inbox`, `bw answer`, rotation notices.
+6. **Registry and read-only cockpit** (Models, Usage, History, Now's plan lines first;
+   Graph last).
 7. **Jev shadow selection**, then audits and the promotion view.
 8. **Docs pass in both repos**, then **team summary** with esc's ingest.
 
@@ -655,7 +783,8 @@ step has data to show:
 - Port, file layout under `bin/` and a new `cockpit/` package, and how the cockpit reuses
   dashboard data functions.
 - Graph layout (layered is the requirement; force-directed is not).
-- Per-vendor probe parsers, against synthetic fixtures.
+- The Orca snapshot parser and the agy/OpenRouter parsers, against synthetic fixtures
+  written by hand from the observed shape (never a captured response).
 - Each lead runtime's usage-limit detection mechanism and containment mechanism, verified
   by attack; a runtime with no verifiable containment is not eligible as a lead.
 - How the statusline command chains with a user's existing one.

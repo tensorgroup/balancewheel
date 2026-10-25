@@ -43,5 +43,15 @@
 ~/.local/state/balancewheel/leads.json
 ~/.local/state/balancewheel/handoffs
 
+# Orca, the recommended (optional) canvas, writes status hooks into each vendor's user-level
+# config on its first launch: the Claude Code settings and Codex config.toml above, plus
+# these. Take a backup before installing it (docs/orca.md). restore.sh leaves a file that
+# was absent at backup time in place, so it will not delete a hooks file Orca created;
+# `orca agent hooks off` removes Orca's entries.
+~/.codex/hooks.json
+~/.gemini/settings.json
+~/.gemini/config/hooks.json
+~/.kimi-code/config.toml
+
 # git: global excludes for tool litter
 ~/.config/git/ignore

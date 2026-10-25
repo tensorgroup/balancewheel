@@ -27,6 +27,10 @@ not against the prose.
   `bw sandbox verify`; `bin/bw-statusline` (Claude quota and resolved model from the status
   line, with chaining). `setup/paths.txt` gains the state dir's `leads.json` and
   `handoffs/` (pins and handoffs only).
+- **`setup/paths.txt` covers the files Orca edits on first launch** (`~/.codex/hooks.json`,
+  `~/.gemini/settings.json`, `~/.gemini/config/hooks.json`, `~/.kimi-code/config.toml`), so
+  a backup taken before installing the recommended canvas can undo its hook injection.
+  `docs/orca.md` is the integration guide.
 - **Log events `session`, `lead`, `rating`, and `panel.moderator`** (`metrics/log.py`):
   `session --phase start|end` records a lead session (worktree key, lead, runtime, model and
   whether it was resolved, plan; `end` carries `exit|switch|lost`); `lead` records every lead
