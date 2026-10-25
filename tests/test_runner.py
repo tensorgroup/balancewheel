@@ -104,6 +104,15 @@ class Runner(unittest.TestCase):
         reasons = sorted(s["end_reason"] for s in self.events("sessions"))
         self.assertEqual(reasons, ["exit", "switch"])
 
+    def test_cap_signal_from_inside_the_sandbox_switches(self):
+        p = self.start(env={"FAKE_MODE_a": "sleep", "FAKE_MODE_b": "exit"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        import hashlib
+        key = hashlib.sha1(os.path.realpath(str(self.repo)).encode()).hexdigest()[:12]
+        (self.state / "handoffs" / key / "cap-signal").write_text("")
+        self.assertEqual(p.wait(20), 0, p.stdout.read())
+        self.assertEqual([e["reason"] for e in self.events("leads")], ["capped"])
+
     def test_all_capped_keeps_session(self):
         p = self.start(env={"FAKE_MODE_a": "sleep"})
         self.assertTrue(wait_for(lambda: self.fake("a")))

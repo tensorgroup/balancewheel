@@ -304,6 +304,13 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
             if time.time() < next_poll:
                 continue
             next_poll = time.time() + poll_s
+            # A contained lead cannot write bw's caps; its hook drops cap-signal in its own
+            # checkpoint dir instead, and bw records the cap for the current plan.
+            sig = os.path.join(checkpoint_dir(state, project.worktree_key), "cap-signal")
+            if os.path.lexists(sig):
+                os.remove(sig)
+                quotamod.record_cap(state, session.lead["plan"], time.time(),
+                                    expiry_hours=rot["cap_expiry_hours"], source="lead-hook")
             q, caps = now_state()
             d = rotation.decide(profile, config["leads"], rot, current, pinned, q, caps, time.time(), "running")
             if d.reason == "none-eligible":

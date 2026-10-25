@@ -314,7 +314,9 @@ schema 2) names its leads in order, and `bw lead` picks one:
 - **What v0 detects by itself.** Claude Code reports its usage to its status line; install
   `bin/bw-statusline <plan>` as the `statusLine` command (set `BW_STATUSLINE_CHAIN` to keep
   your existing one) and caps are seen automatically. Other leads: run `bw cap <plan>`
-  (Kimi Code can do it from its own `StopFailure` hook, which you add to its config).
+  (Kimi Code can do it from a `StopFailure` hook in its config that runs `bw cap <plan>` on a
+  quota error, or, when Kimi itself is the sandboxed lead, writes a `cap-signal` file next to
+  `$BW_CHECKPOINT` that `bw` picks up).
 - **One lead per worktree.** A lock the lead itself holds; a crashed `bw` cannot let a
   second writable agent in.
 - **Containment.** Claude Code, Codex, and agy run with their own sandboxes and permission
