@@ -17,6 +17,36 @@ EFFORT_LEVELS = {
 }
 SEAT_NAME = re.compile(r"^[a-z0-9-]+$")
 TOP_KEYS = {"_comment", "schema_version", "seats", "state_dir", "metrics_log", "commands_dir", "bin_dir", "watches"}
+V3_TOP_KEYS = {"guard"}
+V3_LEAD_KEYS = {"autonomy"}
+V3_PROFILE_KEYS = {"protected_branches", "deploy_commands"}
+GUARD_KEYS = {"mode", "model", "on_judge_failure", "rules_on_native"}
+GUARD_MODES = {"shadow", "acting"}
+JUDGE_FAILURES = {"allow", "ask"}
+SCHEMA_VERSIONS = (1, 2, 3)
+AUTONOMY = {"native", "guard", "bypass", "manual"}
+SUPPORTED_AUTONOMY = {
+    "claude-code": {"native", "bypass", "manual"},
+    "codex": {"native", "manual"},
+    "agy": {"guard", "bypass", "manual"},
+    "pi": {"guard", "bypass"},
+    "kimi": {"native", "bypass", "manual"},
+}
+# What a lead gets when a schema-3 file does not say.
+DEFAULT_AUTONOMY = {"claude-code": "native", "codex": "native", "agy": "guard", "pi": "guard", "kimi": "manual"}
+# What a schema-2 lead effectively runs with today (no flags are added to its argv).
+LEGACY_AUTONOMY = {"claude-code": "native", "codex": "manual", "agy": "manual", "pi": "bypass", "kimi": "manual"}
+# Flags that set a runtime's permission posture; bw owns them under schema 3.
+PERMISSION_ARGS = {
+    "claude-code": ["--permission-mode", "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions",
+                    "--permission-prompts", "--permission-prompt-tool"],
+    "codex": ["--approve-for-me", "-a", "--ask-for-approval", "--full-auto",
+              "--dangerously-bypass-approvals-and-sandbox", "--sandbox", "-s"],
+    "agy": ["--dangerously-skip-permissions", "--sandbox"],
+    "pi": [],
+    "kimi": ["-y", "--yolo", "--auto"],
+}
+DEFAULT_PROTECTED_BRANCHES = ["main", "master"]
 V2_TOP_KEYS = {"plans", "tools", "leads", "profiles", "projects", "default_profile", "rotation", "updates", "cockpit", "team"}
 SEAT_KEYS = {"runtime", "model", "effort", "roles", "args", "provider", "policy", "enabled"}
 V2_SEAT_KEYS = {"plan", "fallback"}
@@ -129,7 +159,15 @@ def _validate_tools(obj):
     return tools
 
 
-def _validate_leads(obj, plans):
+def _has_permission_arg(runtime, args):
+    for a in args:
+        for flag in PERMISSION_ARGS[runtime]:
+            if a == flag or a.startswith(flag + "="):
+                return a
+    return None
+
+
+def _validate_leads(obj, plans, version=2):
     leads = obj.get("leads", {})
     _expect(isinstance(leads, dict), "leads: must be an object")
     out = {}
@@ -137,19 +175,40 @@ def _validate_leads(obj, plans):
         kp = f"leads.{name}"
         _name_ok(kp, name)
         _expect(isinstance(ld, dict), f"{kp}: must be an object")
-        bad = sorted(set(ld) - {"runtime", "model", "plan", "args"})
+        bad = sorted(set(ld) - {"runtime", "model", "plan", "args"} - (V3_LEAD_KEYS if version >= 3 else set()))
         if bad:
-            raise ConfigError(f"{kp}.{bad[0]}: unknown key")
+            raise ConfigError(f"{kp}.{bad[0]}: unknown key" + (" (needs schema_version 3)" if bad[0] in V3_LEAD_KEYS else ""))
         _expect(ld.get("runtime") in RUNTIMES, f"{kp}.runtime: must be one of {sorted(RUNTIMES)}, got {ld.get('runtime')!r}")
         _expect(isinstance(ld.get("model"), str) and ld["model"], f"{kp}.model: required string")
         _expect(ld.get("plan") in plans, f"{kp}.plan: must name a plan, got {ld.get('plan')!r}")
         args = ld.get("args", [])
         _expect(isinstance(args, list) and all(isinstance(a, str) for a in args), f"{kp}.args: must be a list of strings")
-        out[name] = {"runtime": ld["runtime"], "model": ld["model"], "plan": ld["plan"], "args": args}
+        rt = ld["runtime"]
+        if version >= 3:
+            if "autonomy" in ld:
+                autonomy, source = ld["autonomy"], "config"
+                _expect(autonomy in AUTONOMY, f"{kp}.autonomy: must be one of {sorted(AUTONOMY)}, got {autonomy!r}")
+                _expect(autonomy in SUPPORTED_AUTONOMY[rt],
+                        f"{kp}.autonomy: {autonomy} is not supported for {rt}; valid: {sorted(SUPPORTED_AUTONOMY[rt])}")
+            else:
+                autonomy, source = DEFAULT_AUTONOMY[rt], "default"
+            owned = _has_permission_arg(rt, args)
+            _expect(owned is None, f"{kp}.args: {owned!r} sets the permission posture, which autonomy owns under schema 3; remove it")
+        else:
+            autonomy = "custom" if _has_permission_arg(rt, args) else LEGACY_AUTONOMY[rt]
+            source = "legacy"
+        out[name] = {"runtime": rt, "model": ld["model"], "plan": ld["plan"], "args": args,
+                     "autonomy": autonomy, "autonomy_source": source}
     return out
 
 
-def _validate_profiles(obj, leads, seats):
+def _string_list(kp, value):
+    _expect(isinstance(value, list) and all(isinstance(v, str) and v.strip() for v in value),
+            f"{kp}: must be a list of non-empty strings")
+    return list(value)
+
+
+def _validate_profiles(obj, leads, seats, version=2):
     profiles = obj.get("profiles", {})
     _expect(isinstance(profiles, dict), "profiles: must be an object")
     out = {}
@@ -157,9 +216,9 @@ def _validate_profiles(obj, leads, seats):
         kp = f"profiles.{name}"
         _name_ok(kp, name)
         _expect(isinstance(pr, dict), f"{kp}: must be an object")
-        bad = sorted(set(pr) - {"lead_order", "checkpoints", "depth", "router"})
+        bad = sorted(set(pr) - {"lead_order", "checkpoints", "depth", "router"} - (V3_PROFILE_KEYS if version >= 3 else set()))
         if bad:
-            raise ConfigError(f"{kp}.{bad[0]}: unknown key")
+            raise ConfigError(f"{kp}.{bad[0]}: unknown key" + (" (needs schema_version 3)" if bad[0] in V3_PROFILE_KEYS else ""))
         order = pr.get("lead_order", [])
         _expect(isinstance(order, list), f"{kp}.lead_order: must be a list")
         for ld in order:
@@ -189,8 +248,40 @@ def _validate_profiles(obj, leads, seats):
         _expect(depth in DEPTHS, f"{kp}.depth: must be one of {sorted(DEPTHS)}")
         router = pr.get("router", "off")
         _expect(router in ROUTER_MODES, f"{kp}.router: must be one of {sorted(ROUTER_MODES)}")
-        out[name] = {"lead_order": order, "checkpoints": cps, "depth": depth, "router": router}
+        protected = _string_list(f"{kp}.protected_branches", pr.get("protected_branches", DEFAULT_PROTECTED_BRANCHES))
+        deploy = _string_list(f"{kp}.deploy_commands", pr.get("deploy_commands", []))
+        out[name] = {"lead_order": order, "checkpoints": cps, "depth": depth, "router": router,
+                     "protected_branches": protected, "deploy_commands": deploy}
     return out
+
+
+def _validate_guard(obj, profiles, leads, version):
+    given = obj.get("guard", {})
+    _expect(isinstance(given, dict), "guard: must be an object")
+    bad = sorted(set(given) - GUARD_KEYS)
+    if bad:
+        raise ConfigError(f"guard.{bad[0]}: unknown key")
+    mode = {p: "shadow" for p in profiles}
+    m_in = given.get("mode", {})
+    _expect(isinstance(m_in, dict), "guard.mode: must be an object")
+    for prof, m in m_in.items():
+        kp = f"guard.mode.{prof}"
+        _expect(prof in profiles, f"{kp}: unknown profile {prof!r}")
+        _expect(m in GUARD_MODES, f"{kp}: must be one of {sorted(GUARD_MODES)}, got {m!r}")
+        _expect(m != "acting", f"{kp}: acting arrives with build step 4 (needs `bw guard eval`)")
+        mode[prof] = m
+    model = given.get("model")
+    if model is not None:
+        _expect(isinstance(model, str) and model.strip(), "guard.model: must be a non-empty string")
+        for name, ld in leads.items():
+            _expect(not (ld["autonomy"] == "guard" and ld["model"] == model),
+                    f"guard.model: must differ from the lead's own model ({model!r}, lead {name!r})")
+    failure = given.get("on_judge_failure", "ask")
+    _expect(failure in JUDGE_FAILURES, f"guard.on_judge_failure: must be one of {sorted(JUDGE_FAILURES)}, got {failure!r}")
+    rules = given.get("rules_on_native", False)
+    _expect(isinstance(rules, bool), "guard.rules_on_native: must be true or false")
+    _expect(not rules, "guard.rules_on_native: not built yet")
+    return {"mode": mode, "model": model, "on_judge_failure": failure, "rules_on_native": False}
 
 
 def _validate_defaults(obj, key, defaults):
@@ -216,10 +307,12 @@ def load_config(path=None):
         raise ConfigError(f"{p}: invalid JSON at line {e.lineno} column {e.colno}: {e.msg}") from e
     _expect(isinstance(obj, dict), "top level must be an object")
     version = obj.get("schema_version", 1)
-    _expect(_is_int(version) and version in (1, 2), f"schema_version: unsupported {version!r} (this version reads 1 and 2)")
-    unknown = sorted(set(obj) - TOP_KEYS - (V2_TOP_KEYS if version >= 2 else set()))
+    _expect(_is_int(version) and version in SCHEMA_VERSIONS,
+            f"schema_version: unsupported {version!r} (this version reads 1, 2 and 3)")
+    unknown = sorted(set(obj) - TOP_KEYS - (V2_TOP_KEYS if version >= 2 else set()) - (V3_TOP_KEYS if version >= 3 else set()))
     if unknown:
-        raise ConfigError(f"{unknown[0]}: unknown key" + (" (needs schema_version 2)" if unknown[0] in V2_TOP_KEYS else ""))
+        raise ConfigError(f"{unknown[0]}: unknown key" + (" (needs schema_version 3)" if unknown[0] in V3_TOP_KEYS
+                          else " (needs schema_version 2)" if unknown[0] in V2_TOP_KEYS else ""))
     seats_in = obj.get("seats")
     _expect(isinstance(seats_in, dict) and seats_in, "seats: required non-empty object")
     seats = {name: _validate_seat(name, s, version) for name, s in seats_in.items()}
@@ -230,16 +323,18 @@ def load_config(path=None):
         if s["fallback"] is not None:
             _expect(s["fallback"] in seats and s["fallback"] != name, f"seats.{name}.fallback: must name another seat")
     tools = _validate_tools(obj)
-    leads = _validate_leads(obj, plans)
-    profiles = _validate_profiles(obj, leads, seats)
+    leads = _validate_leads(obj, plans, version)
+    profiles = _validate_profiles(obj, leads, seats, version)
     if not profiles:
-        profiles = {"default": {"lead_order": [], "checkpoints": {}, "depth": "standard", "router": "off"}}
+        profiles = {"default": {"lead_order": [], "checkpoints": {}, "depth": "standard", "router": "off",
+                                "protected_branches": list(DEFAULT_PROTECTED_BRANCHES), "deploy_commands": []}}
     default_profile = obj.get("default_profile", "default" if "default" in profiles else sorted(profiles)[0])
     _expect(default_profile in profiles, f"default_profile: unknown profile {default_profile!r}")
     projects = obj.get("projects", {})
     _expect(isinstance(projects, dict), "projects: must be an object")
     for path_key, prof in projects.items():
         _expect(prof in profiles, f"projects.{path_key}: unknown profile {prof!r}")
+    guard = _validate_guard(obj, profiles, leads, version)
     rotation = _validate_defaults(obj, "rotation", ROTATION_DEFAULTS)
     updates = _validate_defaults(obj, "updates", UPDATES_DEFAULTS)
     cockpit = obj.get("cockpit", {})
@@ -268,6 +363,7 @@ def load_config(path=None):
         "rotation": rotation,
         "updates": updates,
         "cockpit": cockpit,
+        "guard": guard,
         "path": p,
         "seats": seats,
         "state_dir": state_dir,

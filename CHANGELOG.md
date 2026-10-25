@@ -15,6 +15,19 @@ not against the prose.
 
 ### Added
 
+- **Config schema 3** (`metrics/config.py`): per-lead `autonomy` (`native`, `guard`, `bypass`,
+  `manual`; checked against what each runtime supports), a `guard` block (`mode` per profile,
+  `model`, `on_judge_failure`, `rules_on_native`), and per-profile `protected_branches` and
+  `deploy_commands`. A lead without `autonomy` gets its runtime's default (claude-code `native`,
+  codex `native`, agy `guard`, pi `guard`, kimi `manual`), and under schema 3 `args` may no longer
+  carry permission flags (autonomy owns them). **Schema 3 moves Codex leads to
+  `--approve-for-me` by default; writing `schema_version: 3` is the opt-in.** Version-1 and
+  version-2 files load unchanged and keep today's argv: their leads resolve to a legacy autonomy
+  (`custom` when `args` already carry a permission flag) and no flags are added. The new keys are
+  rejected in a version-2 file with "(needs schema_version 3)"; `guard.mode: "acting"` and
+  `guard.rules_on_native: true` are rejected until built. `balancewheel.example.json` is now
+  schema 3, with the agy lead set to `manual` until its guard hook is verified. No runtime or
+  adapter code changes in this entry.
 - **Config schema 2** (`metrics/config.py`): `plans` (billing `plan`|`metered`, quota source,
   metered budget), `leads` (runtime, model, plan), `tools` (update argv), `profiles` (lead
   order, per-checkpoint seats with `required` and `min_seats`, depth, router mode),

@@ -46,7 +46,7 @@ class SchemaV2(unittest.TestCase):
 
     def test_example_config_loads(self):
         c = cfg.load_config(str(HERE.parent / "balancewheel.example.json"))
-        self.assertEqual(c["schema_version"], 2)
+        self.assertEqual(c["schema_version"], 3)  # the example moved to schema 3; v2 coverage is the fixture
         self.assertTrue(c["profiles"])
 
     def test_rotation_defaults_and_override(self):

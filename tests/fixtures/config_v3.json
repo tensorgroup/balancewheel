@@ -1,0 +1,33 @@
+{
+  "schema_version": 3,
+  "plans": {
+    "plan-a": {"vendor": "vendor-a", "billing": "plan", "quota": "statusline"},
+    "plan-b": {"vendor": "vendor-b", "billing": "plan", "quota": "probe"},
+    "plan-c": {"vendor": "vendor-c", "billing": "plan", "quota": "probe"},
+    "metered": {"vendor": "router", "billing": "metered", "quota": "probe", "budget_usd_month": 20}
+  },
+  "leads": {
+    "lead-cc": {"runtime": "claude-code", "model": "vendor/model-a", "plan": "plan-a"},
+    "lead-cx": {"runtime": "codex", "model": "vendor/model-b", "plan": "plan-b"},
+    "lead-agy": {"runtime": "agy", "model": "vendor/model-d", "plan": "plan-c"},
+    "lead-pi": {"runtime": "pi", "model": "router/vendor/model-c", "plan": "metered"},
+    "lead-kimi": {"runtime": "kimi", "model": "vendor/model-e", "plan": "plan-c"},
+    "lead-bypass": {"runtime": "claude-code", "model": "vendor/model-a", "plan": "plan-a", "autonomy": "bypass"}
+  },
+  "seats": {
+    "alpha": {"runtime": "codex", "model": "vendor/model-b", "roles": ["review"], "plan": "plan-b"},
+    "beta": {"runtime": "pi", "model": "router/vendor/model-c", "roles": ["review"], "plan": "metered"}
+  },
+  "profiles": {
+    "careful": {
+      "lead_order": ["lead-cc", "lead-cx"],
+      "checkpoints": {"review": {"seats": ["alpha", "beta"]}},
+      "protected_branches": ["main", "release"],
+      "deploy_commands": ["make deploy", "./scripts/ship"]
+    },
+    "quick": {"lead_order": ["lead-agy", "lead-pi"]}
+  },
+  "default_profile": "quick",
+  "guard": {"model": "vendor/judge-model", "on_judge_failure": "allow"},
+  "state_dir": "/work/state/balancewheel"
+}

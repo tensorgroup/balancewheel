@@ -1,6 +1,6 @@
 {
   "_comment": "Replace these rows with your own. Names of seats, leads, plans, and profiles are yours; model ids are data and are expected to change. Copy to ~/.config/balancewheel/config.json.",
-  "schema_version": 2,
+  "schema_version": 3,
   "plans": {
     "claude-plan": {
       "vendor": "anthropic",
@@ -43,7 +43,8 @@
     "agy-claude": {
       "runtime": "agy",
       "model": "claude-opus-5-5-high",
-      "plan": "google-plan"
+      "plan": "google-plan",
+      "autonomy": "manual"
     }
   },
   "seats": {
@@ -171,6 +172,12 @@
   },
   "updates": {
     "min_interval_hours": 0
+  },
+  "guard": {
+    "mode": {
+      "product": "shadow"
+    },
+    "on_judge_failure": "ask"
   },
   "state_dir": "~/.local/state/balancewheel",
   "metrics_log": "~/.local/state/balancewheel/metrics.jsonl",
