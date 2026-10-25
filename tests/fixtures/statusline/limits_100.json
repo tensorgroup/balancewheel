@@ -1,0 +1,3 @@
+{"model": {"id": "vendor-model-a-1"},
+ "rate_limits": {"five_hour": {"used_percentage": 100, "resets_at": 1900003600},
+                 "seven_day": {"used_percentage": 60, "resets_at": 1900500000}}}

@@ -1,0 +1,19 @@
+#!/bin/bash
+# bw-statusline <plan> — Claude Code statusLine command: records quota and the resolved model for
+# <plan> from the JSON Claude Code passes on stdin, then prints a one-line summary.
+# BW_STATUSLINE_CHAIN: your previous statusLine command; it gets the same stdin, byte for byte,
+# runs in the original working directory, and its output is printed instead of the summary.
+# Works when symlinked into a bin dir: the repo root is found from this script's real path.
+set -u
+PLAN="${1:?usage: bw-statusline <plan>}"
+SELF="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")"
+ROOT="$(cd "$(dirname "$SELF")/.." && pwd -P)"
+INPUT="$(mktemp "${TMPDIR:-/tmp}/bw-statusline.XXXXXX")"
+trap 'rm -f "$INPUT"' EXIT
+cat > "$INPUT"
+SUMMARY="$(PYTHONPATH="$ROOT" python3 -m lead.quota --statusline "$PLAN" < "$INPUT" 2>/dev/null || echo "quota unknown")"
+if [ -n "${BW_STATUSLINE_CHAIN:-}" ]; then
+  /bin/bash -c "$BW_STATUSLINE_CHAIN" < "$INPUT"
+else
+  printf '%s\n' "$SUMMARY"
+fi
