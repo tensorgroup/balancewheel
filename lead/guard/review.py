@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.realp
 from lead.guard import record  # noqa: E402
 
 MIN_REVIEWED, MIN_SAMPLED, MAX_FALSE_STOP = 50, 20, 0.10
+# whole words only: "really not sure" must not become "right", nor "what?" "wrong"
+VERDICTS = {"r": "r", "right": "r", "w": "w", "wrong": "w", "s": "s", "skip": "s", "q": "q", "quit": "q"}
 
 
 def safe(value):
@@ -145,10 +147,12 @@ def run(state_dir, profile=None, recent=20, sample=5, list_only=False, stdin=Non
             continue
         while True:
             print("[r]ight [w]rong [s]kip [q]uit> ", end="", file=out, flush=True)
-            ans = stdin.readline().strip().lower()[:1]
-            if ans == "":  # EOF behaves like q
+            line = stdin.readline()
+            if line == "":  # EOF behaves like q; a blank line is just a line
                 ans = "q"
-            if ans in ("r", "w", "s", "q"):
+                break
+            ans = VERDICTS.get(line.strip().lower())
+            if ans:
                 break
             print("", file=out)
         print("", file=out)

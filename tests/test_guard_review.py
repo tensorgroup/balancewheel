@@ -121,6 +121,15 @@ class ReviewTests(unittest.TestCase):
                          [("s1", "right", False), ("s2", "wrong", False)])
         self.assertIn("acting needs", out.getvalue())
 
+    def test_only_whole_words_are_verdicts_and_a_blank_line_is_not_eof(self):
+        seed(self.state, [dec("s1"), dec("s2"), dec("s3"), dec("s4")])
+        out = io.StringIO()
+        review.run(self.state, recent=4, sample=0, out=out, rng=random.Random(0),
+                   stdin=io.StringIO("really not sure\nwhat?\n\n  \nRIGHT \nw\nskip\nquit\n"))
+        marks = record.load(self.state)["marks"]
+        self.assertEqual([(m["decision_id"], m["verdict"]) for m in marks], [("s1", "right"), ("s2", "wrong")])
+        self.assertEqual(out.getvalue().count("[r]ight"), 8)  # s1: 4 re-prompts + the verdict; s2, s3, s4: one each
+
     def test_eof_behaves_like_quit_and_sampled_flag(self):
         seed(self.state, [dec("a1", "allow")])
         review.run(self.state, stdin=io.StringIO("w\n"), out=io.StringIO(), rng=random.Random(0))
@@ -166,6 +175,12 @@ class CliTests(unittest.TestCase):
         r = self.bw("guard", "review", "--sample", "0", inp="w\n")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(record.load(self.state)["marks"][0]["verdict"], "wrong")
+
+    def test_negative_counts_are_rejected(self):
+        for flag in ("--sample", "--recent"):
+            r = self.bw("guard", "review", flag, "-1")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("must be", r.stderr)
 
     def test_help_lists_guard_subcommands(self):
         out = self.bw("--help").stdout

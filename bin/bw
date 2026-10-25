@@ -27,6 +27,13 @@ from lead.rotation import effective_quota  # noqa: E402
 from lead.runtimes import ADAPTERS  # noqa: E402
 
 
+def _count(s):
+    n = int(s)
+    if n < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more")
+    return n
+
+
 def cmd_lead(a, config, state):
     return runner.run(config, state, os.getcwd(), use=a.use, auto=a.auto, rating=not a.no_rating)
 
@@ -157,7 +164,7 @@ def main(argv=None):
         gds.add_parser(name).add_argument("runtime", choices=["agy"])
     gv = gds.add_parser("verify"); gv.add_argument("runtime"); gv.add_argument("--lead", default=None)
     rv = gds.add_parser("review"); rv.add_argument("--profile", default=None)
-    rv.add_argument("--recent", type=int, default=20); rv.add_argument("--sample", type=int, default=5)
+    rv.add_argument("--recent", type=_count, default=20); rv.add_argument("--sample", type=_count, default=5)
     rv.add_argument("--list", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "guard" and a.sub not in ("review", "verify"):  # touches only the hooks file, so it needs no config
