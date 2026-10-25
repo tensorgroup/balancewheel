@@ -1,24 +1,188 @@
 {
-  "_comment": "Replace these rows with your seats. Seat names are yours; model ids are data and are expected to change. Copy to ~/.config/balancewheel/config.json.",
-  "schema_version": 1,
+  "_comment": "Replace these rows with your own. Names of seats, leads, plans, and profiles are yours; model ids are data and are expected to change. Copy to ~/.config/balancewheel/config.json.",
+  "schema_version": 2,
+  "plans": {
+    "claude-plan": {
+      "vendor": "anthropic",
+      "billing": "plan",
+      "quota": "statusline"
+    },
+    "chatgpt-plan": {
+      "vendor": "openai",
+      "billing": "plan",
+      "quota": "probe"
+    },
+    "google-plan": {
+      "vendor": "google",
+      "billing": "plan",
+      "quota": "probe"
+    },
+    "kimi-plan": {
+      "vendor": "moonshot",
+      "billing": "plan",
+      "quota": "probe"
+    },
+    "openrouter": {
+      "vendor": "openrouter",
+      "billing": "metered",
+      "quota": "probe",
+      "budget_usd_month": 20
+    }
+  },
+  "leads": {
+    "claude": {
+      "runtime": "claude-code",
+      "model": "opus",
+      "plan": "claude-plan"
+    },
+    "astra": {
+      "runtime": "codex",
+      "model": "gpt-6-astra",
+      "plan": "chatgpt-plan"
+    },
+    "agy-claude": {
+      "runtime": "agy",
+      "model": "claude-opus-5-5-high",
+      "plan": "google-plan"
+    }
+  },
   "seats": {
-    "astra": {"runtime": "codex",       "model": "gpt-6-astra",   "effort": "xhigh",  "roles": ["plan", "review", "decision"],
-              "policy": "why this seat has these roles; the evidence cited; what would change them"},
-    "ox":    {"runtime": "pi",          "model": "openrouter/z-ai/glm-5.3-flash", "effort": "medium",
-              "roles": ["plan", "review", "decision"],
-              "provider": {"reasoning": true, "contextWindow": 1310720, "maxTokens": 131072}},
-    "fable": {"runtime": "claude-code", "model": "claude-fable-5-1",
-              "roles": ["design", "plan", "review", "debug", "decision"]},
-    "gem":   {"runtime": "agy",         "model": "gemini-3.1-pro-high", "roles": ["review"]},
-    "kimi":  {"runtime": "kimi",        "model": "kimi-code/k3", "roles": ["plan", "review"], "enabled": false}
+    "astra": {
+      "runtime": "codex",
+      "model": "gpt-6-astra",
+      "effort": "xhigh",
+      "roles": [
+        "plan",
+        "review",
+        "decision"
+      ],
+      "policy": "why this seat has these roles; the evidence cited; what would change them",
+      "plan": "chatgpt-plan"
+    },
+    "ox": {
+      "runtime": "pi",
+      "model": "openrouter/z-ai/glm-5.3-flash",
+      "effort": "medium",
+      "roles": [
+        "plan",
+        "review",
+        "decision"
+      ],
+      "provider": {
+        "reasoning": true,
+        "contextWindow": 1310720,
+        "maxTokens": 131072
+      },
+      "plan": "openrouter"
+    },
+    "fable": {
+      "runtime": "claude-code",
+      "model": "claude-fable-5-1",
+      "roles": [
+        "design",
+        "plan",
+        "review",
+        "debug",
+        "decision"
+      ],
+      "plan": "claude-plan"
+    },
+    "gem": {
+      "runtime": "agy",
+      "model": "gemini-3.1-pro-high",
+      "roles": [
+        "review"
+      ],
+      "plan": "google-plan"
+    },
+    "kimi": {
+      "runtime": "kimi",
+      "model": "kimi-code/k3",
+      "roles": [
+        "plan",
+        "review"
+      ],
+      "enabled": false,
+      "plan": "kimi-plan"
+    }
+  },
+  "profiles": {
+    "high-stakes": {
+      "lead_order": [
+        "claude",
+        "astra",
+        "agy-claude"
+      ],
+      "checkpoints": {
+        "design": {
+          "seats": [
+            "astra",
+            "fable",
+            "gem"
+          ],
+          "required": [
+            "astra"
+          ]
+        },
+        "review": {
+          "seats": [
+            "astra",
+            "fable",
+            "gem",
+            "ox"
+          ],
+          "required": [
+            "astra",
+            "fable"
+          ],
+          "min_seats": 3
+        }
+      },
+      "depth": "deep-on-stakes",
+      "router": "shadow"
+    },
+    "product": {
+      "lead_order": [
+        "claude",
+        "astra",
+        "agy-claude"
+      ],
+      "checkpoints": {
+        "review": {
+          "seats": [
+            "astra",
+            "gem",
+            "ox"
+          ]
+        }
+      },
+      "depth": "standard",
+      "router": "shadow"
+    }
+  },
+  "projects": {
+    "~/code/example-app": "product"
+  },
+  "default_profile": "product",
+  "rotation": {
+    "return_above_pct": 50,
+    "cap_expiry_hours": 5,
+    "probe_every_min": 15
+  },
+  "updates": {
+    "min_interval_hours": 0
   },
   "state_dir": "~/.local/state/balancewheel",
   "metrics_log": "~/.local/state/balancewheel/metrics.jsonl",
   "commands_dir": "~/.claude/commands",
   "bin_dir": "~/.local/bin",
   "watches": {
-    "bloat_total": 30, "bloat_per_seat": 8, "bloat_min_seats": 3,
-    "skim_min_seats": 3, "skim_min_findings": 15,
-    "redundant_min_panels": 5, "redundant_window_panels": 10
+    "bloat_total": 30,
+    "bloat_per_seat": 8,
+    "bloat_min_seats": 3,
+    "skim_min_seats": 3,
+    "skim_min_findings": 15,
+    "redundant_min_panels": 5,
+    "redundant_window_panels": 10
   }
 }

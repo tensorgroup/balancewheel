@@ -15,6 +15,14 @@ not against the prose.
 
 ### Added
 
+- **Config schema 2** (`metrics/config.py`): `plans` (billing `plan`|`metered`, quota source,
+  metered budget), `leads` (runtime, model, plan), `tools` (update argv), `profiles` (lead
+  order, per-checkpoint seats with `required` and `min_seats`, depth, router mode),
+  `projects` (path → profile), `default_profile`, `rotation`, `updates`, `cockpit`, `team`;
+  seats gain `plan` and `fallback`. Version-1 files load unchanged as one implicit profile
+  with no leads; the v2-only keys are rejected in a version-1 file. Leads name a `runtime`
+  (the same names seats use), not the spec draft's `tool`.
+
 - **A decision-model pilot** (reference-implementation.md, "Decision model"): a System One
   model (Jev via OpenRouter by default; Kev, SemIf, OpenJev, Laya as self-hosted options)
   gives raise-only advice on executor tier, reasoning effort, and review depth per task, and

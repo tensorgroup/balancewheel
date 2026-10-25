@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "plans": {
+    "plan-a":  {"vendor": "vendor-a", "billing": "plan", "quota": "statusline"},
+    "plan-b":  {"vendor": "vendor-b", "billing": "plan", "quota": "probe"},
+    "metered": {"vendor": "router", "billing": "metered", "quota": "probe", "budget_usd_month": 20}
+  },
+  "tools": {
+    "claude": {"update": ["claude", "update"]},
+    "nodeterm": {"app": "/Applications/Example.app", "self_updating": true}
+  },
+  "leads": {
+    "lead-a": {"runtime": "claude-code", "model": "vendor/model-a", "plan": "plan-a"},
+    "lead-b": {"runtime": "codex", "model": "vendor/model-b", "plan": "plan-b"},
+    "lead-c": {"runtime": "pi", "model": "router/vendor/model-c", "plan": "metered"}
+  },
+  "seats": {
+    "alpha": {"runtime": "codex", "model": "vendor/model-b", "effort": "high", "roles": ["review"], "plan": "plan-b"},
+    "beta":  {"runtime": "pi", "model": "router/vendor/model-c", "roles": ["review"], "plan": "metered", "fallback": "alpha"},
+    "gamma": {"runtime": "claude-code", "model": "vendor/model-a", "roles": ["design", "review"], "plan": "plan-a"}
+  },
+  "profiles": {
+    "careful": {
+      "lead_order": ["lead-a", "lead-b"],
+      "checkpoints": {
+        "review": {"seats": ["alpha", "beta", "gamma"], "required": ["alpha"], "min_seats": 2}
+      },
+      "depth": "deep-on-stakes",
+      "router": "shadow"
+    },
+    "quick": {
+      "lead_order": ["lead-a", "lead-b", "lead-c"],
+      "checkpoints": {"review": {"seats": ["alpha", "beta"]}},
+      "depth": "standard",
+      "router": "off"
+    }
+  },
+  "projects": {"/work/projects/app": "careful"},
+  "default_profile": "quick",
+  "rotation": {"return_above_pct": 60},
+  "cockpit": {"port": 8765},
+  "state_dir": "/work/state/balancewheel"
+}

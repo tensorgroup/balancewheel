@@ -6,3 +6,4 @@ __pycache__/
 # tool litter: harnesses run with TMPDIR pointed at the checkout leave these behind
 node-compile-cache/
 .tmp??????
+.worktrees/
