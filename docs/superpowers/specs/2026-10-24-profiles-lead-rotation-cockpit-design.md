@@ -9,6 +9,10 @@ otherwise. Tool versions were read on the author's machine on this date: Claude 
 2.1.310, Codex CLI 0.154.0, agy 1.4.7, pi 0.85.1, Kimi Code CLI 2.3.1, nodeterm
 (self-updating), cc-switch 4.0.15 (source read at commit `85ad496`).*
 
+*Amended 2026-10-25 (second amendment, `bw guard` v0): `autonomy` joins the lead keys, the
+"contained by self" argument is narrowed to the sandbox, and config moves to schema 3; see
+"Amendments from `bw guard` v0".*
+
 *Amended 2026-10-25: Orca (1.4.240, MIT) replaces nodeterm as the recommended, optional
 canvas, and the cockpit, inbox, and quota-probe work it duplicates is trimmed. A spike and a
 deep four-seat review (43 raw findings, 17 after dedupe) shaped the change; the sections
@@ -708,6 +712,20 @@ telemetry work; this document fixes only the payload.
   `.git` file) are write-denied, and bw reads git with hooks, fsmonitor, and external diff off.
 - v0 detects caps automatically only through the Claude Code statusline; other leads use
   `bw cap`. `task` events and `panel.subject` move to later steps.
+
+### Amendments from `bw guard` v0 (2026-10-25)
+
+Named in `2026-10-25-bw-guard-design.md`; the changes to this document:
+
+- `autonomy` joins `runtime`, `model`, `plan`, and `args` as a lead key (config schema 3;
+  `native`, `guard`, `bypass`, `manual`, validated per runtime). A schema-2 file loads
+  unchanged with no flags added.
+- "Contained by self = sandbox + interactive approval" (the Containment paragraph above and
+  the "not gated on an attack pass" line in the Orca amendment) is narrowed to the sandbox:
+  whether a Claude Code, Codex, or agy lead prompts is now its `autonomy`.
+- Schema 3 moves Codex leads to `--approve-for-me` by default.
+- New log events `guard` and `session.autonomy`; `bw lead` exits 7 when a guarded lead
+  cannot start; `bw status` prints `guard:` lines.
 
 ### Orca as the default canvas (2026-10-25)
 

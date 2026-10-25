@@ -23,7 +23,10 @@ watches, the logger CLI, and the dashboard generator. `lead/` holds leads and ro
 project resolution, the pure rotation decision, per-plan quota and caps, `bw sandbox`
 profiles and containment records, handoffs, runtime adapters, and the runner behind
 `bin/bw` (`bin/bw-statusline` records Claude quota). `tests/attack/lead_containment.sh`
-attack-tests a lead runtime (spends model quota; not part of `unittest discover`). `tests/fixtures/` are synthetic — keep
+attack-tests a lead runtime (spends model quota; not part of `unittest discover`).
+`lead/guard/` holds `bw guard`: the broker, the lexer and rules, the thin pi and agy clients,
+the evidence record, review, and verification; `tests/attack/guard_attack.sh` attacks it
+(also spends model quota). `bw` must run from a checkout no lead edits. `tests/fixtures/` are synthetic — keep
 them that way (privacy firewall). Commits use a lowercase summary with a `feat:`/`fix:`/
 `test:`/`docs:` prefix.
 

@@ -7,7 +7,7 @@ The findings are folded in, not appended; "Decisions from the review" lists the 
 The user skipped the question round, so intent below is from their own words and every
 other choice is marked as the author's call. Versions read on the author's machine this
 date: Claude Code 2.1.310, Codex CLI 0.154.0, agy 1.4.7, pi 0.85.1, Kimi Code CLI 2.3.1.
-Revised again 2026-10-25 after spike 1a: pi hook behaviour observed (see "What exists today"); agy spike 1b pending quota reset. Builds on `2026-10-24-profiles-lead-rotation-cockpit-design.md` (leads, profiles,
+Revised again 2026-10-25 after the v0 build: "Amendments from the v0 build" below names twelve decisions the build made or changed; where it and an earlier section disagree, it wins. Revised 2026-10-25 after spike 1a: pi hook behaviour observed (see "What exists today"); agy spike 1b pending quota reset. Builds on `2026-10-24-profiles-lead-rotation-cockpit-design.md` (leads, profiles,
 `bw sandbox`, handoffs, the inbox) and `docs/orca.md`.*
 
 ## Intent
@@ -330,6 +330,115 @@ the shadow log measures (p50/p95 per runtime).
   user sets it, author's call). CHANGELOG `[Unreleased]` in the same commit.
 - **Log events**: `guard` (counts), `session.autonomy`.
 - **The inbox**: gains guard outage notices.
+
+## Amendments from the v0 build (2026-10-25)
+
+What shipped: a rules-only guard in shadow for pi; the agy guard built but refused until its
+hook spike (1b) runs, which waits on a Google usage cap (about 2026-10-31); Claude Code
+`--permission-mode auto` and Codex `--approve-for-me` as native autonomy; config schema 3.
+The code wins over this document where they differ. The decisions, as named amendments:
+
+1. **Normalisation lives in the broker, not the hook.** The hook forwards the runtime's raw
+   payload; the broker's normaliser builds the typed record. One normaliser, in Python,
+   unit-tested; the same trust boundary with a thinner client. Until the agy spike, every
+   agy payload normalises to `other` (gray, so ask) rather than a guessed shape.
+2. **The broker's reply is what the hook must do.** In shadow the broker logs its real
+   decision and replies `allow`. The hook has mode logic only for failure: an unreachable
+   broker, an error or malformed reply, or no reply within 2 s means allow plus a marker in
+   shadow, and block ("guard unavailable") in acting. The hook is inert only when
+   `BW_GUARD_MODE` is unset (a hand-run agy, or an agy lead run as `manual` or `bypass`);
+   the variable set with the socket or token missing is a failure, not inertness.
+3. **Rejected rather than ignored in v0:** `guard.mode: "acting"` and
+   `guard.rules_on_native: true` fail config validation. The broker and hooks implement
+   acting because the attack harness needs it, but no real lead can reach it, so v0 needs
+   no demotion or promotion gate.
+4. **Gray means ask in v0, logged apart.** Every decision carries `source` (`rule` or
+   `gray`). The gray share is step 2's measurement and is expected to be large: the allow
+   grammar is small on purpose, and `jq`, `awk`, `npm install`, `git checkout`, and MCP
+   reads all start gray.
+5. **Autonomy and today's behaviour.** Schema 3 defaults: Claude Code `native`, Codex
+   `native`, agy `guard`, pi `guard`, Kimi `manual` (the spec named no Kimi default; `manual`
+   is today's). Codex's "only when the user sets it" is read as being about version-2 files:
+   writing `schema_version: 3` is the user setting it, and the CHANGELOG says so. A
+   schema-2 file gets legacy autonomy (no flags added anywhere, argv byte-identical), and
+   the session records the effective autonomy, or `custom` when `args` carry a permission
+   flag.
+6. **Per-repo lists are profile keys in v0:** `profiles.<p>.protected_branches` (default
+   `["main", "master"]`) and `profiles.<p>.deploy_commands` (default none, command
+   prefixes). Reading a repo's esc pack for these waits until the pack field is agreed with
+   esc's maintainers.
+7. **Notices before the inbox exists:** "guard unreachable" is one printed `bw:` line per
+   session plus the `unreachable` count in the `guard` event.
+8. **Local redaction for the log.** `guard.jsonl` stores the call after best-effort
+   redaction (bearer tokens, `KEY=`/`TOKEN=`/`SECRET=`/`PASSWORD=` assignments,
+   `--password`/`--token` values, `user:pass@` in URLs, `Authorization:` header values).
+   The digest is of the unredacted call. Redaction before a model request is v1.
+9. **Who touches guard state.** Only bw's own code writes `guard.jsonl` (the broker's
+   decisions and `bw guard review`'s marks), never a hook; a guarded lead cannot write any
+   of it. A pi lead on the `sandbox-exec` backend can read it (that backend allows reads by
+   default, as for the containment record and the metrics log); nono denies it. Stated, not
+   fixed: the content is the lead's own redacted calls.
+10. **The socket and the clients sit where no lead can write.** A per-worktree directory
+    under the state dir holds the socket (mode 0600) and the session's client copies, taken
+    from bw's own code at session start. It is in no write grant (not the handoffs
+    directory, which pi's sandbox grants and agy reaches through `--add-dir`), and bw
+    refuses a state dir that overlaps the worktree for every runtime. The socket is bound
+    and listening before the lead starts; the serving thread starts after, and the broker's
+    `pause()` stops it around the self-test so no thread exists while `preexec_fn` runs. A
+    stale socket from a hard-killed bw is unlinked once the worktree lock is held, and a
+    path over 103 bytes refuses to start. Requests carry a random per-session token compared
+    in constant time. A lead can still send requests; it can neither answer them nor change
+    the code that answers.
+11. **The lexer is ours, not `shlex`.** `shlex` treats a newline as whitespace and loses the
+    difference between `;` and `';'`, so a second command on a new line becomes an argument
+    of the first. `rules.py` has a small lexer that keeps operators apart from quoted text
+    and marks any word with an unquoted `$`, backtick, or backslash as unexpanded.
+12. **Repo scripts are trusted only as the repo has them.** A script path is allowed only if
+    git tracks it and it is unchanged from `HEAD`. A script the lead wrote or edited this
+    session is gray; otherwise "write a script, then run it" turns every block into two
+    allows.
+
+Smaller rulings. The start-time self-test uses a one-shot marker, disarmed before the lead
+starts and replayed nowhere; its decision is recorded as a self-test and excluded from
+review samples, summaries, and the `guard` event's counts, so evidence is real calls only.
+Broker errors go to `guard.jsonl` as error records without the call text, never to stderr
+(which lands in the lead's terminal). Redirections to `/dev/null`, `/dev/stdout`,
+`/dev/stderr` and fd duplications (`2>&1`) are allowed because they write nothing. `git -C
+<dir>` is gray only when the directory is inside a nested repo. `bw guard review` is the
+only reader of the evidence and keys every summary by profile, runtime, runtime version, rules
+version, and policy digest, so a change to any of them starts a fresh count.
+
+Findings carried from the pi spike (1a) into the build: the event has no cwd (the handler's
+`ctx.cwd` is used); a missing `-e` path fails closed before any model call; `-e` still loads
+under `--no-extensions`; the first extension to block short-circuits later ones; resuming
+(`-c` or `--session`) applies `-e` as it does to a fresh run.
+
+What was and was not verified. The pi attack (`tests/attack/guard_attack.sh`, run by `bw
+guard verify pi`) covers a sandbox-permitted control that must actually run, a rule block, one
+live ask category, an injected "the user approved this", an allow, a missing broker, a garbage
+reply, and a replaced socket, each fresh and resumed, and a case the lead never attempts fails
+the run (a model that refuses proves nothing). It passed live on both backends, nono and
+`sandbox-exec`. Only one ask category is exercised live; the unit table covers every rule.
+The interactive `ask` path in pi (`ctx.ui.select`, only when the session has a UI) was not exercised live. agy's interactive prompt, and everything in the agy row of
+"What exists today", is untested in v0. `guard.jsonl` has no retention in v0.
+
+Autonomy is not an execution boundary. Test runners, `npm run`, `make`, and pristine repo
+scripts run code the lead may have written; the sandbox is the boundary, and the guard
+only watches the calls. A repo whose own `core.hooksPath` points inside the worktree (husky,
+for example) lets a lead edit a hook the user's next unsandboxed commit runs: a sandbox-level
+gap the guard did not create, documented rather than made a rule. When acting arrives, a
+false block is resolved by hand, outside the lead. pi models reached through OpenRouter need
+the `openrouter/` provider prefix in the model id (found in the attack runs).
+
+Operational: pi and Kimi leads need `bw sandbox verify` again after the upgrade (the adapter
+source changed); `bw guard verify pi` records a guard pass in its
+own file; the Claude Code and Codex native flags were not launched interactively in the
+build and need one confirming launch by the user. `bw lead` exits 7 when a guarded lead
+cannot start.
+
+Where to pick up: run the agy spike (1b) when the quota resets and flip `AGY_SPIKE_PASSED`
+with fixtures; measure a week of shadow (gray share, latency, would-be questions per hour);
+then decide on the v1 judge.
 
 ## Per-repo rules and OpenEscapement
 

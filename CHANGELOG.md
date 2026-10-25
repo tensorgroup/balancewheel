@@ -15,6 +15,14 @@ not against the prose.
 
 ### Added
 
+- **`bw guard` commands** (`bin/bw`, `lead/guard/`): `bw guard review [--profile] [--recent]
+  [--sample] [--list]` (audit stops and sampled allows, marks recorded in `guard.jsonl`),
+  `bw guard verify <runtime>` (the attack in `tests/attack/guard_attack.sh`; a pass is
+  recorded in the state dir's `guard-verify.json`), `bw guard install|uninstall agy`, and
+  `guard:` lines in `bw status`. agy's side refuses until its hook spike runs. `guard.jsonl`,
+  `guard-verify.json`, and the per-worktree `guard/` directory are live state and stay out
+  of `setup/paths.txt`. After upgrading, pi and Kimi leads need `bw sandbox verify` again
+  (the adapter hash changed).
 - **Log event `guard` and `session.autonomy`** (`lead/runner.py`, `metrics/store.py`): a `session`
   start now carries `autonomy: {requested, effective}` (`requested` is null unless the lead's config
   names it) and, for a guarded lead, `guard_version`. A guarded session adds one `guard` event

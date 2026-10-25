@@ -17,7 +17,8 @@ whose subscription window is exhausted. Updated 2026-10-24: leads and rotation â
 the moderator; a project's profile may make a non-primary vendor's agent the default lead,
 which narrows "driver mode is failover, not promotion" to drivers outside a profile.
 Updated 2026-10-25: Orca named as the recommended canvas, and canvas control channels added
-to what a sandbox must deny (`docs/orca.md`).*
+to what a sandbox must deny (`docs/orca.md`). Revised 2026-10-25: the lead's autonomy and
+the `bw guard` broker, with the trust boundary it rests on ("Leads, profiles, and rotation").*
 
 ## The problem
 
@@ -93,6 +94,18 @@ pass; leads never share a worktree (an inherited lock). Design and amendments:
 user watches leads is a canvas's job, not balancewheel's: Orca is the recommended one
 (`docs/orca.md`), hosting `bw lead` panes; a canvas is also a host that a contained process
 could ask to run commands, so every sandbox denies its control channel.
+
+**Autonomy and the guard.** A lead's permission prompts are a per-lead `autonomy`, not a
+property of the runtime: Claude Code and Codex use their own classifiers (`native`), and
+where a runtime has none, `bw guard` supplies rules. The guard is a **broker inside `bw
+lead`** (outside the sandbox) and a thin client in the runtime (a pi extension, an agy
+hook). The trust boundary is that the client forwards the raw tool call over a socket the
+lead cannot write or rebind, with a per-session token, and the broker alone normalises it,
+decides, and writes the evidence; a lead can send requests but can neither answer them nor
+change the code that answers. In v0 the broker only shadows (logs the decision it would
+make and allows), and `bw guard review` turns that log into right/wrong marks that gate any
+move to acting. The guard watches calls; it is not an execution boundary, which stays the
+sandbox's job. Design: `docs/superpowers/specs/2026-10-25-bw-guard-design.md`.
 
 ### Seat mode and driver mode are different things
 

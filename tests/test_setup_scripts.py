@@ -93,7 +93,7 @@ class SetupScriptsTest(unittest.TestCase):
                   if l.strip() and not l.lstrip().startswith("#")]
         self.assertIn("~/.local/state/balancewheel/leads.json", listed)
         self.assertIn("~/.local/state/balancewheel/handoffs", listed)
-        for live in ("locks", "quota", "caps", "models", "containment.json"):
+        for live in ("locks", "quota", "caps", "models", "containment.json", "guard.jsonl", "guard-verify.json", "guard"):
             self.assertFalse(any(l.rstrip("/").endswith(live) for l in listed), live)
 
     def test_restore_puts_originals_back_and_takes_a_safety_backup(self):

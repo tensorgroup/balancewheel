@@ -1,6 +1,6 @@
 # The stack — what we use, what we don't, and why
 
-*Started 2026-10-25. One row per tool that has been used, planned, retired, or evaluated for
+*Started 2026-10-25; revised 2026-10-25 for `bw guard` v0. One row per tool that has been used, planned, retired, or evaluated for
 the reference setup, with the reason and what would change the call. Update it in the same
 commit as any change of tool; date the row. Settings and boundaries for each adopted tool
 live in the owning doc linked from its row (the 2026-10-24 spec's "Third-party tools"
@@ -25,6 +25,7 @@ features would write both layers, so they stay off.
 | **OpenRouter** | metered models: the fast seat, the decision model, the planned `bw guard` judge | service | 2026-08 | One key for many open models at cents per call; a documented key endpoint for spend. |
 | **nono** | default backend for `bw sandbox` and the OS-sandboxed seats | Apache-2.0 | 2026-10-24 | Kernel-enforced write *and* read allow-lists (blocks secret reads), passed every attack run; `sandbox-exec` (ships with macOS) is the zero-install fallback. |
 | **Orca** | the recommended canvas: one pane per worktree running `bw lead`, notifications, a per-plan quota view whose snapshot feeds `quota: "orca"` | MIT | 2026-10-25 | Replaced nodeterm (below). Optional; plain terminal tabs work the same. Read `docs/orca.md` before installing: it edits vendor configs and its control channel must be denied in every sandbox (done in `lead/sandbox.py`). |
+| **`bw guard`** (rules-only, shadow) | per-lead autonomy for runtimes with no native judge: a broker in `bw lead` with a thin pi extension or agy hook; logs what it would decide, blocks nothing | ours | 2026-10-25 | Built for pi and verified by attack on both sandbox backends. The agy side is built but refused until agy's hook behaviour is observed (a usage-capped spike). A model judge (v1) waits on a week of shadow data. Design in the 2026-10-25 spec. |
 | git, `gh`, Python 3.9+ stdlib | everything else | — | start | No packages to install, by rule. |
 
 ## Planned, not installed yet

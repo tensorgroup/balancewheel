@@ -4,7 +4,7 @@
 from its docs, its source (main at `a4e6e1f0`), and a hands-on spike on the author's machine.
 A deep four-seat design review of the adoption followed (43 raw findings, 17 after dedupe,
 none refuted); its conclusions are folded in below. Orca ships near-daily, so re-check the
-version-specific facts here before relying on them.*
+version-specific facts here before relying on them. Revised 2026-10-25: how the `bw guard` agy hook composes with Orca's.*
 
 [Orca](https://github.com/stablyai/orca) is an MIT-licensed desktop "agent IDE": it runs
 Claude Code, Codex, agy, pi, Kimi Code and other CLI agents side by side, each in its own
@@ -81,6 +81,13 @@ bw's questions.
    call of a headless agy run outside Orca into an approval prompt.
 4. **Orca's own agent launch bypasses permissions** (`claude --dangerously-skip-permissions`,
    and the equivalent for every agent) unless set to Manual.
+   **Composition with `bw guard`.** Orca's agy hook and the guard's both sit under agy's
+   PreToolUse, and Orca's answers `ask` before its own gate. `bw guard install agy` prints the
+   other PreToolUse entries it finds beside its own; if Orca's is one of them, `orca agent
+   hooks off` removes it. The command does not run yet: it refuses, as `bw guard verify agy`
+   does, until agy's hook spike has observed how agy combines several hooks' answers
+   (usage-capped; about 2026-10-31). Until then, give an agy lead `manual` or `bypass`
+   autonomy.
 5. **`bw lead` runs fine in an Orca pane.** `orca terminal create --command "bw lead"` started
    a contained lead in bw's permission mode; Orca still showed its status, because the pane
    environment reaches the child and the global hooks report it.

@@ -306,6 +306,9 @@ schema 2) names its leads in order, and `bw lead` picks one:
     bw status                # plans (quota, caps), worktrees, leads and how each is contained
     bw cap <plan>            # record that a plan is capped (for leads without a statusline)
     bw sandbox verify <rt>   # attack-test a bw-contained runtime (pi, kimi) and record a pass
+    bw guard review          # audit the guard's stops and sampled allows, one evidence key at a time
+    bw guard verify <rt>     # attack-test the guard on a runtime (pi) and record a pass
+    bw guard install agy     # add the guard's entry to agy's hooks file (uninstall: bw guard uninstall agy)
 
 - **Switching.** When the current lead's plan is capped, bw stops the lead (its whole
   process group, confirmed gone), writes a handoff from git facts and the lead's last
@@ -320,12 +323,43 @@ schema 2) names its leads in order, and `bw lead` picks one:
   `$BW_CHECKPOINT` that `bw` picks up).
 - **One lead per worktree.** A lock the lead itself holds; a crashed `bw` cannot let a
   second writable agent in.
-- **Containment.** Claude Code, Codex, and agy run with their own sandboxes and permission
-  prompts and your real configuration (`contained by self`). pi and Kimi run under
+- **Containment.** Claude Code, Codex, and agy run with their own sandboxes and your real
+  configuration (`contained by self`); whether they prompt is their lead's `autonomy`
+  (next bullet). pi and Kimi run under
   `bw sandbox` — nono when installed, macOS `sandbox-exec` otherwise — and only after
   `bw sandbox verify` passed on their current version: writes stop at the worktree, the git
   data a commit needs, the runtime's own state, and the checkpoint dir; git hooks and
   config stay read-only; no app launches, Apple Events, or preference writes.
+- **Autonomy per lead (config schema 3, `bw guard`, since 2026-10-25).** Each lead has an
+  `autonomy`: `native` (Claude Code `--permission-mode auto`, Codex `--approve-for-me`: the
+  runtime's own classifier decides), `guard` (bw's rules-only guard decides), `bypass`, or
+  `manual` (today's prompts). The defaults are Claude Code and Codex `native`, agy and pi
+  `guard`, Kimi `manual`. **Schema 3 moves Codex leads to `--approve-for-me` by default;** a
+  schema-2 file keeps today's argv exactly. In v0 the guard runs **in shadow**: for a pi lead
+  it logs what it would have decided and allows everything (prompts off, plus logging);
+  nothing is blocked or asked. `bw guard review` shows the stops and a sample of the allows,
+  you mark each right or wrong, and the evidence accumulates per profile, lead, and version
+  of the rules. A guarded agy lead is refused until agy's hook behaviour has been observed
+  (a usage-capped spike), so `bw guard install agy` and `bw guard verify agy` refuse for the
+  same reason and an agy lead should be `manual` or `bypass` for now. `bw status` prints a
+  `guard:` line per evidence key, and `bw lead` exits 7 when a guarded lead cannot start
+  (the broker cannot bind, a client is missing, the start-time self-test fails).
+  Details: `docs/superpowers/specs/2026-10-25-bw-guard-design.md`.
+  - **After upgrading.** pi and Kimi leads need `bw sandbox verify` again (the adapter hash
+    changed); run `bw guard verify pi` once to record a guard pass; and launch a Claude
+    Code or Codex lead once interactively to confirm its native flag is accepted by your
+    installed version. pi models reached through OpenRouter need the `openrouter/` provider
+    prefix in the model id.
+  - **Run `bw` from a checkout no lead edits.** A lead that can change the code of the next
+    `bw lead` can change the guard.
+  - **Limits, plainly.** The guard is not an execution boundary: test runners, `npm run`,
+    `make`, and repo scripts run code the lead may have written, and the sandbox is the
+    boundary. A repo whose own `core.hooksPath` points inside the worktree (husky, for
+    example) lets a lead edit a hook your next unsandboxed commit runs; that is a
+    sandbox-level gap the guard did not create. A pi lead on the `sandbox-exec` backend can
+    read `guard.jsonl` (nono denies it). The log has no retention in v0. Expect a large gray
+    share: the allow grammar is deliberately small, so most unfamiliar commands start gray.
+    Once acting exists (not in v0), a false block is worked around by hand, outside the lead.
 - **Where you watch it: Orca (recommended, never required).** [Orca](https://github.com/stablyai/orca)
   is an MIT desktop app that hosts agent panes per worktree, with notifications and a
   per-plan quota view. Run `bw lead` inside an Orca terminal (`orca terminal create --command
