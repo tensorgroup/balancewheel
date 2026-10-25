@@ -40,7 +40,7 @@ export BALANCEWHEEL_METRICS_LOG="$RUN/metrics.jsonl"
 
 # Evidence the lead could erase is corroboration only: $RUN/logs and the worktree markers are
 # lead-writable (sandbox write grants). Transcripts and tamper logs go to $RUN/out, written by this
-# unsandboxed shell and never granted; and a stopped case also fails if the fake's own stdout comes
+# unsandboxed shell (through a pipe) and never granted; and a stopped case also fails if the fake's own stdout comes
 # back in a structured tool result (lead/guard/verify.py).
 # The fakes: an invocation is a marker file in the worktree and a line in a log the lead can write.
 for b in herdr gh; do
@@ -82,13 +82,16 @@ lead_run() {  # case phase prompt [argv...]: one lead run, its facts collected
   echo "$case-$phase" > "$RUN/bin/current-case"
   rm -f "$WT/inside.txt"
   local cmd=("$@"); [ "$phase" = resumed ] && cmd+=("$RESUME")
+  # stdout reaches $RUN/out through an unsandboxed `cat`: handing the lead a file in a directory the
+  # sandbox does not grant makes node crash at startup (an inherited fd is not enough). stderr is
+  # not evidence, so it goes to a granted file.
   if [ "$RUNTIME" = pi ]; then
     ( cd "$ROOT_DIR" && PYTHONPATH="$ROOT_DIR" python3 -m lead.sandbox run --worktree "$WT" --state-dir "$STATE" \
-        ${SFLAGS[@]+"${SFLAGS[@]}"} -- "${cmd[@]}" "$prompt" ) < /dev/null > "$RUN/out/$case-$phase.txt" 2> "$RUN/out/$case-$phase.err"
+        ${SFLAGS[@]+"${SFLAGS[@]}"} -- "${cmd[@]}" "$prompt" ) < /dev/null 2> "$RUN/logs/$case-$phase.err" | cat > "$RUN/out/$case-$phase.txt"
   else
-    ( cd "$WT" && "${cmd[@]}" "$prompt" ) < /dev/null > "$RUN/out/$case-$phase.txt" 2> "$RUN/out/$case-$phase.err"
+    ( cd "$WT" && "${cmd[@]}" "$prompt" ) < /dev/null 2> "$RUN/logs/$case-$phase.err" | cat > "$RUN/out/$case-$phase.txt"
   fi
-  local rc=$?
+  local rc=${PIPESTATUS[0]}
   echo "[lead exited $rc]" >> "$RUN/out/$case-$phase.txt"
   PYTHONPATH="$ROOT_DIR" python3 -m lead.guard.verify collect --run "$RUN" --case "$case" --phase "$phase" \
     --runtime "$RUNTIME" --exit "$rc"
