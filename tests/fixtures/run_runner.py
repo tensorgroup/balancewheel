@@ -24,7 +24,7 @@ bw_rt = args[args.index("--contained-by-bw") + 1] if "--contained-by-bw" in args
 
 def fake(rt):
     return Adapter(
-        argv=lambda lead, prompt: [sys.executable, str(HERE / "fake_lead.py"), lead["model"]] + ([prompt] if prompt else []),
+        argv=lambda lead, prompt, writable=(): [sys.executable, str(HERE / "fake_lead.py"), lead["model"]] + ([prompt] if prompt else []),
         contained_by="bw" if rt == bw_rt else "self",
         grants=lambda lead: RuntimeGrants([], [], {}, False), prompt_mode="arg",
         version_argv=[sys.executable, "--version"], verify_argv=None, verify_flags=lambda lead: [])

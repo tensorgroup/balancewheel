@@ -100,7 +100,9 @@ class Session:
                 f.write(prompt)
             ctx.say(f"bw: paste the first prompt from {path} into the lead")
             argv_prompt = None
-        argv = self.adapter.argv(self.lead, argv_prompt)
+        # pi/Kimi get the checkpoint dir through bw sandbox grants; self-contained runtimes whose
+        # own sandbox stops at the worktree (Codex, agy) get it as an extra writable dir.
+        argv = self.adapter.argv(self.lead, argv_prompt, [cp_dir] if self.adapter.contained_by == "self" else [])
         env = dict(os.environ, BW_CHECKPOINT=os.path.join(cp_dir, "checkpoint.md"), BW_SESSION=self.id)
         self.cleanup = lambda: None
         if self.adapter.contained_by == "bw":

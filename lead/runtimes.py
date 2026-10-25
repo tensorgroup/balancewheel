@@ -25,6 +25,11 @@ def _with_prompt(base, prompt):
     return base + ([prompt] if prompt else [])
 
 
+def _add_dirs(writable):
+    """Extra writable dirs (the checkpoint dir) for runtimes whose own sandbox stops at the worktree."""
+    return [a for d in writable for a in ("--add-dir", d)]
+
+
 # Inside a runtime's writable state dir, what loads as code or config in the user's NEXT,
 # unsandboxed session stays read-only — a contained lead must not plant a hook there. Sessions,
 # caches, logs, and the vendor's own credential refresh stay writable.
@@ -33,21 +38,21 @@ PI_CODE = ["extensions", "settings.json", "models.json", "skills", "prompts", "t
 
 ADAPTERS = {
     "claude-code": Adapter(
-        argv=lambda lead, prompt: _with_prompt(["claude", "--model", lead["model"], *lead.get("args", [])], prompt),
+        argv=lambda lead, prompt, writable=(): _with_prompt(["claude", "--model", lead["model"], *lead.get("args", [])], prompt),
         contained_by="self", grants=lambda lead: RuntimeGrants([], [], {}, False), prompt_mode="arg",
         version_argv=["claude", "--version"], verify_argv=None, verify_flags=lambda lead: []),
     "codex": Adapter(
-        argv=lambda lead, prompt: _with_prompt(["codex", "-m", lead["model"], "--sandbox", "workspace-write",
-                                                *lead.get("args", [])], prompt),
+        argv=lambda lead, prompt, writable=(): _with_prompt(["codex", "-m", lead["model"], "--sandbox", "workspace-write",
+                                                             *_add_dirs(writable), *lead.get("args", [])], prompt),
         contained_by="self", grants=lambda lead: RuntimeGrants([], [], {}, False), prompt_mode="arg",
         version_argv=["codex", "--version"], verify_argv=None, verify_flags=lambda lead: []),
     "agy": Adapter(
-        argv=lambda lead, prompt: (["agy", "--model", lead["model"], "--sandbox", *lead.get("args", [])]
-                                   + (["-i", prompt] if prompt else [])),
+        argv=lambda lead, prompt, writable=(): (["agy", "--model", lead["model"], "--sandbox", *_add_dirs(writable),
+                                                 *lead.get("args", [])] + (["-i", prompt] if prompt else [])),
         contained_by="self", grants=lambda lead: RuntimeGrants([], [], {}, False), prompt_mode="arg",
         version_argv=["agy", "--version"], verify_argv=None, verify_flags=lambda lead: []),
     "pi": Adapter(
-        argv=lambda lead, prompt: _with_prompt(["pi", "--model", lead["model"], *lead.get("args", [])], prompt),
+        argv=lambda lead, prompt, writable=(): _with_prompt(["pi", "--model", lead["model"], *lead.get("args", [])], prompt),
         contained_by="bw",
         grants=lambda lead: RuntimeGrants(read=["~/.volta"], write=[_real("~/.pi/agent")], env={}, private_home=False,
                                           deny_write=[_real(f"~/.pi/agent/{p}") for p in PI_CODE]),
@@ -56,7 +61,7 @@ ADAPTERS = {
         verify_flags=lambda lead: ["--read", _real("~/.volta"), "--write", _real("~/.pi/agent")]
                                   + [f for p in PI_CODE for f in ("--deny-write", _real(f"~/.pi/agent/{p}"))]),
     "kimi": Adapter(
-        argv=lambda lead, prompt: ["kimi", "-m", lead["model"], *lead.get("args", [])],
+        argv=lambda lead, prompt, writable=(): ["kimi", "-m", lead["model"], *lead.get("args", [])],
         contained_by="bw",
         grants=lambda lead: RuntimeGrants(read=["~/.kimi-code/bin", "~/.volta"], write=[_real("~/.kimi-code")],
                                           env={"KIMI_CODE_HOME": _real("~/.kimi-code")}, private_home=True,
