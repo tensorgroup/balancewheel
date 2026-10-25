@@ -4,6 +4,9 @@ Stored quota windows carry `used_pct`; every threshold here is on remaining = 10
 Unknown quota (no snapshot, or a snapshot taken before its own window reset) counts as
 eligible: rotation never depends on a probe being right, only on observed caps.
 
+`caps` should include expired records (quota.read_caps(..., include_expired=True)): an expired
+cap is what makes a recovering plan meet the return threshold before it is used again.
+
 Moments: "start" (a new session), "running" (polling a live session: leave only on an
 observed cap, and only if someone else can take over), "boundary" (the session ended: return
 to an earlier lead whose cap has reset and whose quota is back above the return threshold).
@@ -74,7 +77,8 @@ def decide(profile, leads, rotation, current, pinned, quota, caps, now, moment):
     def eligible(name):
         return name in leads and not _capped(caps, plan(name), now)
 
-    if pinned:
+    # A pin chooses who starts; it never interrupts a running session (only a cap does).
+    if pinned and moment != "running":
         if eligible(pinned):
             return Decision(pinned, "pinned", "")
         notice = f"pinned lead {pinned} is capped; using the profile order until it resets"
@@ -113,6 +117,6 @@ def decide(profile, leads, rotation, current, pinned, quota, caps, now, moment):
         if eligible(name):
             return Decision(name, "quota-low", notice)
     when = _earliest_reset(caps, [plan(n) for n in order], now)
-    fallback = current or (order[0] if order else None)
-    return Decision(fallback, "none-eligible",
+    # Nobody eligible: keep a running lead (moment boundary), but never start a capped one.
+    return Decision(current if moment == "boundary" else None, "none-eligible",
                     f"all leads capped; earliest reset at {when:.0f}" if when else "no leads configured")

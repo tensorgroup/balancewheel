@@ -29,6 +29,23 @@ def write_json_atomic(path, obj):
     os.replace(tmp, path)
 
 
+class locked_dir:
+    """An exclusive flock on <dir>/.lock for a read-modify-write across processes."""
+
+    def __init__(self, d):
+        os.makedirs(d, exist_ok=True)
+        self.path = os.path.join(d, ".lock")
+
+    def __enter__(self):
+        import fcntl
+        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        os.close(self.fd)
+
+
 def read_json(path, default=None):
     try:
         with open(path) as f:

@@ -105,16 +105,42 @@ class Runner(unittest.TestCase):
         self.assertEqual(reasons, ["exit", "switch"])
 
     def test_all_capped_keeps_session(self):
-        for plan in ("pa", "pb"):
-            quota.record_cap(str(self.state), plan, time.time(), resets_at=time.time() + 3600)
         p = self.start(env={"FAKE_MODE_a": "sleep"})
         self.assertTrue(wait_for(lambda: self.fake("a")))
+        for plan in ("pa", "pb"):
+            quota.record_cap(str(self.state), plan, time.time(), resets_at=time.time() + 3600)
         time.sleep(1.2)
         self.assertIsNone(p.poll())
         self.assertTrue(_alive(self.fake("a")["pid"]))
         os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
         self.assertEqual(p.wait(10), 0)
         self.assertEqual(self.events("leads"), [])
+
+    def test_all_capped_at_start_refuses_to_launch(self):
+        for plan in ("pa", "pb"):
+            quota.record_cap(str(self.state), plan, time.time(), resets_at=time.time() + 3600)
+        p = self.start()
+        self.assertEqual(p.wait(10), 6)
+        self.assertIn("all leads capped", p.stdout.read())
+        self.assertIsNone(self.fake("a"))
+
+    def test_leftover_descendant_stopped_at_exit(self):
+        p = self.start(env={"FAKE_MODE_a": "exit", "FAKE_SPAWN_a": "1"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        child = json.loads((self.out / "a-child.json").read_text())["pid"]
+        self.assertTrue(wait_for(lambda: not _alive(child), 5), "a descendant in the lead's group outlived the session")
+
+    def test_lost_session_logged_once_even_on_early_exit(self):
+        from lead.runner import Lock
+        import hashlib
+        key = hashlib.sha1(os.path.realpath(str(self.repo)).encode()).hexdigest()[:12]
+        lk = Lock(str(self.state), key); lk.write({"session_id": "dead1", "lead": "la"}); os.close(lk.fd)
+        for plan in ("pa", "pb"):
+            quota.record_cap(str(self.state), plan, time.time(), resets_at=time.time() + 3600)
+        self.assertEqual(self.start().wait(10), 6)
+        self.assertEqual(self.start().wait(10), 6)
+        lost = [s for s in self.events("sessions") if s["end_reason"] == "lost"]
+        self.assertEqual(len(lost), 1)
 
     def test_return_logged_at_boundary(self):
         quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 1.0)

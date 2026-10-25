@@ -53,6 +53,21 @@ class Handoff(unittest.TestCase):
         build_handoff(str(self.repo), self.base, str(self.state), "k3", [])
         self.assertFalse(marker.exists(), "a planted hook ran while building the handoff")
 
+    def test_worktree_attribute_filters_do_not_run(self):
+        marker = self.root / "pwned-filter"
+        git(self.repo, "config", "filter.x.clean", f"sh -c 'touch {marker}; cat'")
+        (self.repo / ".gitattributes").write_text("* filter=x\n")
+        (self.repo / "b").write_text("changed")
+        build_handoff(str(self.repo), self.base, str(self.state), "k4", [])
+        self.assertFalse(marker.exists(), "a clean filter ran while building the handoff")
+
+    def test_symlinked_checkpoint_not_followed(self):
+        secret = self.root / "secret"; secret.write_text("TOKEN-123")
+        d = Path(checkpoint_dir(str(self.state), "k5")); d.mkdir(parents=True)
+        (d / "checkpoint.md").symlink_to(secret)
+        h = build_handoff(str(self.repo), self.base, str(self.state), "k5", [])
+        self.assertNotIn("TOKEN-123", h)
+
     def test_first_prompt_starts_with_protocol(self):
         p = first_prompt("@next handoff\nbranch: x", protocol_text())
         self.assertTrue(p.startswith(protocol_text()))

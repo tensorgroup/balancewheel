@@ -1,4 +1,4 @@
-import json, os, subprocess, sys, tempfile, unittest
+import json, os, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -104,6 +104,24 @@ class Grants(unittest.TestCase):
         self.assertIn(str(real), p["filesystem"]["read_file"])
         self.assertIn(f'(allow file-read* (literal "{link}"))', p["unsafe_macos_seatbelt_rules"])
 
+    def test_runtime_write_covering_state_refused(self):
+        rt = sandbox.RuntimeGrants(read=[], write=[str(self.state)], env={}, private_home=False)
+        with self.assertRaises(ValueError):
+            sandbox.lead_grants(resolve_project(str(self.wt), {"projects": {}, "default_profile": "d"}), rt, str(self.state))
+
+    def test_state_dir_inside_worktree_refused(self):
+        inner = self.wt / "state"; inner.mkdir()
+        with self.assertRaises(ValueError):
+            sandbox.lead_grants(resolve_project(str(self.wt), {"projects": {}, "default_profile": "d"}), self.rt, str(inner))
+
+    def test_adapters_keep_runtime_code_and_config_read_only(self):
+        from lead.runtimes import ADAPTERS
+        lead = {"model": "m", "plan": "p"}
+        for rt, must in (("kimi", ["bin", "config.toml", "mcp.json"]), ("pi", ["extensions", "settings.json", "models.json"])):
+            g = ADAPTERS[rt].grants(lead)
+            for name in must:
+                self.assertTrue(any(d.endswith("/" + name) for d in g.deny_write), (rt, name))
+
     def test_quote_in_path_refused(self):
         with self.assertRaises(ValueError):
             sandbox.check_path('/tmp/a"b')
@@ -128,6 +146,83 @@ class Grants(unittest.TestCase):
             self.assertEqual(argv[-2:], ["echo", "hi"])
         finally:
             cleanup()
+
+
+@unittest.skipUnless(shutil.which("sandbox-exec"), "macOS sandbox-exec required")
+class EscapesUnderSeatbelt(unittest.TestCase):
+    """No model: a shell under the generated profile tries what reviewers reproduced."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(os.path.realpath(self.tmp.name)); self.root = root
+        self.repo = root / "app"; self.repo.mkdir()
+        git(self.repo, "init", "-q"); (self.repo / "f").write_text("x"); git(self.repo, "add", "."); git(self.repo, "commit", "-qm", "i")
+        (self.repo / ".git" / "modules" / "sub" / "hooks").mkdir(parents=True)
+        self.wt = root / "wt"; git(self.repo, "worktree", "add", "-q", str(self.wt))
+        self.state = root / "state"; self.state.mkdir()
+        self.rtdir = root / "rt"; (self.rtdir / "bin").mkdir(parents=True); (self.rtdir / "sessions").mkdir()
+        self.scratch = root / "scratch"; self.scratch.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    backend = "sandbox-exec"
+
+    def sh(self, where, script):
+        rt = sandbox.RuntimeGrants(read=[], write=[str(self.rtdir)], env={}, private_home=False,
+                                   deny_write=[str(self.rtdir / "bin")])
+        g = sandbox.lead_grants(resolve_project(str(where), {"projects": {}, "default_profile": "d"}), rt, str(self.state))
+        argv, cleanup = sandbox.wrap(["/bin/sh", "-c", script], g, self.backend, os.path.expanduser("~"),
+                                     str(self.scratch), {})
+        try:
+            return subprocess.run(argv, cwd=str(where), capture_output=True, text=True)
+        finally:
+            cleanup()
+
+    def assert_denied(self, where, script, path):
+        before = path.read_bytes() if path.is_file() else None
+        self.sh(where, script)
+        after = path.read_bytes() if path.is_file() else None
+        self.assertEqual(before, after, f"{script!r} changed {path}")
+
+    def test_linked_commondir_and_gitdir_pointers_denied(self):
+        admin = self.repo / ".git" / "worktrees" / "wt"
+        self.assert_denied(self.wt, f"echo {self.wt}/evil > {admin}/commondir", admin / "commondir")
+        self.assert_denied(self.wt, f"echo /tmp/x > {admin}/gitdir", admin / "gitdir")
+
+    def test_main_git_dir_cannot_be_renamed_or_replaced(self):
+        self.sh(self.repo, "mv .git .git-old; cp -R .git-old evil.git; echo 'gitdir: evil.git' > .git")
+        self.assertTrue((self.repo / ".git").is_dir())
+        self.assertFalse((self.repo / ".git-old").exists())
+
+    def test_submodule_and_info_dirs_denied(self):
+        hook = self.repo / ".git" / "modules" / "sub" / "hooks" / "post-checkout"
+        self.sh(self.repo, f"echo x > {hook}; echo '* filter=x' > {self.repo}/.git/info/attributes")
+        self.assertFalse(hook.exists())
+        self.assertFalse((self.repo / ".git" / "info" / "attributes").exists())
+
+    def test_runtime_bin_denied_but_state_writable(self):
+        self.sh(self.wt, f"echo x > {self.rtdir}/bin/tool; echo ok > {self.rtdir}/sessions/s")
+        self.assertFalse((self.rtdir / "bin" / "tool").exists())
+        self.assertTrue((self.rtdir / "sessions" / "s").exists())
+
+    def test_launchctl_cannot_be_copied_and_run(self):
+        r = self.sh(self.wt, f"cp /bin/launchctl {self.scratch}/l && {self.scratch}/l version")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse((self.scratch / "l").exists())
+
+    def test_commit_inside_still_works(self):
+        r = self.sh(self.wt, "echo y > g && git add g && git -c user.email=t@t -c user.name=t commit -qm in")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_commit_in_main_worktree_still_works(self):
+        r = self.sh(self.repo, "echo y > g && git add g && git -c user.email=t@t -c user.name=t commit -qm in")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
+@unittest.skipUnless(shutil.which("nono"), "nono not installed")
+class EscapesUnderNono(EscapesUnderSeatbelt):
+    backend = "nono"
 
 
 class Containment(unittest.TestCase):

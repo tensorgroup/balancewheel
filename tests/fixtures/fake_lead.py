@@ -36,6 +36,11 @@ with open(os.path.join(out, f"{name}.json"), "w") as fh:
 print(f"FAKE {name} started", flush=True)
 if mode == "ignore_term":
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if os.environ.get(f"FAKE_SPAWN_{name}"):
+    import subprocess
+    kid = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    with open(os.path.join(out, f"{name}-child.json"), "w") as fh:
+        json.dump({"pid": kid.pid}, fh)
 if mode == "exit":
     time.sleep(0.3)
     sys.exit(0)

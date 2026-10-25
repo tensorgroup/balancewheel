@@ -22,14 +22,14 @@ import uuid
 
 from . import containment, quota as quotamod, rotation, sandbox
 from .handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text
-from .paths import read_json, write_json_atomic
+from .paths import locked_dir, read_json, write_json_atomic
 from .projects import resolve_project
 from .runtimes import ADAPTERS
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "metrics"))
 import store  # noqa: E402
 
-LOCKED, UNVERIFIED, NO_LEADS = 3, 4, 5
+LOCKED, UNVERIFIED, NO_LEADS, ALL_CAPPED = 3, 4, 5, 6
 V0_SCOPE = ("v0: automatic switching for leads that report usage through the Claude Code statusline; "
             "for other leads record a cap with `bw cap <plan>`")
 
@@ -109,6 +109,7 @@ class Session:
             if rg.private_home:
                 home = os.path.join(ctx.state, "homes", ctx.project.worktree_key)
                 os.makedirs(home, exist_ok=True)
+                _link_git_identity(home)
                 rg = rg._replace(write=list(rg.write) + [home])
             scratch = os.path.realpath(tempfile.mkdtemp(prefix="bw-lead-"))
             grants = sandbox.lead_grants(ctx.project, rg, ctx.state)
@@ -190,6 +191,16 @@ class Context:
                 pass
 
 
+def _link_git_identity(home):
+    """A private HOME still commits as the user: link the user's git config into it (read-only
+    to the lead by the sandbox's read grant)."""
+    for rel in (".gitconfig", os.path.join(".config", "git")):
+        src, dst = os.path.expanduser(os.path.join("~", rel)), os.path.join(home, rel)
+        if os.path.exists(src) and not os.path.lexists(dst):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            os.symlink(src, dst)
+
+
 def _pins_path(state):
     return os.path.join(state, "leads.json")
 
@@ -199,12 +210,13 @@ def read_pin(state, key):
 
 
 def write_pin(state, key, lead):
-    pins = read_json(_pins_path(state), {}) or {}
-    if lead:
-        pins[key] = lead
-    else:
-        pins.pop(key, None)
-    write_json_atomic(_pins_path(state), pins)
+    with locked_dir(os.path.join(state, "pins.lock.d")):  # other worktrees update the same file
+        pins = read_json(_pins_path(state), {}) or {}
+        if lead:
+            pins[key] = lead
+        else:
+            pins.pop(key, None)
+        write_json_atomic(_pins_path(state), pins)
 
 
 def _verified(ctx, lead_name):
@@ -251,6 +263,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
     if stale.get("session_id"):
         ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
                  "session_id": stale["session_id"], "reason": "lost"})
+        lock.write({})  # recorded once; an early exit below must not leave it to be logged again
     if use:
         write_pin(state, project.worktree_key, use)
     elif auto:
@@ -263,15 +276,18 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         signal.signal(s, signal.SIG_IGN)
 
     def now_state():
-        return quotamod.read_quota(state), quotamod.read_caps(state, time.time(), rot["cap_expiry_hours"])
+        # expired caps included: a plan that was capped must clear the return threshold first
+        return quotamod.read_quota(state), quotamod.read_caps(state, time.time(), rot["cap_expiry_hours"],
+                                                              include_expired=True)
 
     q, caps = now_state()
     d = rotation.decide(profile, config["leads"], rot, None, pinned, q, caps, time.time(), "start")
     if d.notice:
         ctx.say(f"bw: {d.notice}")
     if not d.lead:
-        ctx.say("bw: no lead available")
-        return NO_LEADS
+        ctx.say(f"bw: no lead started — {d.notice or 'no lead available'}")
+        lock.write({})
+        return ALL_CAPPED if d.reason == "none-eligible" and profile["lead_order"] else NO_LEADS
     if not _verified(ctx, d.lead):
         rt = config["leads"][d.lead]["runtime"]
         ctx.say(f"bw: {rt} has no verified containment for this version; run `bw sandbox verify {rt}`")
@@ -295,8 +311,16 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                     ctx.say(f"bw: {d.notice}")
                     warned = True
                 continue
-            if d.lead != current and _verified(ctx, d.lead):
-                ctx.take_terminal()
+            if d.lead != current and not _verified(ctx, d.lead):
+                if not warned:
+                    rt = config["leads"][d.lead]["runtime"]
+                    ctx.say(f"bw: {current} is capped but {d.lead} has no verified containment; "
+                            f"run `bw sandbox verify {rt}` (staying on {current})")
+                    warned = True
+                continue
+            if d.lead != current:
+                # The terminal goes back to bw only after the lead's group is gone: a TUI that
+                # restores the terminal on SIGTERM must still own it, or it stops on SIGTTOU.
                 session.stop(grace)
                 ctx.take_terminal()
                 ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
@@ -313,7 +337,10 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         if switched:
             continue
         ctx.take_terminal()
-        session.cleanup()
+        if session.group_alive():  # leftovers in the lead's group (servers, watchers) stop with it
+            session.stop(grace)
+        else:
+            session.cleanup()
         ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
                  "session_id": session.id, "reason": "exit"})
         lock.write({})

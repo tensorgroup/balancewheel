@@ -45,6 +45,21 @@ class Quota(unittest.TestCase):
         self.assertEqual(caps["pa"]["resets_at"], 1900003600)
         self.assertEqual(caps["pa"]["window"], "five_hour")
 
+    def test_both_windows_full_records_the_later_reset(self):
+        payload = {"rate_limits": {"five_hour": {"used_percentage": 100, "resets_at": 1900003600},
+                                   "seven_day": {"used_percentage": 100, "resets_at": 1900500000}}}
+        quota.record_statusline(self.state, "pa", payload, NOW)
+        self.assertEqual(quota.read_caps(self.state, NOW, 5)["pa"]["resets_at"], 1900500000)
+
+    def test_expired_caps_still_readable_for_recovery_checks(self):
+        quota.record_cap(self.state, "pb", NOW, resets_at=NOW + 10)
+        self.assertIn("pb", quota.read_caps(self.state, NOW + 11, 5, include_expired=True))
+
+    def test_non_numeric_resets_at_ignored(self):
+        payload = {"rate_limits": {"five_hour": {"used_percentage": 100, "resets_at": "soon"}}}
+        quota.record_statusline(self.state, "pa", payload, NOW)
+        self.assertEqual(quota.read_caps(self.state, NOW, 5)["pa"]["resets_at"], NOW + 5 * 3600)
+
     def test_cap_cleared_after_reset_when_below_full(self):
         quota.record_statusline(self.state, "pa", fx("limits_100.json"), NOW)
         later = fx("with_limits.json")
@@ -98,6 +113,15 @@ class StatuslineScript(unittest.TestCase):
         r, _ = self.run_script(FX / "with_limits.json")
         self.assertEqual(r.returncode, 0, r.stderr.decode())
         self.assertIn("5h 76% · 7d 59%", r.stdout.decode())
+
+    def test_project_module_cannot_replace_recorder(self):
+        with tempfile.TemporaryDirectory() as proj:
+            (Path(proj) / "lead").mkdir()
+            (Path(proj) / "lead" / "__init__.py").write_text("")
+            (Path(proj) / "lead" / "quota.py").write_text("print('HIJACKED')")
+            r, _ = self.run_script(FX / "with_limits.json", cwd=proj)
+            self.assertNotIn("HIJACKED", r.stdout.decode())
+            self.assertIn("5h 76%", r.stdout.decode())
 
     def test_unknown_summary(self):
         r, _ = self.run_script(FX / "no_limits.json")

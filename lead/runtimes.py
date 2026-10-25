@@ -25,6 +25,12 @@ def _with_prompt(base, prompt):
     return base + ([prompt] if prompt else [])
 
 
+# Inside a runtime's writable state dir, what loads as code or config in the user's NEXT,
+# unsandboxed session stays read-only — a contained lead must not plant a hook there. Sessions,
+# caches, logs, and the vendor's own credential refresh stay writable.
+KIMI_CODE = ["bin", "config.toml", "tui.toml", "mcp.json", "AGENTS.md", "skills", "plugins", "hooks", "agents"]
+PI_CODE = ["extensions", "settings.json", "models.json", "skills", "prompts", "themes", "AGENTS.md", "SYSTEM.md"]
+
 ADAPTERS = {
     "claude-code": Adapter(
         argv=lambda lead, prompt: _with_prompt(["claude", "--model", lead["model"], *lead.get("args", [])], prompt),
@@ -43,17 +49,21 @@ ADAPTERS = {
     "pi": Adapter(
         argv=lambda lead, prompt: _with_prompt(["pi", "--model", lead["model"], *lead.get("args", [])], prompt),
         contained_by="bw",
-        grants=lambda lead: RuntimeGrants(read=["~/.volta"], write=[_real("~/.pi/agent")], env={}, private_home=False),
+        grants=lambda lead: RuntimeGrants(read=["~/.volta"], write=[_real("~/.pi/agent")], env={}, private_home=False,
+                                          deny_write=[_real(f"~/.pi/agent/{p}") for p in PI_CODE]),
         prompt_mode="arg", version_argv=["pi", "--version"],
         verify_argv=lambda lead: ["pi", "-p", "--model", lead["model"], "--no-session", "--no-extensions"],
-        verify_flags=lambda lead: ["--read", _real("~/.volta"), "--write", _real("~/.pi/agent")]),
+        verify_flags=lambda lead: ["--read", _real("~/.volta"), "--write", _real("~/.pi/agent")]
+                                  + [f for p in PI_CODE for f in ("--deny-write", _real(f"~/.pi/agent/{p}"))]),
     "kimi": Adapter(
         argv=lambda lead, prompt: ["kimi", "-m", lead["model"], *lead.get("args", [])],
         contained_by="bw",
         grants=lambda lead: RuntimeGrants(read=["~/.kimi-code/bin", "~/.volta"], write=[_real("~/.kimi-code")],
-                                          env={"KIMI_CODE_HOME": _real("~/.kimi-code")}, private_home=True),
+                                          env={"KIMI_CODE_HOME": _real("~/.kimi-code")}, private_home=True,
+                                          deny_write=[_real(f"~/.kimi-code/{p}") for p in KIMI_CODE]),
         prompt_mode="file", version_argv=["kimi", "--version"],
         verify_argv=lambda lead: ["kimi", "-m", lead["model"], "--output-format", "stream-json", "-p"],
         verify_flags=lambda lead: ["--private-home", "--read", _real("~/.kimi-code/bin"), "--read", _real("~/.volta"),
-                                   "--write", _real("~/.kimi-code"), "--env", f"KIMI_CODE_HOME={_real('~/.kimi-code')}"]),
+                                   "--write", _real("~/.kimi-code"), "--env", f"KIMI_CODE_HOME={_real('~/.kimi-code')}"]
+                                  + [f for p in KIMI_CODE for f in ("--deny-write", _real(f"~/.kimi-code/{p}"))]),
 }

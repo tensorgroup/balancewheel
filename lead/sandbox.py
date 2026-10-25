@@ -20,12 +20,18 @@ import tempfile
 from collections import namedtuple
 
 Grants = namedtuple("Grants", "rules read")              # rules: [(allow|deny, subpath|literal, path)]
-RuntimeGrants = namedtuple("RuntimeGrants", "read write env private_home")
+RuntimeGrants = namedtuple("RuntimeGrants", "read write env private_home deny_write")
+RuntimeGrants.__new__.__defaults__ = ((),)  # deny_write: paths inside `write` that stay read-only
 
 IPC_DENIES = ["(deny lsopen)", "(deny appleevent-send)", "(deny user-preference-write)",
               '(deny process-exec (literal "/usr/bin/open") (literal "/usr/bin/osascript") '
-              '(literal "/bin/launchctl") (literal "/usr/bin/defaults"))']
-SECRET_READS = [".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker/config.json"]
+              '(literal "/bin/launchctl") (literal "/usr/bin/defaults"))',
+              # launchctl has no operation-level deny like lsopen; a copy of the binary would run
+              # from a writable dir, so it is unreadable too.
+              '(deny file-read* (literal "/bin/launchctl"))']
+SECRET_READS = [".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker/config.json",
+                ".codex/auth.json", ".claude/.credentials.json", ".kimi-code/credentials", ".pi/agent/auth.json",
+                ".gemini/oauth_creds.json", ".config/gcloud"]
 
 
 def check_path(p):
@@ -54,19 +60,35 @@ def _git_dir(worktree):
 def lead_grants(project, runtime, state_dir):
     """Ordered write rules and read grants for a lead working in `project.worktree`."""
     common, wt = project.common_dir, project.worktree
-    handoffs = os.path.join(os.path.realpath(state_dir), "handoffs", project.worktree_key)
+    state = _real(state_dir)
+    # bw's own control files (locks, pins, quota, containment) must stay out of every write grant.
+    refuse_overlap(state, [wt])
+    homes = os.path.join(state, "homes")
+    for p in runtime.write:
+        rp = _real(p)
+        if not rp.startswith(homes.rstrip("/") + "/"):
+            refuse_overlap(rp, [state])
+    handoffs = os.path.join(state, "handoffs", project.worktree_key)
     os.makedirs(handoffs, exist_ok=True)
     rules = [("allow", "subpath", wt), ("allow", "subpath", common), ("allow", "subpath", handoffs)]
     rules += [("allow", "subpath", _real(p)) for p in runtime.write]
+    rules += [("deny", "subpath", _real(p)) for p in runtime.deny_write]
+    # Anything git reads as configuration or runs as code stays read-only: hooks, config,
+    # attributes (info/), submodule git dirs (modules/), other worktrees' admin dirs, and the
+    # pointers that say where the git dir is — rewriting those aims git at a planted config.
     rules += [("deny", "subpath", os.path.join(common, "hooks")),
               ("deny", "literal", os.path.join(common, "config")),
               ("deny", "literal", os.path.join(common, "config.worktree")),
-              ("deny", "subpath", os.path.join(common, "worktrees"))]
+              ("deny", "subpath", os.path.join(common, "info")),
+              ("deny", "subpath", os.path.join(common, "modules")),
+              ("deny", "subpath", os.path.join(common, "worktrees")),
+              ("deny", "literal", os.path.join(wt, ".git"))]  # main: the dir node (no rename); linked: the gitdir file
     own_admin = _git_dir(wt)
-    if own_admin != common:  # linked worktree: give back its own admin dir, minus its config
+    if own_admin != common:  # linked worktree: give back its own admin dir, minus its pointers and config
         rules += [("allow", "subpath", own_admin),
                   ("deny", "literal", os.path.join(own_admin, "config.worktree")),
-                  ("deny", "literal", os.path.join(wt, ".git"))]
+                  ("deny", "literal", os.path.join(own_admin, "commondir")),
+                  ("deny", "literal", os.path.join(own_admin, "gitdir"))]
     for _, _, p in rules:
         check_path(p)
     # git needs the user's global config (identity, includes) to commit; read-only.
@@ -74,7 +96,7 @@ def lead_grants(project, runtime, state_dir):
     git_cfg = [os.path.join(home, ".gitconfig"), os.path.join(home, ".config", "git")]
     reads = [_real(p) for p in runtime.read] + [_real(p) for p in git_cfg if os.path.exists(p)]
     # A symlinked path (dotfiles) is read through its link: grant the link node as well.
-    reads += [check_path(os.path.abspath(p)) for p in list(runtime.read) + git_cfg
+    reads += [check_path(os.path.abspath(os.path.expanduser(p))) for p in list(runtime.read) + git_cfg
               if os.path.islink(os.path.expanduser(p))]
     return Grants(rules, reads)
 
@@ -88,7 +110,10 @@ def seatbelt_profile(grants, scratch):
     parts = ["(version 1)", "(allow default)", "(deny file-write*)",
              f'(allow file-write* (subpath "/dev") (subpath "{check_path(os.path.realpath(scratch))}"))']
     parts += [_rule(*r) for r in grants.rules]
-    secrets = " ".join(f'(subpath "{check_path(os.path.join(home, s))}")' for s in SECRET_READS)
+    own = [p for _, _, p in grants.rules] + list(grants.read)  # a runtime still reads its own login
+    paths = [os.path.realpath(os.path.join(home, s)) for s in SECRET_READS]
+    paths = [p for p in paths if not any(p == o or p.startswith(o.rstrip("/") + "/") for o in own)]
+    secrets = " ".join(f'(subpath "{check_path(p)}")' for p in paths)
     parts.append(f"(deny file-read* {secrets})")
     parts += IPC_DENIES
     return "".join(parts)
@@ -144,6 +169,7 @@ def _cli(args):
     run.add_argument("--state-dir", required=True)
     run.add_argument("--read", action="append", default=[])
     run.add_argument("--write", action="append", default=[])
+    run.add_argument("--deny-write", action="append", default=[])
     run.add_argument("--env", action="append", default=[])
     run.add_argument("--private-home", action="store_true")
     run.add_argument("--backend", choices=["nono", "sandbox-exec"])
@@ -157,10 +183,12 @@ def _cli(args):
     writes = list(a.write)
     home = os.path.expanduser("~")
     if a.private_home:
+        from .runner import _link_git_identity
         home = os.path.join(os.path.realpath(a.state_dir), "homes", project.worktree_key)
         os.makedirs(home, exist_ok=True)
+        _link_git_identity(home)
         writes.append(home)
-    grants = lead_grants(project, RuntimeGrants(a.read, writes, env, a.private_home), a.state_dir)
+    grants = lead_grants(project, RuntimeGrants(a.read, writes, env, a.private_home, a.deny_write), a.state_dir)
     full, _ = wrap(argv, grants, a.backend or backend(), home, scratch, env)
     os.chdir(project.worktree)
     os.execvp(full[0], full)

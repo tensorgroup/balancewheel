@@ -86,6 +86,20 @@ class Decide(unittest.TestCase):
         self.assertEqual(c["resets_at"], NOW + 5 * H)
         self.assertEqual(cap_record(NOW, resets_at=NOW + 10, expiry_hours=5)["resets_at"], NOW + 10)
 
+    def test_recovered_pin_does_not_interrupt_running_fallback(self):
+        d = run(current="a", pinned="c", moment="running")
+        self.assertEqual((d.lead, d.reason), ("a", "stay"))
+
+    def test_start_honours_return_threshold_after_cap_expired(self):
+        # an expired cap is still passed in; 30% remaining is below the 50% return threshold
+        d = run(quota={"pa": snap(70, resets_in=5 * H)}, caps={"pa": cap(-60)})
+        self.assertEqual(d.lead, "b")
+
+    def test_all_capped_at_start_offers_no_lead(self):
+        d = run(caps={"pa": cap(H), "pb": cap(2 * H), "pc": cap(3 * H)})
+        self.assertEqual(d.reason, "none-eligible")
+        self.assertIsNone(d.lead)
+
     def test_pinned_wins(self):
         d = run(pinned="c")
         self.assertEqual((d.lead, d.reason), ("c", "pinned"))

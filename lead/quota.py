@@ -13,7 +13,7 @@ import os
 import sys
 import time
 
-from .paths import read_json, state_dir as _state_dir, write_json_atomic
+from .paths import locked_dir, read_json, state_dir as _state_dir, write_json_atomic
 from .rotation import cap_record
 
 WINDOWS = ("five_hour", "seven_day")
@@ -32,12 +32,13 @@ def parse_statusline(payload):
     for name in WINDOWS:
         w = limits.get(name)
         if isinstance(w, dict) and isinstance(w.get("used_percentage"), (int, float)):
+            r = w.get("resets_at")
             windows.append({"name": name, "used_pct": float(w["used_percentage"]),
-                            "resets_at": w.get("resets_at")})
+                            "resets_at": float(r) if isinstance(r, (int, float)) and not isinstance(r, bool) else None})
     return ({"windows": windows} if windows else None), model
 
 
-def record_statusline(state, plan, payload, now):
+def record_statusline(state, plan, payload, now, expiry_hours=5):
     snapshot, model = parse_statusline(payload)
     if model:
         write_json_atomic(_file(state, "models", plan), {"model": model, "observed_at": now})
@@ -48,21 +49,33 @@ def record_statusline(state, plan, payload, now):
     write_json_atomic(_file(state, "quota", plan), snapshot)
     full = [w for w in snapshot["windows"] if w["used_pct"] >= 100]
     if full:
-        w = min(full, key=lambda w: w.get("resets_at") or float("inf"))
-        record_cap(state, plan, now, resets_at=w.get("resets_at"), window=w["name"], source="statusline")
+        # Both windows full: the plan is usable again only when the LATER one resets.
+        known = [w for w in full if w.get("resets_at") is not None]
+        w = max(known, key=lambda w: w["resets_at"]) if known else full[0]
+        record_cap(state, plan, now, resets_at=w.get("resets_at"), expiry_hours=expiry_hours,
+                   window=w["name"], source="statusline")
     else:
-        cap = read_json(_file(state, "caps", plan))
+        _clear_expired_cap(state, plan, now)
+    return snapshot
+
+
+def _clear_expired_cap(state, plan, now):
+    """Remove a cap that has passed — under a lock, re-reading first, so a cap renewed
+    concurrently is never deleted."""
+    path = _file(state, "caps", plan)
+    with locked_dir(os.path.join(state, "caps")):
+        cap = read_json(path)
         if cap and now >= cap.get("resets_at", 0):
             try:
-                os.remove(_file(state, "caps", plan))
+                os.remove(path)
             except FileNotFoundError:
                 pass
-    return snapshot
 
 
 def record_cap(state, plan, now, resets_at=None, expiry_hours=5, window="unknown", source="manual"):
     cap = cap_record(now, resets_at=resets_at, expiry_hours=expiry_hours, window=window, source=source)
-    write_json_atomic(_file(state, "caps", plan), cap)
+    with locked_dir(os.path.join(state, "caps")):
+        write_json_atomic(_file(state, "caps", plan), cap)
     return cap
 
 
@@ -82,8 +95,9 @@ def read_quota(state):
     return _read_dir(state, "quota")
 
 
-def read_caps(state, now, expiry_hours=5):
-    return {p: c for p, c in _read_dir(state, "caps").items() if c.get("resets_at", 0) > now}
+def read_caps(state, now, expiry_hours=5, include_expired=False):
+    caps = _read_dir(state, "caps")
+    return caps if include_expired else {p: c for p, c in caps.items() if c.get("resets_at", 0) > now}
 
 
 def read_model(state, plan):

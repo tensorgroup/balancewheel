@@ -11,7 +11,9 @@ ROOT="$(cd "$(dirname "$SELF")/.." && pwd -P)"
 INPUT="$(mktemp "${TMPDIR:-/tmp}/bw-statusline.XXXXXX")"
 trap 'rm -f "$INPUT"' EXIT
 cat > "$INPUT"
-SUMMARY="$(PYTHONPATH="$ROOT" python3 -m lead.quota --statusline "$PLAN" < "$INPUT" 2>/dev/null || echo "quota unknown")"
+# Run from the repo root: `python3 -m` puts the working directory first on sys.path, so running
+# it from the project would let a project's own `lead` package replace the recorder.
+SUMMARY="$(cd "$ROOT" && PYTHONPATH="$ROOT" python3 -m lead.quota --statusline "$PLAN" < "$INPUT" 2>/dev/null || echo "quota unknown")"
 if [ -n "${BW_STATUSLINE_CHAIN:-}" ]; then
   /bin/bash -c "$BW_STATUSLINE_CHAIN" < "$INPUT"
 else

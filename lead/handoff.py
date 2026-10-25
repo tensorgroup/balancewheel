@@ -11,12 +11,14 @@ import subprocess
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
-        "--no-pager"]
+        "-c", "core.attributesFile=/dev/null", "--no-pager"]
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # attributes read from here: no filters run
 
 
 def _git(worktree, *args):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["GIT_OPTIONAL_LOCKS"] = "0"
+    env["GIT_ATTR_SOURCE"] = EMPTY_TREE  # git >= 2.42: ignore the worktree's .gitattributes (clean/smudge filters)
     r = subprocess.run(["git", "-C", worktree, *SAFE, *args], capture_output=True, text=True, env=env)
     return r.stdout.strip() if r.returncode == 0 else f"(git {args[0]} failed: {r.stderr.strip()[:200]})"
 
@@ -25,12 +27,21 @@ def checkpoint_dir(state_dir, worktree_key):
     return os.path.join(state_dir, "handoffs", worktree_key)
 
 
-def read_checkpoint(state_dir, worktree_key):
+def read_checkpoint(state_dir, worktree_key, limit=64 * 1024):
+    """The lead writes this file, so it is opened without following symlinks (a link to a
+    secret would otherwise be read by bw and handed to the next model), regular files only."""
+    path = os.path.join(checkpoint_dir(state_dir, worktree_key), "checkpoint.md")
     try:
-        with open(os.path.join(checkpoint_dir(state_dir, worktree_key), "checkpoint.md")) as f:
-            return f.read().strip() or None
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except OSError:
         return None
+    try:
+        import stat
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        return os.read(fd, limit).decode("utf-8", errors="replace").strip() or None
+    finally:
+        os.close(fd)
 
 
 def build_handoff(worktree, since_head, state_dir, worktree_key, inbox_items):
