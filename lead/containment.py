@@ -5,6 +5,7 @@ version, the sandbox backend and its version, and hashes of the profile generato
 runtime adapters. Any change re-requires `bw sandbox verify <runtime>`. Only that command
 writes `state_dir/containment.json`; a contained lead cannot (its writes stop at its worktree).
 """
+import fcntl
 import hashlib
 import os
 import json
@@ -107,9 +108,18 @@ def _path(state_dir, store="containment.json"):
 
 
 def record_pass(state_dir, runtime, key, evidence_dir, store="containment.json"):
-    data = read_json(_path(state_dir, store), {}) or {}
-    data[runtime] = {"key": key, "evidence": evidence_dir, "ts": time.time()}
-    write_json_atomic(_path(state_dir, store), data)
+    """Read-modify-write under an flock on `<store>.lock`: `bw start` re-verifies runtimes
+    concurrently, and two passes recorded at once must both survive."""
+    path = _path(state_dir, store)
+    os.makedirs(state_dir, exist_ok=True)
+    fd = os.open(path + ".lock", os.O_RDONLY | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        data = read_json(path, {}) or {}
+        data[runtime] = {"key": key, "evidence": evidence_dir, "ts": time.time()}
+        write_json_atomic(path, data)
+    finally:
+        os.close(fd)
 
 
 def is_verified(state_dir, runtime, key, store="containment.json"):

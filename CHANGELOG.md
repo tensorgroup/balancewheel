@@ -15,6 +15,20 @@ not against the prose.
 
 ### Added
 
+- **`bw start [path] [--dry-run] [--no-update] [--no-verify]`** (`bin/bw`, `lead/start.py`): a
+  new command. It resolves the project and refuses (exit 2) when bw itself lies inside the
+  target worktree or its common git dir; updates every configured tool in parallel; re-verifies
+  each lead runtime's containment and guard keys on a pool, one worker per runtime, each
+  starting as its tool's update finishes (at once with `--no-update`; changed keys stay
+  `pending` with `--no-verify` or when the version after the update is unreadable); prints the
+  quota of every plan the profile touches and the lead it would start; then opens the worktree
+  in an Orca pane (`orca terminal create`) when Orca runs, else in a Terminal tab through
+  `state_dir/start/<worktree-key>.command` (0700), and prints the command to run (exit 1) when
+  neither works. A worktree that already has a lead is not opened again. Results go to
+  `state_dir/start.json` (`ts`, `project`, `tools`, `verify`, `orca_version`), which `bw status`
+  reads for its `last start:` line. `--dry-run` runs only git and `orca status` and writes
+  nothing. Containment and guard passes are now recorded under an flock on `<store>.lock`, so
+  concurrent re-verifies never drop one.
 - **Orca and cc-switch checks in `bw status`** (`bin/bw`, `lead/status.py`, `lead/orca.py`,
   `lead/sqlite_ro.py`): `bw status` adds `orca:` and `cc-switch:` lines. Orca's are whether
   it runs (`orca status --json`; installed but not running gets its own line) and its

@@ -116,3 +116,26 @@ class InjectableKeys(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecordPassConcurrency(unittest.TestCase):
+    def test_two_concurrent_records_for_different_runtimes_both_survive(self):
+        import threading, time as _time
+        with tempfile.TemporaryDirectory() as d:
+            real = containment.read_json
+
+            def slow_read(*a, **kw):  # widen the read-modify-write window
+                v = real(*a, **kw)
+                _time.sleep(0.2)
+                return v
+
+            for store in ("containment.json", "guard-verify.json"):
+                with mock.patch.object(containment, "read_json", side_effect=slow_read):
+                    ts = [threading.Thread(target=containment.record_pass, args=(d, rt, {"k": rt}, "/e"),
+                                           kwargs={"store": store}) for rt in ("pi", "kimi")]
+                    for t in ts:
+                        t.start()
+                    for t in ts:
+                        t.join()
+                with open(os.path.join(d, store)) as f:
+                    self.assertEqual(sorted(json.load(f)), ["kimi", "pi"], store)

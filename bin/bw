@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """bw — leads and rotation (build-order step 2).
 
+  bw start [path] [--dry-run] [--no-update] [--no-verify]
+                                                  update tools, re-verify, pick the lead, open it in
+                                                  an Orca pane or a Terminal tab
   bw lead [--use <lead> | --auto] [--no-rating]   start the right lead for this worktree
   bw status                                       leads, quota, caps, pins, Orca and cc-switch checks
   bw cap <plan> [--resets-at <epoch>]             record that a plan is capped
@@ -18,7 +21,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from lead import ccswitch, quota, runner, status, verify  # noqa: E402
+from lead import ccswitch, quota, runner, start, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.paths import ConfigError, load_config, state_dir  # noqa: E402
 from lead.projects import resolve_project  # noqa: E402
@@ -33,6 +36,11 @@ def _count(s):
 
 def cmd_lead(a, config, state):
     return runner.run(config, state, os.getcwd(), use=a.use, auto=a.auto, rating=not a.no_rating)
+
+
+def cmd_start(a, config, state):
+    return start.start(config, state, a.path, dry_run=a.dry_run, verify=not a.no_verify, update=not a.no_update,
+                       bw_path=os.path.realpath(__file__))
 
 
 def cmd_status(a, config, state):
@@ -100,6 +108,9 @@ def main(argv=None):
     g.add_argument("--use"); g.add_argument("--auto", action="store_true")
     ld.add_argument("--no-rating", action="store_true")
     sub.add_parser("status")
+    sa = sub.add_parser("start"); sa.add_argument("path", nargs="?", default=None)
+    for flag in ("--dry-run", "--no-update", "--no-verify"):
+        sa.add_argument(flag, action="store_true")
     c = sub.add_parser("cap"); c.add_argument("plan"); c.add_argument("--resets-at", type=float, default=None)
     sb = sub.add_parser("sandbox"); sbs = sb.add_subparsers(dest="sub", required=True)
     v = sbs.add_parser("verify"); v.add_argument("runtime"); v.add_argument("--lead", default=None)
@@ -127,7 +138,7 @@ def main(argv=None):
         return cmd_guard(a, config, state)
     if a.cmd == "lead" and a.use and a.use not in config["leads"]:
         sys.exit(f"bw: unknown lead {a.use!r}")
-    return {"lead": cmd_lead, "status": cmd_status, "cap": cmd_cap,
+    return {"lead": cmd_lead, "start": cmd_start, "status": cmd_status, "cap": cmd_cap,
             "sandbox": cmd_verify}[a.cmd](a, config, state)
 
 
