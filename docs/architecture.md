@@ -18,7 +18,8 @@ the moderator; a project's profile may make a non-primary vendor's agent the def
 which narrows "driver mode is failover, not promotion" to drivers outside a profile.
 Updated 2026-10-25: Orca named as the recommended canvas, and canvas control channels added
 to what a sandbox must deny (`docs/orca.md`). Revised 2026-10-25: the lead's autonomy and
-the `bw guard` broker, with the trust boundary it rests on ("Leads, profiles, and rotation").*
+the `bw guard` broker, with the trust boundary it rests on ("Leads, profiles, and rotation").
+Updated 2026-10-26: the registry and the cockpit as derived, read-only views.*
 
 ## The problem
 
@@ -106,6 +107,17 @@ change the code that answers. In v0 the broker only shadows (logs the decision i
 make and allows), and `bw guard review` turns that log into right/wrong marks that gate any
 move to acting. The guard watches calls; it is not an execution boundary, which stays the
 sandbox's job. Design: `docs/superpowers/specs/2026-10-25-bw-guard-design.md`.
+
+**The registry and the cockpit are derived, read-only views.** `bw registry` writes a snapshot
+of what config wires together (tools, plans, models, seats, leads, profiles, projects, and the
+edges between them, each node with a health), and `bw cockpit` serves it with the metrics log,
+the quota snapshots, and cc-switch's usage rows as five tabs on a loopback-only page. Neither
+holds state of its own: delete the registry and it is rebuilt, and the cockpit has no write
+endpoint (answers go through `bw answer`). Its trust model is that a lead can reach neither
+the page (its sandbox denies the port, and the one-time token never reaches it) nor cc-switch's
+database (a bw-owned sealed copy is read instead, which every sandbox denies). A number a source
+did not report is "unavailable", never 0, so a missing reading cannot look like a good one.
+Pure seat and lead numbers live in `metrics/summary.py`, shared with the static dashboard.
 
 ### Seat mode and driver mode are different things
 

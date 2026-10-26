@@ -483,6 +483,36 @@ First time? See "Start leading" at the end of this section.
   agent launch, which bypasses permissions and bw's worktree lock. Orca adds hooks to every vendor's config when it first starts, and a
   sandboxed process can drive Orca's control channel unless the sandbox denies it — read
   [docs/orca.md](docs/orca.md) before installing it. Plain terminal tabs work the same.
+- **The cockpit and the registry (`bw cockpit`, `bw registry`; since 2026-10-26).** `bw cockpit
+  [--port N] [--no-open]` serves one read-only page on `127.0.0.1` until Ctrl-C, with five tabs.
+  **Models**: seat rows (panels, confirmed findings, unique catches, standout panels, dispute
+  wins, cost where reported) and a **Leads** table (sessions, minutes with lost and unparsed
+  sessions left out, cap switches, overrides, ratings, asks; the task-based columns say they
+  are pending until `task` events exist), with counts only below 10 verdicts. **Usage**: tokens,
+  requests, and cost per tool and model over 30 days. **History**: panels, disputes, findings,
+  and session and lead markers. **Now**: per plan the windows, pools, source and age of the
+  reading, cap, and cross-check, per worktree the current and pinned lead and open asks, and
+  open watches. **Graph**: the registry's edges as a layered diagram coloured by health. A
+  number nobody reported shows as "unavailable", never 0, and a tab whose data cannot be read
+  says why instead of blanking the page.
+  Security in two sentences: the page opens through a one-time link whose token is exchanged
+  once for an `HttpOnly`, `SameSite=Strict` cookie, and every request needs that cookie, a
+  `127.0.0.1` or `localhost` `Host`, and `GET`. It serves only on a port every lead sandbox
+  denies (`cockpit.port`, default 8765), so a contained lead cannot reach it; **after changing
+  `cockpit.port`, re-run `bw sandbox verify` for your pi and Kimi leads**. Unknown `cockpit.*`
+  keys warn and are ignored, and idle connections close after 10 s. A page on another localhost
+  port can set a second cookie with the same name and lock the cockpit out (403, nothing
+  disclosed); that denial of service is accepted, and restarting `bw cockpit` gives a fresh
+  link. `bw registry [--print]` writes the derived snapshot the Graph draws
+  (`registry.json` in the state dir: tools, plans, models, seats, leads, profiles, projects,
+  edges, each node with a health). A runtime a lead or seat uses without a `tools` entry still
+  gets a tool node, marked `configured: false`. Delete the file and nothing is lost.
+- **Usage data: cc-switch (optional).** The Usage tab reads [cc-switch](docs/stack.md)'s
+  session-log table from a sealed copy in the state dir; bw never opens or writes the original,
+  and an unreadable row is counted in `skipped_rows`, not guessed. Tokens or costs a row does
+  not carry show as unavailable. Keep its proxy, failover, and every config, prompt, MCP, and
+  skill sync off, and never switch a provider in its UI; `bw setup cc-switch` writes the
+  settings that do this before its first launch.
 
 ### Start leading (first run)
 
@@ -511,7 +541,7 @@ First time? See "Start leading" at the end of this section.
 4. **Verify what `bw` contains**, once per runtime version: `bw sandbox verify pi` and
    `bw sandbox verify kimi` for pi and Kimi leads (`bw lead` refuses them without a pass),
    and `bw guard verify pi` for a guarded pi lead (without it, the lead starts with a note).
-   Each run spends a little model quota.
+   Each run spends a little model quota. Re-run `bw sandbox verify` after changing `cockpit.port`.
 5. **Lead.** In a project's worktree, `bw status` shows plans, leads and guard lines; `bw
    start` updates and re-verifies, then opens the profile's lead (an Orca pane or a Terminal
    tab), or `bw lead` starts it in the terminal you are in. Quit the

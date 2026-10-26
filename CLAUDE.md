@@ -19,16 +19,18 @@ Python 3.9+ standard library only; no packages to install. Run the tests from th
     python3 -m unittest discover -s tests -v
 
 `metrics/` holds the config loader, the JSONL store (the only reader/appender), the roster
-watches, the logger CLI, and the dashboard generator. `lead/` holds leads and rotation:
+watches, the logger CLI, the dashboard generator, and `summary.py` (the pure seat and lead
+numbers the dashboard and the cockpit share). `lead/` holds leads and rotation:
 project resolution, the pure rotation decision, per-plan quota (one snapshot per source, an
 arbiter that picks the windows and the pools apart) and caps, `bw sandbox`
 profiles and containment records, handoffs, runtime adapters, and the runner behind
-`bin/bw` (`bin/bw-statusline` records Claude quota). The starter is spread over `start.py`
+`bin/bw` (`bin/bw-statusline` records Claude quota). `cockpit/` is `bw cockpit`: a loopback-only,
+read-only server (`server.py`), its JSON views (`views.py`), and one vanilla-JS page (`page.html`). The starter is spread over `start.py`
 (`bw start`), `updates.py` (tool versions and parallel updates), `locks.py` (per-runtime
 locks), `verify.py` (re-verification on a pool), `orca.py` and `sqlite_ro.py` (Orca presence,
 sealed-copy settings, and its quota snapshot), `probes.py` (OpenRouter's key endpoint and the
 refresh that runs the probes with one Orca read; agy awaits its shape), `inbox.py` (leads' asks
-as files, bw-owned `inbox.jsonl`, the answers-only view), `ccswitch.py` (`bw setup cc-switch`), `checks.py`, and `proc.py`
+as files, bw-owned `inbox.jsonl`, the answers-only view), `ccswitch.py` (`bw setup cc-switch` and the sealed-copy usage reader), `registry.py` (`bw registry`, the derived graph), `checks.py`, and `proc.py`
 (the one shell-out helper modules take as `run=`). `tests/attack/lead_containment.sh`
 attack-tests a lead runtime (spends model quota; not part of `unittest discover`).
 `lead/guard/` holds `bw guard`: the broker, the lexer and rules, the thin pi and agy clients,

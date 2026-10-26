@@ -34,7 +34,7 @@ not against the prose.
   events), `/api/history` (panels, disputes, findings, session and lead markers), `/api/now`
   (per plan: windows, pools, source and age, cap, notice, cross-check, limits, and a metered plan's
   month spend from its probe snapshot; per worktree the current and pinned lead and open inbox
-  counts; open watches) and `/api/graph` (`available: false` until the graph lands). An
+  counts; open watches) and `/api/graph` (the registry's nodes and edges, built per request). An
   unreported number is `null` in the JSON and "unavailable" on the page, never 0.
 - **Config `cockpit.port`** (`metrics/config.py`): an integer from 1024 to 65535, default 8765;
   anything else is a config error. Unknown `cockpit.*` keys warn and are ignored, as under
@@ -46,7 +46,18 @@ not against the prose.
   between them, each node with an `id` (`<kind>:<name>`) and a `health` of `verified`, `pending`,
   `capped` or `unknown`. Rebuilt by `bw registry [--print]` and by `bw start` step 5; deleting it loses
   nothing. A tool's `auth` is always `unknown` (bw reads no credentials) and its `locks` is `held` or
-  `free`, read by a non-blocking try that never disturbs a running lead.
+  `free`, read by a non-blocking try that never disturbs a running lead. A runtime that a lead or
+  seat uses without a `tools` entry gets a derived tool node with `configured: false`.
+- **cc-switch usage reader** (`lead/ccswitch.py`): `usage(state, since, until)` reads session rows
+  and rollups from a sealed copy of cc-switch's database in the state dir's `sealed/` (db and
+  `-wal`, never `-shm`, bounded at 256 MiB, removed after the read) and never writes the original.
+  The result is `{available, reason, groups, skipped_rows}`; a row with an out-of-range
+  timestamp or malformed count is counted in `skipped_rows`, and a token or cost figure a group
+  cannot fully report is `null`, never 0. `prices` reads `model_pricing`. Amendments A11-A14 in
+  the 2026-10-24 spec; the cockpit's Leads table lists sessions, minutes (lost and unparsed
+  sessions left out), cap switches, overrides, ratings and asks, with the task-based columns
+  pending. A page on another localhost port can toss a duplicate cookie and lock the cockpit
+  (403, nothing disclosed); this is accepted.
 - **Usage token and cost fields; seat and lead summaries** (`metrics/log.py`, `metrics/summary.py`):
   log schema, additive. A `usage` line may carry `tokens_in`, `tokens_out` (integers >= 0),
   `cost_usd` (a finite number >= 0) and `session_id`, written by `log.py usage --tokens-in

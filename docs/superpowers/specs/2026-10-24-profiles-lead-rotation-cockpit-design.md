@@ -23,6 +23,9 @@ otherwise. Tool versions were read on the author's machine on this date: Claude 
 expiry and the inbox were built differs in four places; see "Amendments from quota sources
 and the inbox" (A7-A10).*
 
+*Amended 2026-10-26 (the registry, usage, and the cockpit): how they were built differs in four
+places; see "Amendments from plan 4" (A11-A14).*
+
 *Amended 2026-10-25: Orca (1.4.240, MIT) replaces nodeterm as the recommended, optional
 canvas, and the cockpit, inbox, and quota-probe work it duplicates is trimmed. A spike and a
 deep four-seat review (43 raw findings, 17 after dedupe) shaped the change; the sections
@@ -619,9 +622,9 @@ Config is canonical; the registry is a derived snapshot rebuilt by `bw registry`
 
 - **The user's own sessions** (leads, and anything else run in the default vendor homes):
   cc-switch's `~/.cc-switch/cc-switch.db`, tables `proxy_request_logs` (rows with
-  `data_source` other than `proxy`; amendment A2) and `usage_daily_rollups`, opened read-only
-  (`sqlite3.connect("file:...?mode=ro", uri=True)`), one short connection per refresh,
-  unknown columns or tables treated as `unknown` rather than an error. cc-switch is
+  `data_source` other than `proxy`; amendment A2) and `usage_daily_rollups`, read from a
+  sealed copy (amendment A11), one short read per refresh, unknown columns or tables treated
+  as `unknown` rather than an error. cc-switch is
   optional; without it the view says so.
 - **Seats** run in seat-owned homes cc-switch does not scan, so seat cost comes from the
   seat's own output: the `usage` event gains optional `tokens_in`, `tokens_out`,
@@ -874,6 +877,44 @@ built.
   `key_env`, `tools.*` keys and `cockpit.port` are additive and optional on schemas 2 and 3;
   `quota` gains `"orca"`. An unknown key under `tools.*` or `cockpit` is a warning printed
   once by `bw`, not an error.
+
+### Amendments from the registry, usage, and the cockpit (2026-10-26)
+
+Named in the same plan, Design decisions 5, 17, 18 and 20; they change "The registry", "Usage
+and cost data" and "The cockpit" as built.
+
+- **A11. cc-switch's database is read by sealed copy (decision 5; replaces the direct
+  `mode=ro` open).** A direct read-only open of a WAL database still creates a `-shm` file, and
+  it failed on Orca's; so bw copies the database and its `-wal` (never `-shm`) into
+  `state_dir/sealed/` (0700, bounded at 256 MiB, denied to every sandbox), opens the copy
+  `query_only`, and removes it afterwards. The original is never opened or written. An
+  inconsistent snapshot reads `unknown` for that refresh. The same copy-then-read serves
+  Orca's profile database.
+- **A12. Usage rows (decision 17 and the cockpit's Usage tab).** `lead/ccswitch.usage` returns
+  groups by tool and model plus rollups for the last 30 days, with `skipped_rows` counting
+  rows it could not read (a timestamp out of range, a malformed count) rather than guessing.
+  Tokens, requests, and cost a row does not carry make the group's field `null`, shown as
+  "unavailable", never 0; a schema it does not recognise is `available: false` with the reason.
+  Prices for metered models come from cc-switch's `model_pricing` table, never from bw's own
+  list, and are used by the registry only.
+- **A13. The Leads table until task events exist (decision 20; changes "What is measured" and
+  "How it is shown").** Only the columns measurable from today's log ship: sessions, minutes
+  (a `lost` or unparseable session is left out), cap switches, overrides (a `lead` event with
+  reason `override`, credited to the model that ran), ratings, and asks. Throughput per task,
+  defects, escapes, clean work, and moderation quality wait for the `task` event and
+  `panel.subject`, and the table lists them as pending. Small n (under 10) shows counts only.
+  Views never fail whole: a source that cannot be read answers `available: false` with a reason
+  and the other tabs still load.
+- **A14. Registry and cockpit details (decisions 18, 21 and the Task 16 and 17 rulings).** A
+  tool's `auth` is always `unknown`, since bw reads no credential. A runtime a lead or seat
+  uses with no `tools` entry gets a derived tool node (`configured: false`) so the
+  lead-to-tool-to-plan edges exist. The cockpit serves only on a port every sandbox denies
+  (`cockpit.port`, default 8765); `--port` outside that set is refused, because a contained
+  lead must never reach the page, and cookies are not port-isolated, so the denial also
+  neutralises a cookie a lead's dev server might capture. Changing `cockpit.port` changes
+  the containment key and needs `bw sandbox verify`. A page on another localhost port can toss
+  a duplicate cookie and lock the cockpit (403, no disclosure): accepted as a denial of
+  service with no data exposure.
 
 ## Extraction gate
 
