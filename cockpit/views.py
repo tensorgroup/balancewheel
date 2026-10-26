@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 
 from lead import paths  # noqa: F401  (puts metrics/ on sys.path)
-from lead import ccswitch, inbox, proc, quota, registry, status
+from lead import ccswitch, inbox, proc, registry, status
 import store  # noqa: E402
 import summary  # noqa: E402
 

@@ -117,8 +117,9 @@ def _windows_ok(windows):
         and (w.get("resets_at") is None or _num(w.get("resets_at"))) for w in windows)
 
 
-def _fresh(src, snap, now, probe_every_min):
-    """None when the snapshot is a usable, current reading; else the reason it is not."""
+def _observation_stale(src, snap, now, probe_every_min):
+    """None when the snapshot is a known, dated, current observation (its windows not judged);
+    else the reason it is not."""
     if not snap or not isinstance(snap, dict):
         return "no reading"
     if snap.get("unknown"):
@@ -130,6 +131,14 @@ def _fresh(src, snap, now, probe_every_min):
         return "observed in the future"
     if src != "statusline" and now - t > 2 * probe_every_min * 60:
         return f"stale: observed {(now - t) / 60:.0f} min ago"
+    return None
+
+
+def _fresh(src, snap, now, probe_every_min):
+    """None when the snapshot is a usable, current reading; else the reason it is not."""
+    why = _observation_stale(src, snap, now, probe_every_min)
+    if why:
+        return why
     if not _windows_ok(snap.get("windows")):
         return "no usable windows"
     if rotation.effective_quota(snap, now) is None:
@@ -144,8 +153,11 @@ def arbitrate(sources, plan_cfg, now, probe_every_min):
     orca_ok = bool(plan_cfg.get("orca_provider"))
     orca = sources.get("orca") if orca_ok else None
     orca = orca if isinstance(orca, dict) else None
-    pools = orca.get("pools") if orca and not _fresh("orca", orca, now, probe_every_min) else None
-    pools = pools if isinstance(pools, list) else []
+    # Pools need a current observation, not current windows (an account window that reset since
+    # says nothing about a weekly pool), and each stands only until its own reset.
+    pools = orca.get("pools") if orca and not _observation_stale("orca", orca, now, probe_every_min) else None
+    pools = [p for p in pools if isinstance(p, dict) and not (_num(p.get("resets_at")) and p["resets_at"] <= now)] \
+        if isinstance(pools, list) else []
     cross = orca if plan_cfg["quota"] == "statusline" and orca else None
     reasons, last_known = [], None
     for src in [s for s in ORDER.get(plan_cfg["quota"], []) if s != "orca" or orca_ok]:

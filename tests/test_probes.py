@@ -175,6 +175,36 @@ class ProbeOpenRouterTest(unittest.TestCase):
         self.assertEqual(s["note"], f"monthly spend unknown before {time.ctime(NOW)}")
 
 
+class MonthBoundaryTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def probe_at(self, now, usage):
+        doc = key_doc("key_no_limit.json")
+        doc["data"]["usage"] = usage
+        return probes.probe_openrouter(or_plan(), self.state, now, fetch=fake_fetch(body=json.dumps(doc).encode()),
+                                       env={"OPENROUTER_API_KEY": CANARY}, plan="or")
+
+    def test_last_reading_of_the_previous_month_is_this_months_baseline(self):
+        before = MONTH_START - 3600  # 23:00 UTC on the last day of the previous month
+        first = self.probe_at(before, 10.0)
+        self.assertEqual(first["note"], f"monthly spend unknown before {time.ctime(before)}")
+        s = self.probe_at(MONTH_START + 3600, 12.5)
+        self.assertNotIn("note", s)
+        self.assertEqual(s["spend_usd"], 2.5)  # includes the last hour of the old month: overstated, never under
+        self.assertEqual(s["windows"][0]["name"], "budget")
+        self.assertEqual(self.probe_at(NOW, 14.0)["spend_usd"], 4.0)  # the baseline stays for the month
+
+    def test_no_prior_reading_stays_unknown(self):
+        s = self.probe_at(MONTH_START + 3600, 12.5)
+        self.assertIsNone(s["spend_usd"])
+        self.assertEqual(s["note"], f"monthly spend unknown before {time.ctime(MONTH_START + 3600)}")
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass

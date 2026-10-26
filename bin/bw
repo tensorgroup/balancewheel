@@ -155,7 +155,11 @@ def cmd_inbox(a, config, state):
     except ValueError as e:
         print(f"bw: {e}", file=sys.stderr)
         return 2
-    loaded = inbox.load(state)
+    try:
+        loaded = inbox.load(state)
+    except OSError as e:
+        print(f"bw: the inbox could not be read ({type(e).__name__}): {inbox.path(state)}", file=sys.stderr)
+        return 1
     for w in loaded["warnings"]:
         print(f"bw: inbox warning: {w}", file=sys.stderr)
     items = [i for i in loaded["items"] if (a.all or i["status"] == "open")
@@ -176,6 +180,10 @@ def cmd_inbox(a, config, state):
 def cmd_answer(a, config, state):
     try:
         rec = inbox.answer(state, a.id, a.text)
+    except OSError as e:
+        print(f"bw: the inbox could not be read ({type(e).__name__}): {inbox.path(state)}; nothing recorded",
+              file=sys.stderr)
+        return 1
     except KeyError:
         print(f"bw: no inbox item {safe(a.id)}; `bw inbox` lists them", file=sys.stderr)
         return 1

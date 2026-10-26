@@ -193,6 +193,35 @@ class Records(InboxCase):
         self.assertNotIn("unanswered", body)
         self.assertEqual([p.name for p in view.parent.iterdir()], ["answers.md"])  # no temp left behind
 
+    def test_a_stale_view_writer_cannot_drop_a_delivered_answer(self):
+        import threading
+        self.publish("a", "q?")
+        (r,), _ = self.ingest()
+        loaded, go = threading.Event(), threading.Event()
+        real_load = inbox.load
+
+        def load(state):
+            res = real_load(state)
+            if threading.current_thread().name == "stale":  # read before the answer, written after it
+                loaded.set()
+                go.wait(5)
+            return res
+
+        def fresh():
+            inbox.answer(self.state, r["id"], "yes, ship it")
+            inbox.write_view(self.state, KEY)
+
+        with mock.patch.object(inbox, "load", load):
+            stale = threading.Thread(target=inbox.write_view, args=(self.state, KEY), name="stale")
+            stale.start()
+            self.assertTrue(loaded.wait(5))
+            t = threading.Thread(target=fresh, name="fresh")
+            t.start()
+            t.join(0.5)
+            go.set()
+            stale.join(5); t.join(5)
+        self.assertIn("yes, ship it", Path(inbox.view_path(self.state, KEY)).read_text())
+
     def test_handoff_items_are_bounded(self):
         for i in range(200):
             inbox.ask(self.state, KEY, "/w", "la", "s1", f"q{i} " + "\x1b" * 1995 + "\nmore", f"{i:08x}")
@@ -258,6 +287,15 @@ class Cli(InboxCase):
                "BW_ORCA_SUPPORT": str(self.root / "no-orca"), "BW_CCSWITCH_DIR": str(self.root / "no-cc")}
         return subprocess.run([sys.executable, self.BW, *args], cwd=str(self.repo), env=env,
                               capture_output=True, text=True)
+
+    def test_unreadable_inbox_is_one_line_and_exit_1(self):
+        (Path(self.state) / "inbox.jsonl").mkdir(parents=True)  # reading it raises IsADirectoryError
+        for args in (["inbox"], ["answer", "deadbeef", "x"]):
+            r = self.bw(*args)
+            self.assertEqual(r.returncode, 1, (args, r.stderr))
+            self.assertNotIn("Traceback", r.stderr)
+            self.assertEqual(r.stderr.strip().count("\n"), 0, r.stderr)
+            self.assertIn("the inbox could not be read (IsADirectoryError)", r.stderr)
 
     def test_inbox_lists_escaped_and_answer_closes(self):
         self.publish("a", "wipe? \x1b[2J now")

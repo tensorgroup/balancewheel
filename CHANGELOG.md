@@ -100,10 +100,12 @@ not against the prose.
   `key env <NAME> unset`; non-200 → `HTTP <n>`; a redirect is refused, not followed; any other
   failure is named by its exception type, never described), and with `budget_usd_month > 0`
   gives a `budget` window: this UTC month's spend (`usage_monthly`) against the budget, reset on
-  the 1st. Without `usage_monthly` it falls back to `usage` less the month's first reading
-  (`state_dir/probes/openrouter-<plan>-<YYYY-MM>.json`), and only when that baseline was taken
-  by 00:00 UTC on the 1st; otherwise no budget window and the note `monthly spend unknown before
-  <time>`. A key credit limit is shown under `limits`, never a window. Probe `agy` is unknown
+  the 1st. Without `usage_monthly` it falls back to `usage` less the month's baseline
+  (`state_dir/probes/openrouter-<plan>-<YYYY-MM>.json`): the plan's last reading from before the
+  1st (`openrouter-<plan>-last.json`, rewritten on every reading), carried forward, which
+  overstates spend by the old month's last hours and never understates it; with no such reading
+  the baseline is the month's first, there is no budget window, and the note says `monthly spend
+  unknown before <time>`. A key credit limit is shown under `limits`, never a window. Probe `agy` is unknown
   (`agy /usage: awaiting Task G`) and runs nothing. `bw start` (step 4) and `bw lead` (before its
   first decision and at the session boundary, never in the poll loop) run the same refresh.
 - **Per-source quota snapshots and an arbiter** (`lead/quota.py`, `lead/orca.py`,
@@ -236,7 +238,8 @@ not against the prose.
   following links or blocking, at most 64 KiB each, text cut at 2000 characters, at most 50 asks
   per session (the rest deleted unread, with one notice), at session start, about once a second,
   and once more after the lead's group is gone — before a switch's handoff, which lists open
-  items — always under the publishing session. Records go to `state_dir/inbox.jsonl` (0600):
+  items — under the publishing session (asks an earlier session left undrained, after a crash,
+  are recorded under the session whose start found them). Records go to `state_dir/inbox.jsonl` (0600):
   `ask` `{type, id, ts, project, worktree, from, session_id, text, status}` (id
   `sha1(name + content)[:8]`, so a re-ingest dedupes), `notice` `{type, id, ts, project, kind,
   from: "bw", text, status}` with `kind` one of `all-capped`, `pinned-capped`, `router-shadow`
@@ -276,6 +279,29 @@ not against the prose.
   bw or its config file lies inside the target worktree or its common git dir (exit 2): the
   config's `tools.*.update`/`version` commands run unsandboxed. The containment rules changed:
   pi and Kimi need `bw sandbox verify` again, and pi guard `bw guard verify pi`.
+- **Final review of plan 4: correctness** (`lead/inbox.py`, `lead/verify.py`, `lead/containment.py`,
+  `lead/start.py`, `lead/quota.py`, `lead/rotation.py`, `lead/probes.py`, `lead/runner.py`,
+  `bin/bw`, `tests/attack/lead_containment.sh`). Rewriting a worktree's answers view holds the
+  inbox lock from load to replace, so a stale writer cannot drop a delivered answer. `bw sandbox
+  verify`, `bw guard verify` and `bw start`'s re-verification hold a shared lock on the runtime
+  from the first key read to the record, so an update of any tool mapped to it (two tools can map
+  to one runtime) is skipped meanwhile. **The containment and guard keys now include the denied
+  ports** (`denied_ports`, the configured `cockpit.port` among them), so changing the port
+  requires a new verification; `bw sandbox verify` passes each as `--deny-port`, and
+  `lead_containment.sh` probes the ports it is given (default 6768 15721 8765). Every pi and Kimi
+  key changes once with this release: run `bw sandbox verify pi|kimi` and `bw guard verify pi`
+  again (or let `bw start` re-verify). `bw start` forwards `BALANCEWHEEL_CONFIG` and
+  `BW_STATE_DIR` as absolute paths, reads a fresh clock before quota (step 4) and again before the
+  registry (step 5), and with `bw lead` refreshes the plan of a pinned lead outside the
+  profile's order. Orca pools are kept while the observation is current even when an account
+  window has reset, and each pool lapses at its own reset. OpenRouter's month baseline without
+  `usage_monthly` carries the previous month's last reading forward (see the probe entry above).
+  A lead that cannot start (a missing binary) ends `bw lead` with one line and **exit 8**
+  (`START_FAILED`) instead of a traceback, and the worktree lock is cleared once a switch's end
+  is logged, so it is never logged again as `lost`; `bw lead` exits **2** when it refuses a bw or
+  config inside the worktree. `bw inbox` and `bw answer` say in one line when `inbox.jsonl`
+  cannot be read and exit 1. A mid-session runtime-lock take tries for about a second before
+  staying on the current lead (the registry's instant exclusive probe no longer costs a poll).
 
 - **Runtime locks and verification output** (`lead/locks.py`, `lead/verify.py`): `bw lead`
   takes its shared runtime lock before the verification check, and bw keeps a second

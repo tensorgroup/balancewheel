@@ -252,3 +252,18 @@ class ViewsCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoUnusedImports(unittest.TestCase):
+    def test_cockpit_modules_import_only_what_they_use(self):
+        import ast
+        for f in sorted((Path(__file__).resolve().parent.parent / "cockpit").glob("*.py")):
+            src = f.read_text()
+            lines = src.splitlines()
+            tree = ast.parse(src)
+            used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+            for n in ast.walk(tree):
+                if isinstance(n, (ast.Import, ast.ImportFrom)) and "noqa" not in lines[n.lineno - 1]:
+                    for a in n.names:
+                        name = (a.asname or a.name).split(".")[0]
+                        self.assertTrue(name in used, f"{f.name}:{n.lineno} imports {name} and never uses it")

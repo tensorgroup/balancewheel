@@ -447,9 +447,10 @@ First time? See "Start leading" at the end of this section.
     `OPENROUTER_API_KEY`) to `https://openrouter.ai/api/v1/key` and nowhere else; redirects are
     refused and the key appears in no file, output, or error. With `budget_usd_month > 0` the
     plan gets a `budget` window: the UTC month's spend (`usage_monthly`) against it, reset on
-    the 1st. If the key's response lacks `usage_monthly`, monthly spend reads **unknown**
-    unless bw's own first reading of the month was taken by 00:00 UTC on the 1st, so it never
-    understates spend; the plan then has no budget window and says so. The key's own credit
+    the 1st. If the key's response lacks `usage_monthly`, bw counts spend from its own last
+    reading of the previous month (carried forward as the month's baseline, so the old month's
+    last hours count too: spend is overstated, never understated); with no reading from before
+    the 1st, monthly spend reads **unknown**, and the plan has no budget window and says so. The key's own credit
     limit is shown, never a window. A budget of 0 means no budget window.
   - **agy and Google.** agy's `/usage` output has not been observed yet, so `probe: "agy"` reads
     `unknown` ("awaiting Task G") and runs nothing. Until then a Google plan can read Orca's
@@ -499,8 +500,9 @@ First time? See "Start leading" at the end of this section.
   Security in two sentences: the page opens through a one-time link whose token is exchanged
   once for an `HttpOnly`, `SameSite=Strict` cookie, and every request needs that cookie, a
   `127.0.0.1` or `localhost` `Host`, and `GET`. It serves only on a port every lead sandbox
-  denies (`cockpit.port`, default 8765), so a contained lead cannot reach it; **after changing
-  `cockpit.port`, re-run `bw sandbox verify` for your pi and Kimi leads**. Unknown `cockpit.*`
+  denies (`cockpit.port`, default 8765), so a contained lead cannot reach it; the denied ports
+  are part of the containment key, so **after changing `cockpit.port`, `bw lead` refuses pi and
+  Kimi until `bw sandbox verify` passes again** (`bw start` re-verifies by itself). Unknown `cockpit.*`
   keys warn and are ignored, and idle connections close after 10 s. A page on another localhost
   port can set a second cookie with the same name and lock the cockpit out (403, nothing
   disclosed); that denial of service is accepted, and restarting `bw cockpit` gives a fresh
@@ -542,7 +544,8 @@ First time? See "Start leading" at the end of this section.
 4. **Verify what `bw` contains**, once per runtime version: `bw sandbox verify pi` and
    `bw sandbox verify kimi` for pi and Kimi leads (`bw lead` refuses them without a pass),
    and `bw guard verify pi` for a guarded pi lead (without it, the lead starts with a note).
-   Each run spends a little model quota. Re-run `bw sandbox verify` after changing `cockpit.port`.
+   Each run spends a little model quota. Changing `cockpit.port` changes the containment key
+   (the attack probes every denied port), so verify again after it.
 5. **Lead.** In a project's worktree, `bw status` shows plans, leads and guard lines; `bw
    start` updates and re-verifies, then opens the profile's lead (an Orca pane or a Terminal
    tab), or `bw lead` starts it in the terminal you are in. Quit the

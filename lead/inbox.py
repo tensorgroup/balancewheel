@@ -159,20 +159,23 @@ def answer(state, item_id, text, now=None) -> dict:
 
 
 def write_view(state, worktree_key):
-    """The lead's answers file: one block per answered ask of this worktree, answers only."""
-    blocks = [f"@lead answer [id:{i['id']}]\n{safe(i['answer']['text'])}\n"
-              for i in load(state)["items"]
-              if i["type"] == "ask" and i.get("project") == worktree_key and i["status"] == "answered"]
+    """The lead's answers file: one block per answered ask of this worktree, answers only. Load,
+    render and replace happen under the inbox lock, so a writer that loaded before an answer can
+    never replace a view that already shows it."""
     dest = view_path(state, worktree_key)
     os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
-    tmp = os.path.join(os.path.dirname(dest), f".answers.{os.getpid()}.{secrets.token_hex(4)}.tmp")
-    try:
-        with open(tmp, "w") as f:
-            f.write("\n".join(blocks))
-        os.replace(tmp, dest)
-    finally:
-        if os.path.lexists(tmp):
-            os.unlink(tmp)
+    with store.locked(path(state)):
+        blocks = [f"@lead answer [id:{i['id']}]\n{safe(i['answer']['text'])}\n"
+                  for i in load(state)["items"]
+                  if i["type"] == "ask" and i.get("project") == worktree_key and i["status"] == "answered"]
+        tmp = os.path.join(os.path.dirname(dest), f".answers.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+        try:
+            with open(tmp, "w") as f:
+                f.write("\n".join(blocks))
+            os.replace(tmp, dest)
+        finally:
+            if os.path.lexists(tmp):
+                os.unlink(tmp)
 
 
 def _read(dfd, name):

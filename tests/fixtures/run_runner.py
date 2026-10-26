@@ -3,7 +3,7 @@
 argv: run_runner.py <config.json> <worktree> [--use LEAD] [--auto] [--contained-by-bw RUNTIME]
                     [--guard RUNTIME [--no-hook] [--no-spike]] [--fail-after-launch] [--no-client] [--fail-in-poll]
                     [--verified] [--fail-in-caps] [--probe-lock-in-verify] [--orca-payload FILE] [--orca-raise]
-                    [--count-refresh] [--prompt-file]
+                    [--count-refresh] [--prompt-file] [--missing-binary RUNTIME]
 Every runtime maps to tests/fixtures/fake_lead.py; --contained-by-bw marks one as bw-contained
 (without a containment record), to test the refusal path. --guard RUNTIME makes every lead of that
 runtime guarded (autonomy "guard", source "config"), points BW_AGY_HOOKS at a temp hooks file with
@@ -18,6 +18,7 @@ process, append {"runtime", "exclusive"} to FAKE_OUT/verify-lock.jsonl, and coun
 --orca-payload FILE answers every `orca ...` shell-out with FILE's content (each argv appended to
 FAKE_OUT/orca-calls.jsonl) and reports Orca's version as 9.9.9-test; without it any `orca` call fails.
 --orca-raise makes every `orca ...` shell-out (still appended to orca-calls.jsonl) raise OSError.
+--missing-binary RUNTIME makes that runtime's argv a binary that does not exist (Popen raises FileNotFoundError).
 --prompt-file gives every fake adapter prompt_mode "file" (bw writes the first prompt for the user to paste).
 --count-refresh appends one line to FAKE_OUT/refresh-calls.jsonl per probes.refresh call (which still runs).
 """
@@ -40,11 +41,14 @@ use = args[args.index("--use") + 1] if "--use" in args else None
 auto = "--auto" in args
 bw_rt = args[args.index("--contained-by-bw") + 1] if "--contained-by-bw" in args else None
 guard_rt = args[args.index("--guard") + 1] if "--guard" in args else None
+missing_rt = args[args.index("--missing-binary") + 1] if "--missing-binary" in args else None
 
 
 def fake(rt):
     return Adapter(
-        argv=lambda lead, prompt, writable=(), client_dir=None: [sys.executable, str(HERE / "fake_lead.py"), lead["model"]] + ([prompt] if prompt else []),
+        argv=lambda lead, prompt, writable=(), client_dir=None: (
+            ["/nonexistent/bw-fake-missing-binary"] if rt == missing_rt else
+            [sys.executable, str(HERE / "fake_lead.py"), lead["model"]] + ([prompt] if prompt else [])),
         contained_by="bw" if rt == bw_rt else "self",
         grants=lambda lead, client_dir=None: RuntimeGrants([], [os.environ["FAKE_OUT"]] if rt == bw_rt else [], {}, False),
         prompt_mode="file" if "--prompt-file" in args else "arg",

@@ -1,8 +1,8 @@
 """containment.py — which lead runtimes have passed the containment attack, on which key.
 
 A pass is valid only for the exact verification key it was recorded against: the runtime's
-version, the sandbox backend and its version, and hashes of the profile generator and the
-runtime adapters. Any change re-requires `bw sandbox verify <runtime>`. Only that command
+version, the sandbox backend and its version, hashes of the profile generator and the
+runtime adapters, and the loopback ports every lead sandbox refuses (`cockpit.port` among them). Any change re-requires `bw sandbox verify <runtime>`. Only that command
 writes `state_dir/containment.json`; a contained lead cannot (its writes stop at its worktree).
 """
 import fcntl
@@ -14,7 +14,7 @@ import re
 import shutil
 import time
 
-from . import proc
+from . import proc, sandbox
 from .guard import guard_version
 from .paths import read_json, write_json_atomic
 
@@ -36,14 +36,16 @@ def _first_line(argv, run=proc.run):
     return ((r.out or r.err).strip().splitlines() or ["unknown"])[0]
 
 
-def verification_key(runtime, version_argv, backend, run=proc.run):
+def verification_key(runtime, version_argv, backend, run=proc.run, ports=None):
+    """`ports`: the denied ports (`sandbox.denied_ports(config)`); None means the defaults."""
     if backend == "nono" and shutil.which("nono"):
         backend_version = _first_line(["nono", "--version"], run)
     else:
         backend_version = "macos-" + (platform.mac_ver()[0] or "unknown")
     return {"runtime": runtime, "runtime_version": _first_line(version_argv, run), "backend": backend,
             "backend_version": backend_version, "sandbox_sha": _sha(os.path.join(HERE, "sandbox.py")),
-            "adapter_sha": _sha(os.path.join(HERE, "runtimes.py"))}
+            "adapter_sha": _sha(os.path.join(HERE, "runtimes.py")),
+            "denied_ports": sorted(sandbox.denied_ports() if ports is None else ports)}
 
 
 def _manifest(path, seen=()):
@@ -96,8 +98,8 @@ def _named_scripts(path):
     return out
 
 
-def guard_key(runtime, version_argv, backend, hook_files, run=proc.run):
-    key = verification_key(runtime, version_argv, backend, run)
+def guard_key(runtime, version_argv, backend, hook_files, run=proc.run, ports=None):
+    key = verification_key(runtime, version_argv, backend, run, ports)
     key["guard_version"] = guard_version()
     key["hook_files"] = {p: _manifest(p) for p in sorted(hook_files)}
     return key

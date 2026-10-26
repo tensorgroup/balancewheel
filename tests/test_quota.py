@@ -171,6 +171,22 @@ class Arbiter(unittest.TestCase):
         a = arb({"statusline": known(10, NOW - 60, name="five_hour"), "orca": orca}, plan_cfg("statusline", "claude"))
         self.assertEqual(a["pools"], [])
 
+    def test_pools_kept_when_an_account_window_has_reset(self):
+        # the session window reset 10 s ago (the windows are past their reset), the observation is
+        # 1 min old and the weekly pool resets in an hour: the pool still stands
+        orca = dict(known(80, NOW - 60, resets_in=-10), pools=[pool(100, ["alpha"])])
+        a = arb({"statusline": known(10, NOW - 60, name="five_hour"), "orca": orca}, plan_cfg("statusline", "claude"))
+        self.assertEqual(a["pools"], [pool(100, ["alpha"])])
+        a = arb({"orca": orca}, plan_cfg("orca", "codex"))
+        self.assertTrue(a["unknown"])  # the windows themselves are not a reading any more
+        self.assertEqual(a["pools"], [pool(100, ["alpha"])])
+
+    def test_each_pool_judged_against_its_own_reset(self):
+        orca = dict(known(50, NOW - 60), pools=[pool(100, ["alpha"], resets_in=-5, name="old"),
+                                                pool(100, ["beta"], name="current")])
+        a = arb({"orca": orca}, plan_cfg("orca", "codex"))
+        self.assertEqual([p["name"] for p in a["pools"]], ["current"])
+
     def test_observed_in_the_future_is_unknown(self):
         a = arb({"orca": known(10, NOW + 10 * M)}, plan_cfg("orca", "codex"))
         self.assertTrue(a["unknown"])

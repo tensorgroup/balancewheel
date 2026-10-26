@@ -91,10 +91,11 @@ def _earliest_reset(caps, plans, now):
     return min(times) if times else None
 
 
-def plans_touched(config, profile):
-    """Lead plans in the profile's lead_order, then plans of seats in its checkpoints."""
+def plans_touched(config, profile, pinned=None):
+    """Lead plans in the profile's lead_order and of the pinned lead (which may sit outside the
+    order), then plans of seats in its checkpoints."""
     out = []
-    for name in profile.get("lead_order", []):
+    for name in list(profile.get("lead_order", [])) + ([pinned] if pinned else []):
         p = config["leads"].get(name, {}).get("plan")
         if p and p not in out:
             out.append(p)

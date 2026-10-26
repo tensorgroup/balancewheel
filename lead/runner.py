@@ -11,15 +11,16 @@ crashed bw cannot let a second writable lead into the same worktree.
 
 Inbox (lead/inbox.py): the lead publishes asks as files in BW_ASKS and reads answers from BW_INBOX,
 a bw-owned file it cannot write. bw ingests asks at session start, about once a second while the
-lead runs, and once more after the lead's group is gone (before a switch's handoff), always under
-the session that published them. Notices (all leads capped, a pinned lead capped, the guard
+lead runs, and once more after the lead's group is gone (before a switch's handoff), under the
+session that published them — except asks left over from an earlier session that never got
+drained (bw crashed), which the session-start scan records under the new session. Notices (all leads capped, a pinned lead capped, the guard
 unreachable, an ingest problem) go to the same inbox.
 
 Runtime lock (lead/locks.py): a shared flock on the lead's runtime, taken before that runtime's
 verification is checked and passed to the lead the same way, so no update of the runtime lands
 between the check and the launch it allows, or under the running lead. Released only once the
-lead's group is gone. At the start bw waits for an update to finish; a mid-session switch takes it
-without blocking and, while an update holds it, stays on the current lead until a later poll.
+lead's group is gone. At the start bw waits for an update to finish; a mid-session switch tries for
+about a second and, while an update holds it, stays on the current lead until a later poll.
 """
 import fcntl
 import json
@@ -48,8 +49,9 @@ from .runtimes import ADAPTERS
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "metrics"))
 import store  # noqa: E402
 
-REFUSED, LOCKED, UNVERIFIED, NO_LEADS, ALL_CAPPED, GUARD_UNAVAILABLE = 2, 3, 4, 5, 6, 7
+REFUSED, LOCKED, UNVERIFIED, NO_LEADS, ALL_CAPPED, GUARD_UNAVAILABLE, START_FAILED = 2, 3, 4, 5, 6, 7, 8
 INGEST_EVERY_S = 1.0
+TRY_LOCK_ATTEMPTS, TRY_LOCK_PAUSE_S = 5, 0.25  # a mid-session runtime-lock take: ~1 s before "held"
 V0_SCOPE = ("v0: automatic switching for leads that report usage through the Claude Code statusline; "
             "for other leads record a cap with `bw cap <plan>`")
 
@@ -150,7 +152,7 @@ class Session:
             inboxmod.write_view(ctx.state, ctx.project.worktree_key)
         except OSError as e:
             ctx.say(f"bw: the inbox answers file could not be written ({type(e).__name__})")
-        self.drain(ctx)  # asks left by an earlier session that never got drained
+        self.drain(ctx)  # asks left by an earlier session that never got drained: recorded under this one
         try:
             client_dir = self._guard_start(ctx) if _guarded(self.lead) else None
             self._launch(ctx, lead_name, handoff, cp_dir, client_dir)
@@ -258,7 +260,8 @@ class Session:
         if err:
             raise GuardUnavailable(f"{err}; refusing to start {self.lead_name}")
         self.broker.pause()
-        key = containment.guard_key(rt, self.adapter.version_argv, ctx.backend, self.adapter.guard_hook_files())
+        key = containment.guard_key(rt, self.adapter.version_argv, ctx.backend, self.adapter.guard_hook_files(),
+                                    ports=sandbox.denied_ports(ctx.config))
         if not containment.is_verified(ctx.state, rt, key, store="guard-verify.json"):
             ctx.say(f"bw: the {rt} guard is not verified on this version; run `bw guard verify {rt}`")
         if rt == "agy":
@@ -270,13 +273,16 @@ class Session:
 
     def _abort(self, ctx):
         """A failure while starting: once the lead exists it must stop too (the broker going away
-        under a running lead would leave it unguarded); before the fork only the broker needs to."""
+        under a running lead would leave it unguarded); before the fork only the broker needs to,
+        and the sandbox profile and scratch dir a failed launch left behind."""
         try:
             if self.proc is not None:
                 try:
                     self.stop(5)
                 finally:
                     ctx.take_terminal()
+            elif getattr(self, "cleanup", None) is not None:
+                self.cleanup()
         finally:
             if self.broker is not None:
                 self.broker.stop()
@@ -292,7 +298,8 @@ class Session:
                 self.marker_notice_sent = True
 
     def drain(self, ctx):
-        """Ingest the asks this lead published, under this session's identity. Never raises."""
+        """Ingest every ask in the worktree's asks dir under this session's identity — this lead's,
+        and at session start any an earlier session left undrained. Never raises."""
         key = ctx.project.worktree_key
         try:
             recs, problem = inboxmod.ingest(ctx.state, key, ctx.project.worktree, self.lead_name, self.id)
@@ -373,10 +380,15 @@ class Context:
         return lk
 
     def try_runtime_lock(self, lead_name):
-        """The shared lock without blocking (the poll loop must keep running); None while held."""
+        """The shared lock without blocking for long (the poll loop must keep running); None while
+        held. A few tries over about a second: the registry takes the lock exclusively for an
+        instant to see whether a runtime is in use, and that must not cost a whole poll."""
         lk = RuntimeLock(self.state, self.config["leads"][lead_name]["runtime"])
-        if lk.try_shared():
-            return lk
+        for attempt in range(TRY_LOCK_ATTEMPTS):
+            if lk.try_shared():
+                return lk
+            if attempt + 1 < TRY_LOCK_ATTEMPTS:
+                time.sleep(TRY_LOCK_PAUSE_S)
         lk.release()
         return None
 
@@ -507,7 +519,8 @@ def _verified(ctx, lead_name):
     ad = ctx.adapters[lead["runtime"]]
     if ad.contained_by != "bw":
         return True
-    key = containment.verification_key(lead["runtime"], ad.version_argv, ctx.backend)
+    key = containment.verification_key(lead["runtime"], ad.version_argv, ctx.backend,
+                                       ports=sandbox.denied_ports(ctx.config))
     return containment.is_verified(ctx.state, lead["runtime"], key)
 
 
@@ -587,7 +600,8 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
     def refresh():
         # network probes and one Orca read: before the first decision and at the boundary only
         try:
-            res = probes.refresh(config, state, time.time(), plans=rotation.plans_touched(config, profile), run=run)
+            res = probes.refresh(config, state, time.time(),
+                                 plans=rotation.plans_touched(config, profile, pinned), run=run)
         except Exception as e:
             ctx.say(f"bw: quota refresh failed ({type(e).__name__}); deciding on what is on disk")
             return
@@ -633,6 +647,11 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
             ctx.say(f"bw: {e}")
             lock.write({})
             return GUARD_UNAVAILABLE
+        except Exception as e:  # e.g. the runtime's binary is gone: no lead runs; say so once and end
+            ctx.release_runtime_lock()
+            ctx.say(f"bw: {current} could not start ({type(e).__name__}: {safe(e)}); no lead is running")
+            lock.write({})
+            return START_FAILED
         ctx.say(f"bw: {current} ({session.lead['runtime']}) leading {project.worktree} — {d.reason}")
         if override:
             ctx.log({"type": "lead", "project": project.worktree_key, "from": _spec(config, unpinned.lead),
@@ -714,6 +733,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                 session.finish_guard(ctx)
                 ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
                          "session_id": session.id, "reason": "switch"})
+                lock.write({})  # logged; a failure before the next session's metadata must not log it again as lost
                 ctx.log({"type": "lead", "project": project.worktree_key, "from": _spec(config, current),
                          "to": _spec(config, d.lead), "reason": d.reason, "quota": _logged_quota(q)})
                 if pinned and d.lead != pinned:

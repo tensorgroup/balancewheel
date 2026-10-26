@@ -2,7 +2,9 @@
 
 Each command computes the runtime's verification key, runs its attack script, and recomputes the
 key: a pass is recorded only when the two keys are identical, so a tool that updated while the
-attack ran never gets a pass for a version nobody attacked. Every shell-out goes through `run`
+attack ran never gets a pass for a version nobody attacked. Key → attack → key → record runs under
+a shared lock on the runtime (`lead.locks`), so no update of any tool mapped to it lands meanwhile
+(an updater finds it held and skips); `reverify` holds it from its first key read. Every shell-out goes through `run`
 (default `lead.proc.run`). Each returns (ok, message); the message is the script's output, then
 one `bw:` line saying what was recorded or why not.
 
@@ -17,6 +19,7 @@ from collections import namedtuple
 from . import containment, guard as guardpkg, proc, quota, sandbox
 from .runner import _guarded
 from .guard import verify as guard_judge
+from .locks import RuntimeLock
 from .paths import ROOT
 from .runtimes import ADAPTERS
 
@@ -45,7 +48,16 @@ def _lead(config, runtime, lead_name):
                 None)
 
 
-def _attack(run, argv, key_fn, record, failure_message, what, runtime, which):
+def _attack(state, run, argv, key_fn, record, failure_message, what, runtime, which):
+    lock = RuntimeLock(state, runtime)
+    try:
+        lock.shared()  # waits for an update in progress; holds off any other until the record
+        return _attack_locked(run, argv, key_fn, record, failure_message, what, runtime, which)
+    finally:
+        lock.release()
+
+
+def _attack_locked(run, argv, key_fn, record, failure_message, what, runtime, which):
     before = key_fn()
     r = run(argv, ATTACK_TIMEOUT)
     out = r.out.strip()
@@ -68,9 +80,12 @@ def sandbox_verify(config, state, runtime, lead_name=None, run=proc.run):
     if not lead:
         return False, f"bw: no lead in the config uses runtime {runtime}"
     which = sandbox.backend()
+    ports = sandbox.denied_ports(config)
     script = os.path.join(ROOT, "tests", "attack", "lead_containment.sh")
-    argv = [script, "--backend", which, *ad.verify_flags(lead), "--", *ad.verify_argv(lead)]
-    return _attack(run, argv, lambda: containment.verification_key(runtime, ad.version_argv, which, run=run),
+    deny = [a for p in ports for a in ("--deny-port", str(p))]
+    argv = [script, "--backend", which, *deny, *ad.verify_flags(lead), "--", *ad.verify_argv(lead)]
+    return _attack(state, run, argv, lambda: containment.verification_key(runtime, ad.version_argv, which, run=run,
+                                                                         ports=ports),
                    lambda key, ev: containment.record_pass(state, runtime, key, ev),
                    sandbox_failure_message, "containment", runtime, which)
 
@@ -86,7 +101,9 @@ def guard_verify(config, state, runtime, lead_name=None, run=proc.run):
         return False, f"bw: no lead in the config uses runtime {runtime}"
     which = sandbox.backend()
     argv = guard_judge.script_argv(ROOT, runtime, lead, which, "{client}")
-    return _attack(run, argv, lambda: containment.guard_key(runtime, ad.version_argv, which, ad.guard_hook_files(), run=run),
+    ports = sandbox.denied_ports(config)
+    return _attack(state, run, argv, lambda: containment.guard_key(runtime, ad.version_argv, which, ad.guard_hook_files(),
+                                                                  run=run, ports=ports),
                    lambda key, ev: containment.record_pass(state, runtime, key, ev, store="guard-verify.json"),
                    guard_judge.failure_message, "guard", runtime, which)
 
@@ -143,15 +160,28 @@ def _pending_reason(config, state, runtime, kind, lead_name, now, allow_run, ver
 
 
 def reverify(config, state, runtime, now, run=proc.run, allow_run=True, version_ok=True) -> list:
+    if not items_for_runtime(config, runtime):
+        return []
+    lock = RuntimeLock(state, runtime)
+    try:
+        lock.shared()  # the key read here is the key attacked and recorded (the attack's own is nested)
+        return _reverify(config, state, runtime, now, run, allow_run, version_ok)
+    finally:
+        lock.release()
+
+
+def _reverify(config, state, runtime, now, run, allow_run, version_ok):
     ad = ADAPTERS.get(runtime)
     items = []
     for kind, lead_name in items_for_runtime(config, runtime):
         which = sandbox.backend()
         if kind == "containment":
-            key, store, attack = containment.verification_key(runtime, ad.version_argv, which, run=run), \
+            key, store, attack = containment.verification_key(runtime, ad.version_argv, which, run=run,
+                                                              ports=sandbox.denied_ports(config)), \
                 "containment.json", sandbox_verify
         else:
-            key, store, attack = containment.guard_key(runtime, ad.version_argv, which, ad.guard_hook_files(), run=run), \
+            key, store, attack = containment.guard_key(runtime, ad.version_argv, which, ad.guard_hook_files(), run=run,
+                                                       ports=sandbox.denied_ports(config)), \
                 "guard-verify.json", guard_verify
         if containment.is_verified(state, runtime, key, store=store):
             items.append(Item(runtime, kind, "verified", "key matches the recorded pass"))

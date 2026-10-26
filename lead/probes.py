@@ -131,10 +131,16 @@ def _baseline_path(state, plan, now):
     return os.path.join(state, "probes", f"openrouter-{plan}-{time.strftime('%Y-%m', time.gmtime(now))}.json")
 
 
+def _last_path(state, plan):
+    return os.path.join(state, "probes", f"openrouter-{plan}-last.json")
+
+
 def probe_openrouter(plan_cfg, state, now, fetch=_fetch, env=os.environ, plan=None):
-    """The plan's spend from OpenRouter's key endpoint, or unknown with a reason. The month's
-    first reading of `usage` is kept as a baseline in state_dir/probes/ (used only when the
-    response has no `usage_monthly`)."""
+    """The plan's spend from OpenRouter's key endpoint, or unknown with a reason. Each month gets a
+    baseline in state_dir/probes/ (used only when the response has no `usage_monthly`): the last
+    reading taken before the month began, carried forward — which counts the old month's last
+    hours as this month's spend (overstated, never under) — else the month's first reading, which
+    leaves the month's spend unknown. Every reading is kept as the plan's last one."""
     name = plan_cfg.get("key_env") or "OPENROUTER_API_KEY"
     key = env.get(name)
     if not key:
@@ -156,8 +162,15 @@ def probe_openrouter(plan_cfg, state, now, fetch=_fetch, env=os.environ, plan=No
         data = doc.get("data") if isinstance(doc, dict) else None
         usage = data.get("usage") if isinstance(data, dict) else None
         if not isinstance(baseline, dict) and _finite(usage):
-            baseline = {"usage": float(usage), "at": now}
+            last = read_json(_last_path(state, plan))
+            if (isinstance(last, dict) and _finite(last.get("usage")) and _finite(last.get("at"))
+                    and last["at"] <= _month_start(now) and last["usage"] <= usage):
+                baseline = {"usage": float(last["usage"]), "at": last["at"]}
+            else:
+                baseline = {"usage": float(usage), "at": now}
             write_json_atomic(path, baseline)
+        if _finite(usage):
+            write_json_atomic(_last_path(state, plan), {"usage": float(usage), "at": now})
     return parse_openrouter_key(doc, plan_cfg.get("budget_usd_month"), baseline, now)
 
 

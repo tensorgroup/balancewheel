@@ -55,7 +55,7 @@ def _lock_state(state, runtime):
         lock.release()
 
 
-def _runtime_verification(state, runtime, leads, run) -> str:
+def _runtime_verification(state, runtime, leads, run, ports=None) -> str:
     """verified | pending | none for one runtime: the containment key and each guard key its leads need."""
     ad = ADAPTERS.get(runtime)
     if ad is None:
@@ -64,10 +64,10 @@ def _runtime_verification(state, runtime, leads, run) -> str:
     states = []
     try:
         if ad.contained_by == "bw":
-            key = containment.verification_key(runtime, ad.version_argv, which, run=run)
+            key = containment.verification_key(runtime, ad.version_argv, which, run=run, ports=ports)
             states.append(containment.is_verified(state, runtime, key))
         if ad.guard_argv is not None and any(_guarded(l) for l in leads):
-            key = containment.guard_key(runtime, ad.version_argv, which, ad.guard_hook_files(), run=run)
+            key = containment.guard_key(runtime, ad.version_argv, which, ad.guard_hook_files(), run=run, ports=ports)
             states.append(containment.is_verified(state, runtime, key, store="guard-verify.json"))
     except Exception:  # an unreadable key is not a verification
         return "pending"
@@ -162,7 +162,8 @@ def build(config, state, now, run=proc.run) -> dict:
     by_runtime = {}
     for l in leads_cfg.values():
         by_runtime.setdefault(l.get("runtime"), []).append(l)
-    verification = {rt: _runtime_verification(state, rt, ls, run) for rt, ls in by_runtime.items()}
+    ports = sandbox.denied_ports(config)
+    verification = {rt: _runtime_verification(state, rt, ls, run, ports) for rt, ls in by_runtime.items()}
 
     def plan_capped(plan):
         return plan in caps

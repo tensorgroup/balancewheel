@@ -250,3 +250,92 @@ class Reverify(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuntimeLockHeldAcrossTheAttack(unittest.TestCase):
+    """Two tools map to runtime pi: an update of the second one, tried while pi's attack runs,
+    must be refused by the runtime lock, so the key attacked is the key recorded."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = os.path.realpath(self.tmp.name)
+        p = mock.patch.object(sandbox, "backend", return_value="sandbox-exec")
+        p.start(); self.addCleanup(p.stop)
+        self.config = {"leads": {"lp": {"runtime": "pi", "model": "m", "plan": "p"}},
+                       "tools": {"pi": {"update": ["brew", "upgrade", "pi"]},
+                                 "pi-ext": {"update": ["npm", "i", "-g", "pi-ext"], "runtime": "pi"}}}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_fake(self):
+        from lead import updates
+        state, results = self.state, []
+
+        class Racing(FakeRun):
+            def __call__(self, argv, timeout, cwd=None, env=None, **kw):
+                if argv[0].endswith(".sh"):
+                    res, _ = updates._update_one("pi-ext", {"update": ["npm", "i", "-g", "pi-ext"], "runtime": "pi"},
+                                                 state, time.time(), 0, {}, self)
+                    results.append(res.result)
+                return super().__call__(argv, timeout, cwd=cwd, env=env, **kw)
+        return Racing("PASS — evidence in /e"), results
+
+    def test_sandbox_verify_holds_the_runtime_lock(self):
+        run, results = self.run_fake()
+        ok, msg = verify.sandbox_verify(self.config, self.state, "pi", run=run)
+        self.assertTrue(ok, msg)
+        self.assertEqual(results, ["skipped-locked"])
+
+    def test_guard_verify_holds_the_runtime_lock(self):
+        run, results = self.run_fake()
+        ok, msg = verify.guard_verify(self.config, self.state, "pi", run=run)
+        self.assertTrue(ok, msg)
+        self.assertEqual(results, ["skipped-locked"])
+
+    def test_reverify_holds_the_runtime_lock(self):
+        run, results = self.run_fake()
+        items = verify.reverify(self.config, self.state, "pi", time.time(), run=run)
+        self.assertEqual([i.state for i in items], ["passed"])
+        self.assertEqual(results, ["skipped-locked"])
+
+    def test_the_lock_is_released_afterwards(self):
+        from lead.locks import RuntimeLock
+        run, _ = self.run_fake()
+        verify.sandbox_verify(self.config, self.state, "pi", run=run)
+        lk = RuntimeLock(self.state, "pi")
+        try:
+            self.assertTrue(lk.try_exclusive())
+        finally:
+            lk.release()
+
+
+class DeniedPortsInTheKeyAndTheAttack(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = os.path.realpath(self.tmp.name)
+        p = mock.patch.object(sandbox, "backend", return_value="sandbox-exec")
+        p.start(); self.addCleanup(p.stop)
+        self.config = {"leads": {"lp": {"runtime": "pi", "model": "m", "plan": "p"}}, "cockpit": {"port": 9100}}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_attack_is_told_every_denied_port(self):
+        run = FakeRun("PASS — evidence in /e")
+        ok, msg = verify.sandbox_verify(self.config, self.state, "pi", run=run)
+        self.assertTrue(ok, msg)
+        (argv,) = [c[0] for c in run.calls if c[0][0].endswith(".sh")]
+        flags = argv[:argv.index("--")]
+        ports = [int(flags[i + 1]) for i, f in enumerate(flags) if f == "--deny-port"]
+        self.assertEqual(ports, [6768, 8765, 9100, 15721])
+
+    def test_changing_the_cockpit_port_requires_a_new_verification(self):
+        run = FakeRun("PASS — evidence in /e")
+        self.assertEqual([i.state for i in verify.reverify(self.config, self.state, "pi", time.time(), run=run)],
+                         ["passed"])
+        self.assertEqual([i.state for i in verify.reverify(self.config, self.state, "pi", time.time(), run=run)],
+                         ["verified"])
+        self.config["cockpit"]["port"] = 9200
+        self.assertEqual([i.state for i in verify.reverify(self.config, self.state, "pi", time.time(), run=run)],
+                         ["passed"])  # the old pass was for other ports: attacked again

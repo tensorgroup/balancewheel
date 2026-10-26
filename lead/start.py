@@ -38,15 +38,21 @@ ORCA_CREATE_TIMEOUT_S = 30
 OPEN_TIMEOUT_S = 30
 
 
+def _passed(env):
+    """(name, absolute path) for each PASSED_ENV set here: the lead's shell starts in the target
+    worktree, where a relative path would name something else."""
+    return [(k, os.path.abspath(os.path.expanduser(env[k]))) for k in PASSED_ENV if env.get(k)]
+
+
 def _lead_command(bw, env):
-    assignments = [f"{k}={env[k]}" for k in PASSED_ENV if env.get(k)]
+    assignments = [f"{k}={v}" for k, v in _passed(env)]
     return shlex.join(["env", *assignments, bw, "lead"])
 
 
 def _command_file(state, project, bw, env):
     path = os.path.join(state, "start", f"{project.worktree_key}.command")
     lines = ["#!/bin/sh"]
-    lines += [f"export {k}={shlex.quote(env[k])}" for k in PASSED_ENV if env.get(k)]
+    lines += [f"export {k}={shlex.quote(v)}" for k, v in _passed(env)]
     lines += [f"cd {shlex.quote(project.worktree)} || exit 1", f"exec {shlex.quote(bw)} lead"]
     return path, "\n".join(lines) + "\n"
 
@@ -94,8 +100,12 @@ def _item_line(item):
 
 
 def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=False, verify=True, update=True,
-          bw_path=None, env=os.environ, fetch=probes._fetch) -> int:
-    now = time.time() if now is None else now
+          bw_path=None, env=os.environ, fetch=probes._fetch, clock=None) -> int:
+    """`clock` (default time.time; a fixed `now` freezes it) is read at the start, again before
+    quota (step 4, after updates and attacks that can take minutes), and again before the registry."""
+    if clock is None:
+        clock = time.time if now is None else (lambda: now)
+    now = clock()
     print_lock = threading.Lock()
 
     def say(msg):
@@ -117,7 +127,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     runtimes = verifymod.lead_runtimes(config)
     rt_tool = runtime_tools(config)
     tools = config.get("tools") or {}
-    plans = rotation.plans_touched(config, profile)
+    plans = rotation.plans_touched(config, profile, runner.read_pin(state, project.worktree_key))
     if dry_run:
         return _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify,
                         bw, env, say)
@@ -165,7 +175,8 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
                 submit(rt, True)
     verify_items = [i for rt in runtimes for i in items_by_rt.get(rt, [])]
 
-    # 4. quota (probes, one Orca read; expired caps cleared) and the lead
+    # 4. quota (probes, one Orca read; expired caps cleared) and the lead, on a fresh clock
+    started, now = now, clock()
     orca_entry = results.get("orca")
     orca_version = (orca_entry.get("after") if isinstance(orca_entry, dict) else None) or orca.app_version()
     try:
@@ -177,12 +188,12 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
         say(line)
     _quota_and_lead(config, state, project, profile, plans, now, say)
     write_json_atomic(os.path.join(state, "start.json"),
-                      {"ts": now, "project": project.worktree, "tools": results,
+                      {"ts": started, "project": project.worktree, "tools": results,
                        "verify": [i._asdict() for i in verify_items], "orca_version": orca_version})
 
     # 5. the registry (derived; after start.json, which holds the versions it shows)
     try:
-        registry.write(state, registry.build(config, state, now, run=run))
+        registry.write(state, registry.build(config, state, clock(), run=run))
         say(f"registry: {registry.path(state)}")
     except Exception as e:  # a derived file; never the start's end, and never the exception's text
         say(f"registry not written ({type(e).__name__})")

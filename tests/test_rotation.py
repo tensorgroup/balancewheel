@@ -122,6 +122,18 @@ def pooled(plan, *pools):
 SHARED = {"a": {"plan": "pa"}, "b": {"plan": "pa"}, "c": {"plan": "pc"}}
 
 
+class PlansTouched(unittest.TestCase):
+    def test_a_pinned_lead_outside_the_order_adds_its_plan(self):
+        from lead.rotation import plans_touched
+        config = {"leads": {"a": {"plan": "pa"}, "b": {"plan": "pb"}, "c": {"plan": "pc"}},
+                  "seats": {"s": {"plan": "ps"}}}
+        profile = {"lead_order": ["a", "b"], "checkpoints": {"review": {"seats": ["s"]}}}
+        self.assertEqual(plans_touched(config, profile), ["pa", "pb", "ps"])
+        self.assertEqual(plans_touched(config, profile, pinned="c"), ["pa", "pb", "pc", "ps"])
+        self.assertEqual(plans_touched(config, profile, pinned="a"), ["pa", "pb", "ps"])
+        self.assertEqual(plans_touched(config, profile, pinned="gone"), ["pa", "pb", "ps"])
+
+
 class Pools(unittest.TestCase):
     def test_full_pool_blocks_only_named_lead_at_start(self):
         d = decide(PROFILE, SHARED, ROT, None, None, pooled("pa", full_pool(["a"])), {}, NOW, "start")

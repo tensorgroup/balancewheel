@@ -888,3 +888,84 @@ class PromptFile(RunnerCase):
         self.assertEqual(p.returncode, 0, out)
         self.assertEqual(canary.read_text(), "untouched")
         self.assertFalse(os.path.islink(d / "first-prompt.md"))
+
+
+class PinnedPlanRefresh(RunnerCase):
+    def config(self, root):
+        cfg = super().config(root)
+        cfg["plans"]["pc"] = {"billing": "plan", "quota": "probe"}
+        cfg["leads"]["lc"] = {"runtime": "codex", "model": "c", "plan": "pc"}  # not in the lead order
+        return cfg
+
+    def test_a_pinned_lead_outside_the_order_gets_its_plan_refreshed(self):
+        p = self.start("--use", "lc", "--count-refresh", env={"FAKE_MODE_c": "exit"})
+        out = p.communicate(timeout=15)[0]
+        self.assertEqual(p.returncode, 0, out)
+        self.assertIsNotNone(self.fake("c"), out)
+        plans = [json.loads(l)["plans"] for l in (self.out / "refresh-calls.jsonl").read_text().splitlines()]
+        self.assertEqual(plans, [["pa", "pb", "pc"]] * 2)
+
+
+class StartFailure(RunnerCase):
+    def lock_file(self):
+        import hashlib
+        key = hashlib.sha1(os.path.realpath(str(self.repo)).encode()).hexdigest()[:12]
+        return self.state / "locks" / f"{key}.lock"
+
+    def test_a_switch_to_a_lead_whose_binary_is_missing_ends_cleanly(self):
+        p = self.start("--missing-binary", "pi", env={"FAKE_MODE_a": "sleep"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        out = p.communicate(timeout=20)[0]
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(p.returncode, 8, out)
+        self.assertEqual(out.count("bw: lb could not start (FileNotFoundError"), 1, out)
+        self.assertEqual(json.loads(self.lock_file().read_text()), {})  # no stale session to log as lost
+        self.assertEqual([s["end_reason"] for s in self.events("sessions")], ["switch"])
+
+    def test_a_first_lead_whose_binary_is_missing_ends_cleanly(self):
+        p = self.start("--missing-binary", "codex")
+        out = p.communicate(timeout=15)[0]
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(p.returncode, 8, out)
+        self.assertIn("bw: la could not start (FileNotFoundError", out)
+        self.assertEqual(json.loads(self.lock_file().read_text()), {})
+
+
+class TryRuntimeLock(unittest.TestCase):
+    """A brief exclusive take (the registry probing whether a runtime is in use) must not read as
+    "being updated" for a whole poll."""
+
+    def setUp(self):
+        from lead import runner
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = os.path.realpath(self.tmp.name)
+        cfg = {"leads": {"la": {"runtime": "codex"}}}
+        self.ctx = runner.Context(cfg, self.state, None, None, {}, "sandbox-exec", None)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hold(self, seconds):
+        from lead.locks import RuntimeLock
+        lk = RuntimeLock(self.state, "codex")
+        self.assertTrue(lk.try_exclusive())
+        t = threading.Timer(seconds, lk.release)
+        t.start()
+        return t
+
+    def test_a_brief_exclusive_take_is_waited_out(self):
+        t = self.hold(0.3)
+        got = self.ctx.try_runtime_lock("la")
+        t.join()
+        self.assertIsNotNone(got)
+        got.release()
+
+    def test_a_long_hold_still_reads_as_held_without_blocking_long(self):
+        t = self.hold(3)
+        t0 = time.monotonic()
+        got = self.ctx.try_runtime_lock("la")
+        elapsed = time.monotonic() - t0
+        t.join()
+        self.assertIsNone(got)
+        self.assertLess(elapsed, 2)

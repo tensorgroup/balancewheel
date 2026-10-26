@@ -184,6 +184,65 @@ class StartCase(unittest.TestCase):
         r = subprocess.run(["sh", "-c", lines[2].replace(" || exit 1", " && pwd -P")], capture_output=True, text=True)
         self.assertEqual(r.stdout.strip(), str(repo))
 
+    def test_relative_config_and_state_paths_are_forwarded_absolute(self):
+        # the lead's shell starts in the target worktree, not where bw start ran
+        env = {"BALANCEWHEEL_CONFIG": "conf/c.json", "BW_STATE_DIR": "st"}
+        cwd = os.getcwd()
+        for orca_state in ("running", None):
+            run = FakeRun(orca=orca_state, open_rc=1)
+            code, out = self.start(run, verify=False, update=False, env=env)
+            want = shlex.join(["env", f"BALANCEWHEEL_CONFIG={os.path.join(cwd, 'conf', 'c.json')}",
+                               f"BW_STATE_DIR={os.path.join(cwd, 'st')}", self.bw, "lead"])
+            if orca_state:
+                (create,) = self.ran(run, CREATE)
+                self.assertEqual(create[0][-1], want)
+            else:
+                self.assertIn(want, out)
+                with open(os.path.join(self.state, "start", f"{runner_key(self.repo)}.command")) as f:
+                    body = f.read()
+                self.assertIn("export BALANCEWHEEL_CONFIG=" + shlex.quote(os.path.join(cwd, "conf", "c.json")), body)
+                self.assertIn("export BW_STATE_DIR=" + shlex.quote(os.path.join(cwd, "st")), body)
+
+    def test_quota_and_registry_read_a_fresh_clock_after_updates_and_attacks(self):
+        ticks = iter([NOW, NOW + 600, NOW + 1200])  # start, before step 4, before step 5
+        seen = {}
+        real_refresh, real_ql, real_build = probes.refresh, start._quota_and_lead, start.registry.build
+
+        def refresh(config, state, now, **kw):
+            seen["refresh"] = now
+            return real_refresh(config, state, now, **kw)
+
+        def ql(config, state, project, profile, plans, now, say):
+            seen["decide"] = now
+            return real_ql(config, state, project, profile, plans, now, say)
+
+        def build(config, state, now, **kw):
+            seen["registry"] = now
+            return real_build(config, state, now, **kw)
+
+        with mock.patch.object(probes, "refresh", refresh), mock.patch.object(start, "_quota_and_lead", ql), \
+                mock.patch.object(start.registry, "build", build):
+            code, out = self.start(FakeRun(orca="running"), verify=False, update=False, now=None,
+                                   clock=lambda: next(ticks))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(seen, {"refresh": NOW + 600, "decide": NOW + 600, "registry": NOW + 1200})
+
+    def test_a_pinned_lead_outside_the_order_gets_its_plan_refreshed(self):
+        self.config["plans"]["px"] = {"billing": "plan", "quota": "probe"}
+        self.config["leads"]["lx"] = {"runtime": "codex", "model": "x", "plan": "px"}
+        runner.write_pin(self.state, runner_key(self.repo), "lx")
+        seen = []
+        real = probes.refresh
+
+        def refresh(config, state, now, plans=None, **kw):
+            seen.append(plans)
+            return real(config, state, now, plans=plans, **kw)
+        with mock.patch.object(probes, "refresh", refresh):
+            code, out = self.start(FakeRun(orca="running"), verify=False, update=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("px", seen[0])
+        self.assertIn("quota px:", out)
+
     def test_orca_create_failure_falls_back_to_terminal(self):
         run = FakeRun(orca="running", create_rc=1)
         code, out = self.start(run, verify=False, update=False)

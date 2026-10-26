@@ -444,8 +444,21 @@ class Containment(unittest.TestCase):
 
     def test_verification_key_fields(self):
         key = containment.verification_key("pi", [sys.executable, "--version"], "sandbox-exec")
-        self.assertEqual(set(key), {"runtime", "runtime_version", "backend", "backend_version", "sandbox_sha", "adapter_sha"})
+        self.assertEqual(set(key), {"runtime", "runtime_version", "backend", "backend_version", "sandbox_sha", "adapter_sha",
+                                    "denied_ports"})
         self.assertTrue(key["runtime_version"])
+        self.assertEqual(key["denied_ports"], sandbox.denied_ports())
+
+    def test_cockpit_port_is_part_of_the_containment_and_guard_keys(self):
+        argv = [sys.executable, "--version"]
+        base = containment.verification_key("pi", argv, "sandbox-exec", ports=sandbox.denied_ports({}))
+        moved = containment.verification_key("pi", argv, "sandbox-exec",
+                                             ports=sandbox.denied_ports({"cockpit": {"port": 9100}}))
+        self.assertEqual(moved["denied_ports"], [6768, 8765, 9100, 15721])
+        self.assertNotEqual(base, moved)
+        g1 = containment.guard_key("pi", argv, "sandbox-exec", [], ports=[1, 2])
+        g2 = containment.guard_key("pi", argv, "sandbox-exec", [], ports=[1, 3])
+        self.assertNotEqual(g1, g2)
 
 
 if __name__ == "__main__":
