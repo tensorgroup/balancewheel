@@ -23,7 +23,11 @@ not against the prose.
   (else 421), and GET (else 405, `Allow: GET`). Every response carries a per-response nonce CSP,
   `Referrer-Policy: no-referrer`, `nosniff` and `no-store`, and never an `Access-Control-*`
   header. A view that raises answers `{"available": false, "reason": "<exception name>"}`. A port
-  in use is a one-line error and exit 1. The page is a stub until the views land.
+  in use is a one-line error and exit 1, and so is a `--port` that lead sandboxes do not deny
+  (anything but 8765 or the configured `cockpit.port`): set `cockpit.port` and re-run
+  `bw sandbox verify` instead. Idle connections close after 10 s, the port is never bound with
+  address reuse, and a browser hanging up mid-response prints nothing. The page is a stub until
+  the views land.
 - **Config `cockpit.port`** (`metrics/config.py`): an integer from 1024 to 65535, default 8765;
   anything else is a config error. Unknown `cockpit.*` keys warn and are ignored, as under
   `tools.*`. The resolved config's `cockpit` is `{"port": N}`. Every lead sandbox already denies

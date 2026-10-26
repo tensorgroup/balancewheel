@@ -1,4 +1,5 @@
-import http.client, json, os, re, signal, socket, subprocess, sys, tempfile, threading, unittest
+import contextlib, errno, http.client, io, json, os, re, signal, socket, struct, subprocess, sys, tempfile, threading, time, unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -242,28 +243,34 @@ def free_port():
 class BwCockpit(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        root = self.tmp.name
-        c = {"schema_version": 2, "seats": {"s": {"runtime": "codex", "model": "m"}},
-             "state_dir": os.path.join(root, "state"), "metrics_log": os.path.join(root, "m.jsonl")}
-        path = os.path.join(root, "c.json")
-        with open(path, "w") as f:
-            json.dump(c, f)
-        self.env = dict(os.environ, BALANCEWHEEL_CONFIG=path, BW_STATE_DIR=os.path.join(root, "state"))
         self.bw = str(ROOT / "bin" / "bw")
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_serves_and_prints_url_with_no_open(self):
-        port = free_port()
-        p = subprocess.Popen([sys.executable, self.bw, "cockpit", "--port", str(port), "--no-open"], env=self.env,
+    def env(self, port=None):
+        root = self.tmp.name
+        c = {"schema_version": 2, "seats": {"s": {"runtime": "codex", "model": "m"}},
+             "state_dir": os.path.join(root, "state"), "metrics_log": os.path.join(root, "m.jsonl")}
+        if port is not None:
+            c["cockpit"] = {"port": port}
+        path = os.path.join(root, "c.json")
+        with open(path, "w") as f:
+            json.dump(c, f)
+        return dict(os.environ, BALANCEWHEEL_CONFIG=path, BW_STATE_DIR=os.path.join(root, "state"))
+
+    def serve(self, args, env):
+        port = int(args[args.index("--port") + 1]) if "--port" in args else None
+        p = subprocess.Popen([sys.executable, self.bw, "cockpit", "--no-open", *args], env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             line = p.stdout.readline()
-            m = re.search(rf"http://127\.0\.0\.1:{port}/\?t=([A-Za-z0-9_-]+)", line)
+            m = re.search(r"http://127\.0\.0\.1:(\d+)/\?t=([A-Za-z0-9_-]+)", line)
             self.assertTrue(m, line)
-            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-            c.request("GET", f"/?t={m.group(1)}")
+            if port is not None:
+                self.assertEqual(int(m.group(1)), port)
+            c = http.client.HTTPConnection("127.0.0.1", int(m.group(1)), timeout=5)
+            c.request("GET", f"/?t={m.group(2)}")
             self.assertEqual(c.getresponse().status, 303)
             c.close()
         finally:
@@ -271,6 +278,27 @@ class BwCockpit(unittest.TestCase):
             out, err = p.communicate(timeout=10)
         self.assertEqual(p.returncode, 0, err)
         self.assertNotIn("Traceback", err)
+        return int(m.group(1))
+
+    def test_serves_on_the_configured_port(self):
+        port = free_port()
+        self.assertEqual(self.serve([], self.env(port)), port)
+
+    def test_port_flag_matching_the_config_serves(self):
+        port = free_port()
+        self.serve(["--port", str(port)], self.env(port))
+
+    def test_port_not_denied_to_sandboxes_refused(self):
+        port = free_port()
+        self.assertNotIn(port, sandbox.denied_ports(load_obj({"schema_version": 2, "seats": {"s": {"runtime": "codex", "model": "m"}}})))
+        r = subprocess.run([sys.executable, self.bw, "cockpit", "--port", str(port), "--no-open"], env=self.env(),
+                           capture_output=True, text=True, timeout=10)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(len(r.stderr.strip().splitlines()), 1, r.stderr)
+        self.assertIn(f"port {port} is not denied to lead sandboxes", r.stderr)
+        self.assertIn("cockpit.port", r.stderr)
+        self.assertIn("bw sandbox verify", r.stderr)
+        self.assertEqual(r.stdout, "")  # no URL, no token: it never listened
 
     def test_port_in_use_one_line_exit_1(self):
         s = socket.socket()
@@ -278,7 +306,7 @@ class BwCockpit(unittest.TestCase):
         s.listen(1)
         port = s.getsockname()[1]
         try:
-            r = subprocess.run([sys.executable, self.bw, "cockpit", "--port", str(port), "--no-open"], env=self.env,
+            r = subprocess.run([sys.executable, self.bw, "cockpit", "--no-open"], env=self.env(port),
                                capture_output=True, text=True, timeout=10)
         finally:
             s.close()
@@ -287,9 +315,77 @@ class BwCockpit(unittest.TestCase):
         self.assertIn(f"port {port} is in use", r.stderr)
 
     def test_port_flag_out_of_range(self):
-        r = subprocess.run([sys.executable, self.bw, "cockpit", "--port", "80", "--no-open"], env=self.env,
+        r = subprocess.run([sys.executable, self.bw, "cockpit", "--port", "80", "--no-open"], env=self.env(),
                            capture_output=True, text=True, timeout=10)
         self.assertEqual(r.returncode, 2)
+
+
+class ServerHardening(unittest.TestCase):
+    def test_no_address_reuse_with_a_live_listener(self):
+        self.assertFalse(server._Server.allow_reuse_address)
+        for opt in ([], [socket.SO_REUSEADDR]):
+            s = socket.socket()
+            for o in opt:
+                s.setsockopt(socket.SOL_SOCKET, o, 1)
+            s.bind(("127.0.0.1", 0))
+            s.listen(1)
+            try:
+                with self.assertRaises(OSError) as e:
+                    server.make_server(s.getsockname()[1], {}, PAGE)
+                self.assertEqual(e.exception.errno, errno.EADDRINUSE)
+            finally:
+                s.close()
+
+    def start(self, views):
+        srv, token = server.make_server(0, views, PAGE)
+        t = threading.Thread(target=srv.serve_forever, args=(0.05,), daemon=True)
+        t.start()
+        self.addCleanup(lambda: (srv.shutdown(), srv.server_close(), t.join(5)))
+        return srv, token
+
+    def test_silent_client_is_closed(self):
+        with mock.patch.object(server._Handler, "timeout", 0.3):
+            srv, _ = self.start({})
+            s = socket.create_connection(("127.0.0.1", srv.server_address[1]), timeout=5)
+            try:
+                t0 = time.monotonic()
+                self.assertEqual(s.recv(4096), b"")  # closed by the server, nothing sent
+                self.assertLess(time.monotonic() - t0, 4)
+            finally:
+                s.close()
+        self.assertEqual(server._Handler.timeout, 10)
+
+    def test_disconnect_mid_response_is_quiet(self):
+        big = {"x": "a" * (8 * 1024 * 1024)}
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            srv, token = self.start({"/api/big": lambda: big})
+            port = srv.server_address[1]
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.request("GET", f"/?t={token}")
+            cookie = c.getresponse().getheader("Set-Cookie").split(";")[0]
+            c.close()
+            for _ in range(3):
+                s = socket.create_connection(("127.0.0.1", port), timeout=5)
+                s.sendall(f"GET /api/big HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nCookie: {cookie}\r\n\r\n".encode())
+                s.recv(1024)  # the response has started
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                s.close()  # RST mid-response
+            time.sleep(0.5)
+        self.assertNotIn("Traceback", err.getvalue())
+        self.assertEqual(err.getvalue(), "")
+
+    def test_other_errors_still_reported(self):
+        srv, _ = server.make_server(0, {}, PAGE)
+        self.addCleanup(srv.server_close)
+        for exc, loud in ((BrokenPipeError(), False), (ConnectionResetError(), False), (ValueError("x"), True)):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                try:
+                    raise exc
+                except Exception:
+                    srv.handle_error(None, ("127.0.0.1", 1))
+            self.assertEqual("Traceback" in err.getvalue(), loud, repr(exc))
 
 
 if __name__ == "__main__":

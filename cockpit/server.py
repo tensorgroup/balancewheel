@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import secrets
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -36,6 +37,7 @@ def load_page():
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 32
+    allow_reuse_address = False  # a port another listener holds is "in use", never a shared bind
 
     def __init__(self, port, views, page):
         self.views = dict(views)
@@ -53,10 +55,17 @@ class _Server(ThreadingHTTPServer):
             self.token_used = True
             return True
 
+    def handle_error(self, request, client_address):
+        """A browser that hangs up mid-response is routine; anything else keeps the default report."""
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            return
+        super().handle_error(request, client_address)
+
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "bw-cockpit"
     sys_version = ""
+    timeout = 10  # seconds; an idle or silent connection cannot pin a thread forever
     default_request_version = "HTTP/1.0"  # so a refusal of a malformed request still carries its headers
 
     def log_message(self, fmt, *args):  # no per-request noise on the user's terminal

@@ -34,7 +34,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from cockpit import server as cockpit_server  # noqa: E402
-from lead import ccswitch, inbox, probes, quota, registry, runner, start, status, verify  # noqa: E402
+from lead import ccswitch, inbox, probes, quota, registry, runner, sandbox, start, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.guard.review import safe  # noqa: E402
 from lead.paths import ConfigError, load_config, state_dir  # noqa: E402  (also puts metrics/ on sys.path)
@@ -108,6 +108,10 @@ def _port(s):
 
 def cmd_cockpit(a, config, state):
     port = a.port or config["cockpit"]["port"]
+    if port not in sandbox.denied_ports(config):  # cookies are not port-isolated: leads must not reach it
+        print(f"bw: cockpit: port {port} is not denied to lead sandboxes; set cockpit.port to {port} in the config, "
+              f"then re-run `bw sandbox verify` for the bw-contained leads", file=sys.stderr)
+        return 1
     views = {}  # the views arrive with the next build step
     try:
         srv, token = cockpit_server.make_server(port, views, cockpit_server.load_page())
