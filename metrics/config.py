@@ -15,7 +15,7 @@ EFFORT_LEVELS = {
     "pi": {"off", "minimal", "low", "medium", "high", "xhigh"},
     "kimi": {"low", "high", "max"},
 }
-SEAT_NAME = re.compile(r"^[a-z0-9-]+$")
+SEAT_NAME = re.compile(r"[a-z0-9-]+")  # used with fullmatch: a trailing newline is refused
 TOP_KEYS = {"_comment", "schema_version", "seats", "state_dir", "metrics_log", "commands_dir", "bin_dir", "watches"}
 V3_TOP_KEYS = {"guard"}
 V3_LEAD_KEYS = {"autonomy"}
@@ -93,7 +93,7 @@ def _expect(cond, msg):
 
 def _validate_seat(name, seat, version=1):
     kp = f"seats.{name}"
-    _expect(SEAT_NAME.match(name), f"{kp}: seat name must match [a-z0-9-]+")
+    _expect(isinstance(name, str) and SEAT_NAME.fullmatch(name), f"{kp}: seat name must match [a-z0-9-]+")
     _expect(isinstance(seat, dict), f"{kp}: must be an object")
     unknown = sorted(set(seat) - SEAT_KEYS - (V2_SEAT_KEYS if version >= 2 else set()))
     if unknown:  # not via _expect: an f-string would index an empty list eagerly
@@ -125,7 +125,7 @@ def _validate_seat(name, seat, version=1):
 
 
 def _name_ok(kp, name):
-    _expect(isinstance(name, str) and SEAT_NAME.match(name), f"{kp}: name must match [a-z0-9-]+")
+    _expect(isinstance(name, str) and SEAT_NAME.fullmatch(name), f"{kp}: name must match [a-z0-9-]+")
 
 
 def _validate_plans(obj):

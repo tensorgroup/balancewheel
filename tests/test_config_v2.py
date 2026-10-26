@@ -140,6 +140,14 @@ class SchemaV2(unittest.TestCase):
         self.assertEqual(c["warnings"], [])
         self.assertTrue(c["tools"])
 
+    def test_names_with_a_trailing_newline_rejected(self):
+        for section, existing, needle in (("plans", "plan-a", "name must match"), ("leads", "lead-a", "name must match"),
+                                          ("profiles", "careful", "name must match"),
+                                          ("seats", "alpha", "seat name must match")):
+            o = v2()
+            o[section]["extra\n"] = copy.deepcopy(o[section][existing])
+            self.rejects(o, needle)
+
     def test_v2_keys_rejected_in_v1_file(self):
         o = json.loads(V1.read_text()); o["leads"] = {}
         self.rejects(o, "leads")
