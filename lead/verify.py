@@ -5,10 +5,17 @@ key: a pass is recorded only when the two keys are identical, so a tool that upd
 attack ran never gets a pass for a version nobody attacked. Every shell-out goes through `run`
 (default `lead.proc.run`). Each returns (ok, message); the message is the script's output, then
 one `bw:` line saying what was recorded or why not.
+
+`reverify` re-checks one runtime's keys after an update phase (or at once with `--no-update`):
+an item whose key still matches is `verified`; one that cannot be tested now is `pending` with
+its reason; anything else runs the attack and is `passed` or `failed`.
 """
 import os
+import time
+from collections import namedtuple
 
-from . import containment, guard as guardpkg, proc, sandbox
+from . import containment, guard as guardpkg, proc, quota, sandbox
+from .runner import _guarded
 from .guard import verify as guard_judge
 from .paths import ROOT
 from .runtimes import ADAPTERS
@@ -82,3 +89,77 @@ def guard_verify(config, state, runtime, lead_name=None, run=proc.run):
     return _attack(run, argv, lambda: containment.guard_key(runtime, ad.version_argv, which, ad.guard_hook_files(), run=run),
                    lambda key, ev: containment.record_pass(state, runtime, key, ev, store="guard-verify.json"),
                    guard_judge.failure_message, "guard", runtime, which)
+
+
+Item = namedtuple("Item", "runtime kind state reason")  # kind: containment | guard
+ITEM_STATES = ("verified", "passed", "failed", "pending")
+
+
+def _preferred_leads(config):
+    """Lead names, those in any profile's lead_order first (in that order), then the rest."""
+    order = []
+    for profile in (config.get("profiles") or {}).values():
+        for name in profile.get("lead_order", []):
+            if name in config["leads"] and name not in order:
+                order.append(name)
+    return order + [n for n in config["leads"] if n not in order]
+
+
+def lead_runtimes(config) -> list:
+    out = []
+    for lead in config["leads"].values():
+        if lead["runtime"] not in out:
+            out.append(lead["runtime"])
+    return out
+
+
+def items_for_runtime(config, runtime) -> list:
+    """(kind, lead_name) for each key this runtime has to keep verified."""
+    ad = ADAPTERS.get(runtime)
+    names = [n for n in _preferred_leads(config) if config["leads"][n]["runtime"] == runtime]
+    if ad is None or not names:
+        return []
+    out = []
+    if ad.contained_by == "bw":
+        out.append(("containment", names[0]))
+    guarded = [n for n in names if _guarded(config["leads"][n])]
+    if guarded and ad.guard_argv is not None:
+        out.append(("guard", guarded[0]))
+    return out
+
+
+def _pending_reason(config, state, runtime, kind, lead_name, now, allow_run, version_ok):
+    if not allow_run:
+        return "--no-verify"
+    if not version_ok:
+        return "version unreadable"
+    plan = config["leads"][lead_name].get("plan")
+    cap = quota.read_caps(state, now).get(plan) if plan else None
+    if cap:
+        return f"plan {plan} capped until {time.ctime(cap['resets_at'])}"
+    if kind == "guard" and runtime == "agy" and not guardpkg.AGY_SPIKE_PASSED:
+        return guardpkg.AGY_AWAITS
+    return None
+
+
+def reverify(config, state, runtime, now, run=proc.run, allow_run=True, version_ok=True) -> list:
+    ad = ADAPTERS.get(runtime)
+    items = []
+    for kind, lead_name in items_for_runtime(config, runtime):
+        which = sandbox.backend()
+        if kind == "containment":
+            key, store, attack = containment.verification_key(runtime, ad.version_argv, which, run=run), \
+                "containment.json", sandbox_verify
+        else:
+            key, store, attack = containment.guard_key(runtime, ad.version_argv, which, ad.guard_hook_files(), run=run), \
+                "guard-verify.json", guard_verify
+        if containment.is_verified(state, runtime, key, store=store):
+            items.append(Item(runtime, kind, "verified", "key matches the recorded pass"))
+            continue
+        why = _pending_reason(config, state, runtime, kind, lead_name, now, allow_run, version_ok)
+        if why:
+            items.append(Item(runtime, kind, "pending", why))
+            continue
+        ok, msg = attack(config, state, runtime, lead_name=lead_name, run=run)
+        items.append(Item(runtime, kind, "passed" if ok else "failed", msg))
+    return items
