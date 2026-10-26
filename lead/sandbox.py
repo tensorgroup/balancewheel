@@ -7,8 +7,8 @@ lets a later rule override an earlier one, which is how a linked worktree gets i
 dir back after the shared `worktrees/` dir is denied. Both backends also deny asking other
 processes to act (LaunchServices opens, Apple Events, preference writes, launchctl): a payload
 written to scratch could otherwise run unsandboxed. For the same reason they hide a canvas's
-control token and refuse its socket (CANVAS_CONTROL_DIRS), and refuse loopback connections to
-the canvas and cockpit ports (denied_ports). bw's sealed copies of third-party databases are
+control token and refuse its socket (CANVAS_CONTROL_DIRS), and refuse connections to the
+canvas and cockpit ports on any host (denied_ports). bw's sealed copies of third-party databases are
 unreadable; the lead's answers view is readable, and no write rule covers it.
 
     python3 -m lead.sandbox run --worktree DIR --state-dir DIR [--read P]... [--write P]...
@@ -141,8 +141,9 @@ def canvas_denies(ports):
         p = check_path(os.path.realpath(os.path.join(home, d)))
         out += [f'(deny file-read* (subpath "{p}"))',
                 f'(deny network-outbound (remote unix-socket (subpath "{p}")))']
-    # "localhost" covers 127.0.0.1 and ::1 (checked by connect, not docs).
-    out += [f'(deny network-outbound (remote ip "localhost:{int(p)}"))' for p in ports]
+    # Any host, not just localhost: a service bound to 0.0.0.0 is also reachable through the
+    # Mac's own interface addresses (checked by connect, not docs).
+    out += [f'(deny network-outbound (remote ip "*:{int(p)}"))' for p in ports]
     return out
 
 
@@ -196,7 +197,7 @@ def backend():
 
 def wrap(argv, grants, which, home, scratch, env, ports=None):
     """The argv that runs `argv` contained, and a cleanup for any profile file written.
-    `ports`: loopback ports to refuse (default `denied_ports()`)."""
+    `ports`: ports to refuse on any host (default `denied_ports()`)."""
     envs = [f"HOME={home}", f"TMPDIR={scratch}"] + [f"{k}={v}" for k, v in env.items()]
     if which == "nono":
         fd, path = tempfile.mkstemp(prefix="bw-lead-", suffix=".json", dir=scratch)

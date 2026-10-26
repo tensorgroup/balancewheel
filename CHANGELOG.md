@@ -99,7 +99,7 @@ not against the prose.
 - **Lead sandboxes deny cc-switch's data, bw's sealed copies, and the canvas and cockpit
   ports; leads read their answers view** (`lead/sandbox.py`, `lead/runner.py`). Both backends
   deny reading `~/.cc-switch` (added to `SECRET_READS`) and `state_dir/sealed/`, and refuse
-  loopback connections to 6768 (Orca's orcad), 15721 (cc-switch's proxy), 8765 (the cockpit's
+  connections, on any host, to 6768 (Orca's orcad), 15721 (cc-switch's proxy), 8765 (the cockpit's
   default) and `cockpit.port` when configured; `state_dir/inbox-view/` is read-granted and in
   no write grant. `python3 -m lead.sandbox run` takes `--deny-port N` (repeatable; default
   those ports). `setup/paths.txt` gains `~/.pi/agent/extensions` (Orca writes pi extensions

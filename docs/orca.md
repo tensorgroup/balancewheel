@@ -143,7 +143,8 @@ bw's questions.
   no connections to its socket, in both the nono and `sandbox-exec` profiles, for leads and
   seats (`lead/sandbox.py`, `CANVAS_CONTROL_DIRS`, since 2026-10-25). The attack script
   tries `orca terminal create` from inside whenever `orca` is installed.
-- **Every sandbox refuses loopback connections to the canvas and cockpit ports**
+- **Every sandbox refuses connections to the canvas and cockpit ports, on any host** —
+  loopback, `::1`, or the Mac's own interface address for a service bound to 0.0.0.0
   (`CANVAS_CONTROL_PORTS`, `denied_ports`, since 2026-10-26): 6768 (orcad), 15721 (cc-switch's
   proxy), 8765 (the cockpit's default) and `cockpit.port` when configured — the cockpit too,
   because cookies are not port-isolated. Both backends; each rule checked by a real connect

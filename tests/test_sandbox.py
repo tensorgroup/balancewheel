@@ -104,7 +104,7 @@ class Grants(unittest.TestCase):
         prof = sandbox.seatbelt_profile(g, str(self.root / "scratch"), ports)
         raw = "\n".join(sandbox.nono_profile(g, str(self.root / "scratch"), ports)["unsafe_macos_seatbelt_rules"])
         for port in (6768, 15721, 8765, 9100):
-            rule = f'(deny network-outbound (remote ip "localhost:{port}"))'
+            rule = f'(deny network-outbound (remote ip "*:{port}"))'
             self.assertIn(rule, prof)
             self.assertIn(rule, raw)
 
@@ -348,6 +348,34 @@ class EscapesUnderSeatbelt(unittest.TestCase):
         for port in (6768, sandbox.DEFAULT_COCKPIT_PORT):
             with self.subTest(port=port):
                 self.assert_port_unconnectable(port)
+
+    def test_denied_port_unconnectable_through_own_interface(self):
+        # A service bound to 0.0.0.0 is reachable through the Mac's own non-loopback address.
+        probe_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe_sock.connect(("192.0.2.1", 9))  # no packet sent; picks the outbound interface
+            addr = probe_sock.getsockname()[0]
+        except OSError:
+            addr = None
+        finally:
+            probe_sock.close()
+        if not addr or addr.startswith("127."):
+            self.skipTest("no non-loopback interface address")
+        port = sandbox.DEFAULT_COCKPIT_PORT
+        server = socket.socket()
+        try:
+            server.bind(("0.0.0.0", port))
+        except OSError:
+            server.close()
+            self.skipTest(f"port {port} is taken")
+        server.listen(4)
+        probe = self.PORT_PROBE.format(port=port).replace("127.0.0.1", addr)
+        try:
+            control = subprocess.run(["/bin/sh", "-c", probe], capture_output=True, text=True)
+            self.assertIn("CONNECTED", control.stdout, control.stderr)
+            self.assertNotIn("CONNECTED", self.sh(self.wt, probe).stdout)
+        finally:
+            server.close()
 
     def test_ccswitch_proxy_port_unconnectable(self):
         self.assert_port_unconnectable(15721)
