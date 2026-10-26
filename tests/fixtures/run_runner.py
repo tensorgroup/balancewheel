@@ -2,7 +2,7 @@
 
 argv: run_runner.py <config.json> <worktree> [--use LEAD] [--auto] [--contained-by-bw RUNTIME]
                     [--guard RUNTIME [--no-hook] [--no-spike]] [--fail-after-launch] [--no-client] [--fail-in-poll]
-                    [--verified] [--fail-in-caps]
+                    [--verified] [--fail-in-caps] [--probe-lock-in-verify]
 Every runtime maps to tests/fixtures/fake_lead.py; --contained-by-bw marks one as bw-contained
 (without a containment record), to test the refusal path. --guard RUNTIME makes every lead of that
 runtime guarded (autonomy "guard", source "config"), points BW_AGY_HOOKS at a temp hooks file with
@@ -12,6 +12,8 @@ the entry installed (--no-hook: an empty one) and marks agy's hook spike as pass
 --verified counts every runtime's containment as verified (the bw-contained one gets FAKE_OUT as a write
 grant, so the fake can leave its evidence); each per-session scratch dir is printed as `SCRATCH <path>`.
 --fail-in-caps makes every read_caps after the lead started wait for the lead to exit, then raise.
+--probe-lock-in-verify makes each _verified call try the lead's runtime lock exclusively from a second
+process, append {"runtime", "exclusive"} to FAKE_OUT/verify-lock.jsonl, and count the lead as verified.
 """
 import atexit, os, shutil, sys, tempfile
 from pathlib import Path
@@ -80,6 +82,18 @@ if "--verified" in args:
             print(f"SCRATCH {d}", flush=True)
         return d
     tempfile.mkdtemp = _logged_mkdtemp
+if "--probe-lock-in-verify" in args:
+    import json, subprocess
+
+    def _probe_verified(ctx, lead_name):
+        rt = ctx.config["leads"][lead_name]["runtime"]
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); from lead.locks import RuntimeLock; "
+                "print(RuntimeLock(sys.argv[2], sys.argv[3]).try_exclusive())")
+        r = subprocess.run([sys.executable, "-c", code, str(ROOT), ctx.state, rt], capture_output=True, text=True)
+        with open(os.path.join(os.environ["FAKE_OUT"], "verify-lock.jsonl"), "a") as f:
+            f.write(json.dumps({"runtime": rt, "exclusive": r.stdout.strip()}) + "\n")
+        return True
+    runner._verified = _probe_verified
 if "--fail-in-caps" in args:
     sessions = []
     _init, _read_caps = runner.Session.__init__, quota.read_caps

@@ -240,6 +240,55 @@ class Runner(RunnerCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("pb", quota.read_caps(str(self.state), time.time(), 5))
 
+class RuntimeLocks(RunnerCase):
+    def exclusive(self, runtime):
+        from lead.locks import RuntimeLock
+        lk = RuntimeLock(str(self.state), runtime)
+        try:
+            return lk.try_exclusive()
+        finally:
+            lk.release()
+
+    def verify_probes(self):
+        f = self.out / "verify-lock.jsonl"
+        return [json.loads(l) for l in f.read_text().splitlines()] if f.exists() else []
+
+    def test_runtime_lock_held_before_verification_check(self):
+        p = self.start("--probe-lock-in-verify", env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        self.assertEqual(self.verify_probes(), [{"runtime": "codex", "exclusive": "False"}])
+        self.assertTrue(self.exclusive("codex"), "the runtime lock outlived the session")
+
+    def test_lead_child_keeps_runtime_lock_after_runner_sigkill(self):
+        first = self.start()
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        self.assertFalse(self.exclusive("codex"))
+        first.kill(); first.wait()
+        child = self.fake("a")["pid"]
+        self.assertFalse(self.exclusive("codex"), "runtime lock released while the lead still runs")
+        os.killpg(self.fake("a")["pgid"], signal.SIGKILL)
+        self.assertTrue(wait_for(lambda: not _alive(child)))
+        self.assertTrue(wait_for(lambda: self.exclusive("codex"), 5))
+
+    def test_switch_takes_new_runtime_lock(self):
+        p = self.start("--probe-lock-in-verify", env={"FAKE_MODE_a": "sleep", "FAKE_MODE_b": "sleep"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        self.assertTrue(wait_for(lambda: self.fake("b")), "the next lead never started")
+        self.assertEqual(self.verify_probes(), [{"runtime": "codex", "exclusive": "False"},
+                                                {"runtime": "pi", "exclusive": "False"}])
+        self.assertFalse(self.exclusive("pi"), "the new lead runs without its runtime lock")
+        self.assertTrue(self.exclusive("codex"), "the old runtime lock outlived its lead")
+        os.killpg(self.fake("b")["pgid"], signal.SIGTERM)
+        self.assertEqual(p.wait(10), 0, p.stdout.read())
+        self.assertTrue(self.exclusive("pi"))
+
+    def test_refused_start_releases_runtime_lock(self):
+        p = self.start("--contained-by-bw", "codex")
+        self.assertEqual(p.wait(10), 4)
+        self.assertTrue(self.exclusive("codex"))
+
+
 class UnguardedRunner(RunnerCase):
     def test_unguarded_session_has_autonomy_but_no_guard_env_or_event(self):
         p = self.start("--use", "la", env={"FAKE_MODE_a": "exit"})

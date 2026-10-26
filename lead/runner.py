@@ -8,6 +8,11 @@ confirm the group is gone before anything else starts in the worktree.
 Lock: an flock on state_dir/locks/<worktree-key>.lock, opened without truncation, whose
 descriptor the lead inherits — the kernel holds the lock until bw AND the lead are gone, so a
 crashed bw cannot let a second writable lead into the same worktree.
+
+Runtime lock (lead/locks.py): a shared flock on the lead's runtime, taken before that runtime's
+verification is checked and passed to the lead the same way, so no update of the runtime lands
+between the check and the launch it allows, or under the running lead. Released only once the
+lead's group is gone.
 """
 import fcntl
 import json
@@ -26,6 +31,7 @@ from . import containment, guard as guardpkg, quota as quotamod, rotation, sandb
 from .handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text
 from .guard import broker as brk, install as guard_install, launch
 from .guard.launch import GuardUnavailable
+from .locks import RuntimeLock
 from .paths import locked_dir, read_json, write_json_atomic
 from .projects import resolve_project
 from .runtimes import ADAPTERS
@@ -146,7 +152,7 @@ class Session:
                 shutil.rmtree(scratch, ignore_errors=True)
             self.cleanup = cleanup
         self.argv = argv
-        self.proc = subprocess.Popen(argv, cwd=ctx.project.worktree, env=env, pass_fds=(ctx.lock.fd,),
+        self.proc = subprocess.Popen(argv, cwd=ctx.project.worktree, env=env, pass_fds=ctx.pass_fds(),
                                      preexec_fn=_child_setup)
         self.pgid = self.proc.pid
         if self.broker is not None:
@@ -286,6 +292,21 @@ class Context:
         self.config, self.state, self.project, self.lock = config, state, project, lock
         self.adapters, self.backend, self.out = adapters, backend, out
         self.tty = sys.stdin.fileno() if sys.stdin.isatty() else None
+        self.runtime_lock = None
+
+    def pass_fds(self):
+        return (self.lock.fd,) + ((self.runtime_lock.fd,) if self.runtime_lock is not None else ())
+
+    def take_runtime_lock(self, lead_name):
+        """A shared lock on the lead's runtime; blocks while that runtime is being updated."""
+        lk = RuntimeLock(self.state, self.config["leads"][lead_name]["runtime"])
+        lk.shared()
+        return lk
+
+    def release_runtime_lock(self):
+        if self.runtime_lock is not None:
+            self.runtime_lock.release()
+            self.runtime_lock = None
 
     def say(self, msg):
         print(msg, file=self.out, flush=True)
@@ -434,12 +455,15 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         ctx.say(f"bw: no lead started — {d.notice or 'no lead available'}")
         lock.write({})
         return ALL_CAPPED if d.reason == "none-eligible" and profile["lead_order"] else NO_LEADS
+    ctx.runtime_lock = ctx.take_runtime_lock(d.lead)  # before the check, held through the launch
     if not _verified(ctx, d.lead):
+        ctx.release_runtime_lock()
         rt = config["leads"][d.lead]["runtime"]
         ctx.say(f"bw: {rt} has no verified containment for this version; run `bw sandbox verify {rt}`")
         return UNVERIFIED
     why = _guard_ready(ctx, d.lead)
     if why:
+        ctx.release_runtime_lock()
         ctx.say(f"bw: {d.lead} cannot start: {why}")
         lock.write({})
         return GUARD_UNAVAILABLE
@@ -449,6 +473,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         try:
             session = Session(ctx, current, handoff)
         except GuardUnavailable as e:
+            ctx.release_runtime_lock()
             ctx.say(f"bw: {e}")
             lock.write({})
             return GUARD_UNAVAILABLE
@@ -476,36 +501,47 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                         ctx.say(f"bw: {d.notice}")
                         warned = True
                     continue
-                if d.lead != current and not _verified(ctx, d.lead):
+                if d.lead == current:
+                    continue
+                # The next lead's runtime lock comes before its checks and is kept for its launch.
+                nxt = ctx.take_runtime_lock(d.lead)
+                if not _verified(ctx, d.lead):
+                    nxt.release()
                     if not warned:
                         rt = config["leads"][d.lead]["runtime"]
                         ctx.say(f"bw: {current} is capped but {d.lead} has no verified containment; "
                                 f"run `bw sandbox verify {rt}` (staying on {current})")
                         warned = True
                     continue
-                why = _guard_ready(ctx, d.lead) if d.lead != current else None
+                why = _guard_ready(ctx, d.lead)
                 if why:
+                    nxt.release()
                     if not warned:
                         ctx.say(f"bw: {current} is capped but {d.lead} cannot start: {why} (staying on {current})")
                         warned = True
                     continue
-                if d.lead != current:
-                    # The terminal goes back to bw only after the lead's group is gone: a TUI that
-                    # restores the terminal on SIGTERM must still own it, or it stops on SIGTTOU.
+                # The terminal goes back to bw only after the lead's group is gone: a TUI that
+                # restores the terminal on SIGTERM must still own it, or it stops on SIGTTOU.
+                try:
                     session.stop(grace)
-                    ctx.take_terminal()
-                    session.finish_guard(ctx)
-                    ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
-                             "session_id": session.id, "reason": "switch"})
-                    ctx.log({"type": "lead", "project": project.worktree_key,
-                             "from": {"lead": current, "runtime": session.lead["runtime"], "model": session.lead["model"]},
-                             "to": {"lead": d.lead, "runtime": config["leads"][d.lead]["runtime"],
-                                    "model": config["leads"][d.lead]["model"]},
-                             "reason": d.reason, "quota": q})
-                    handoff = build_handoff(project.worktree, session.head, state, project.worktree_key, [])
-                    ctx.say(f"bw: {current} is capped; handing off to {d.lead}")
-                    current, switched = d.lead, True
-                    break
+                except BaseException:
+                    nxt.release()
+                    raise
+                ctx.release_runtime_lock()  # the old lead's group is gone
+                ctx.runtime_lock = nxt
+                ctx.take_terminal()
+                session.finish_guard(ctx)
+                ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
+                         "session_id": session.id, "reason": "switch"})
+                ctx.log({"type": "lead", "project": project.worktree_key,
+                         "from": {"lead": current, "runtime": session.lead["runtime"], "model": session.lead["model"]},
+                         "to": {"lead": d.lead, "runtime": config["leads"][d.lead]["runtime"],
+                                "model": config["leads"][d.lead]["model"]},
+                         "reason": d.reason, "quota": q})
+                handoff = build_handoff(project.worktree, session.head, state, project.worktree_key, [])
+                ctx.say(f"bw: {current} is capped; handing off to {d.lead}")
+                current, switched = d.lead, True
+                break
         except BaseException:
             # bw is failing with a lead running: stop it (and its broker) rather than leave it
             # running unguarded with no log, then let the error surface
@@ -516,6 +552,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                     session.cleanup()
             finally:
                 ctx.take_terminal()
+                ctx.release_runtime_lock()
                 session.finish_guard(ctx)
             raise
         if switched:
@@ -525,6 +562,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
             session.stop(grace)
         else:
             session.cleanup()
+        ctx.release_runtime_lock()  # the lead's group is gone
         session.finish_guard(ctx)
         ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
                  "session_id": session.id, "reason": "exit"})
