@@ -35,6 +35,8 @@
   svg.bars rect.b { fill: var(--bar2); }
   svg.bars text { fill: var(--muted); font-size: 10px; }
   svg.bars line { stroke: var(--line); }
+  svg.bars g.na rect { fill: none; stroke: var(--muted); stroke-dasharray: 2 2; }
+  svg.bars g.na text { fill: var(--muted); font-size: 9px; }
   #refresh { font: inherit; margin-left: auto; background: none; color: var(--accent); border: 0; cursor: pointer; }
 </style>
 </head>
@@ -70,9 +72,11 @@ function num(v, digits) {
 }
 function when(v) {
   if (missing(v)) return NA;
-  if (typeof v === "number") return new Date(v * 1000).toISOString().replace(".000Z", "Z");
-  return String(v);
+  if (typeof v !== "number") return String(v);
+  const t = new Date(v * 1000);
+  return Number.isFinite(t.getTime()) ? t.toISOString().replace(".000Z", "Z") : NA; /* out of Date's range */
 }
+function list(v) { return Array.isArray(v) ? v : []; }
 function age(s) {
   if (missing(s)) return NA;
   const m = s / 60;
@@ -87,7 +91,8 @@ function para(text, cls) { return el("p", {class: cls || "note"}, text); }
 
 /* cols: [{h: header, v: row => value, f: formatter, src: row => hover text, num: bool}] */
 function table(cols, rows, empty) {
-  if (!rows || rows.length === 0) return para(empty || "nothing recorded yet");
+  rows = list(rows);
+  if (rows.length === 0) return para(empty || "nothing recorded yet");
   const t = el("table");
   const hr = el("tr");
   for (const c of cols) hr.appendChild(el("th", c.title ? {title: c.title} : {}, c.h));
@@ -111,10 +116,10 @@ function table(cols, rows, empty) {
   return w;
 }
 
-/* bars: [{label, a, b}] with a/b numbers or null; null draws no bar and says so on hover. */
+/* bars: [{label, a, b}] with a/b numbers or null; null draws a muted "n/a" mark, never a zero bar. */
 function barChart(items, aName, bName, srcText) {
   const W = 640, H = 160, pad = 24, n = Math.max(items.length, 1);
-  const max = Math.max(1, ...items.map(i => (i.a || 0) + (i.b || 0)));
+  const max = Math.max(1, ...items.map(i => (Number.isFinite(i.a) ? i.a : 0) + (Number.isFinite(i.b) ? i.b : 0)));
   const step = (W - pad) / n, bw = Math.max(2, step * 0.7);
   const s = svg("svg", {class: "bars", viewBox: "0 0 " + W + " " + (H + 18), role: "img",
                          "aria-label": aName + (bName ? " and " + bName : "") + " per day"});
@@ -126,25 +131,35 @@ function barChart(items, aName, bName, srcText) {
     for (const [key, cls, name] of [["a", "a", aName], ["b", "b", bName]]) {
       if (!name) continue;
       const v = it[key];
-      const h = missing(v) ? 0 : (v / max) * (H - 14);
+      const tip = it.label + " · " + name + ": " + num(v) + " — " + srcText;
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        const g = svg("g", {class: "na"});
+        g.appendChild(svg("rect", {x: x.toFixed(1), y: (y - 14).toFixed(1), width: bw.toFixed(1), height: 14}));
+        g.appendChild(svg("text", {x: (x + bw / 2).toFixed(1), y: (y - 4).toFixed(1), "text-anchor": "middle"}, "n/a"));
+        g.appendChild(svg("title", {}, tip));
+        s.appendChild(g);
+        y -= 14;
+        continue;
+      }
+      const h = (v / max) * (H - 14);
       const r = svg("rect", {class: cls, x: x.toFixed(1), y: (y - h).toFixed(1), width: bw.toFixed(1), height: h.toFixed(1)});
-      r.appendChild(svg("title", {}, it.label + " · " + name + ": " + num(v) + " — " + srcText));
+      r.appendChild(svg("title", {}, tip));
       s.appendChild(r);
       y -= h;
     }
-    if (n <= 16 || i % Math.ceil(n / 8) === 0) s.appendChild(svg("text", {x: x.toFixed(1), y: H + 14}, it.label.slice(5)));
+    if (n <= 16 || i % Math.ceil(n / 8) === 0) s.appendChild(svg("text", {x: x.toFixed(1), y: H + 14}, String(it.label).slice(5)));
   });
   return s;
 }
 
 function byDay(rows, keys) {
   const out = new Map();
-  for (const r of rows) {
+  for (const r of list(rows)) {
     const d = out.get(r.day) || {label: r.day};
     for (const [k, field] of keys) {
       const v = r[field];
       const sofar = k in d ? d[k] : 0;
-      d[k] = missing(sofar) || missing(v) ? null : sofar + v; /* one unreported group makes the day unavailable */
+      d[k] = missing(sofar) || typeof v !== "number" || !Number.isFinite(v) ? null : sofar + v; /* one unreported group makes the day unavailable */
     }
     out.set(r.day, d);
   }
@@ -178,10 +193,11 @@ function renderModels(d, root) {
 
   root.appendChild(el("h2", {}, "Leads"));
   root.appendChild(para("Per runtime and model, counts with n; no composite score."));
+  if (d.inbox_readable === false) root.appendChild(para("the inbox could not be read; the asks column counts logged asks only", "note warn"));
   const cols = [
     {h: "runtime", v: r => r.runtime},
     {h: "model", v: r => r.model},
-    {h: "leads", v: r => r.leads.join(", ")},
+    {h: "leads", v: r => list(r.leads).join(", ")},
     {h: "sessions", v: r => r.sessions, num: true, src: () => "session start events"},
     {h: "lead minutes", v: r => r.minutes, num: true, src: r => "ended sessions only; " + r.lost_sessions + " lost, " + r.unparsed_sessions + " with unreadable times not counted"},
     {h: "cap switches", v: r => r.cap_switches, num: true, src: () => "sessions ended with reason switch"},
@@ -190,7 +206,7 @@ function renderModels(d, root) {
     {h: "good / bad", v: r => r.good, f: (v, r) => v + " / " + r.bad, num: true, src: () => "rating events"},
     {h: "asks", v: r => r.asks, num: true, src: () => "inbox asks from these sessions"},
   ];
-  for (const p of d.lead_columns_pending) cols.push({h: p, v: () => "needs task events (later step)", src: () => "needs task events and panel.subject"});
+  for (const p of list(d.lead_columns_pending)) cols.push({h: p, v: () => "needs task events (later step)", src: () => "needs task events and panel.subject"});
   root.appendChild(table(cols, d.leads, "no lead sessions logged yet"));
 }
 
@@ -217,7 +233,7 @@ function renderUsage(d, root) {
     ], cc.groups, "no usage in this window"));
   }
   root.appendChild(el("h2", {}, "Seats (usage events)"));
-  if (d.seats.length) root.appendChild(barChart(byDay(d.seats, [["a", "calls"]]), "calls", null, "usage events in the metrics log"));
+  if (list(d.seats).length) root.appendChild(barChart(byDay(d.seats, [["a", "calls"]]), "calls", null, "usage events in the metrics log"));
   if (d.seat_events_skipped) root.appendChild(para(d.seat_events_skipped + " usage events skipped (unreadable timestamps)"));
   const src = () => "usage events in the metrics log; totals only over calls that reported them";
   root.appendChild(table([
@@ -238,10 +254,10 @@ function renderHistory(d, root) {
     {h: "target", v: r => r.target},
     {h: "raw findings", v: r => r.raw, num: true, src: () => "findings_raw, else the sum of per-seat totals"},
     {h: "disputes", v: r => r.disputes, num: true, src: () => "disputes in the panel record"},
-    {h: "seats", v: r => r.seats.join(", ")},
+    {h: "seats", v: r => list(r.seats).join(", ")},
     {h: "immediate agreement", v: r => r.immediate_agreement},
-    {h: "model changes", v: r => r.model_changes.map(c => c.seat + ": " + c.from + " → " + c.to).join("; ")},
-  ], d.timeline.slice().reverse(), "no panels logged yet"));
+    {h: "model changes", v: r => list(r.model_changes).map(c => c.seat + ": " + c.from + " → " + c.to).join("; ")},
+  ], list(d.timeline).slice().reverse(), "no panels logged yet"));
   root.appendChild(el("h2", {}, "Disputes"));
   root.appendChild(table([
     {h: "when", v: r => r.ts},
@@ -253,7 +269,7 @@ function renderHistory(d, root) {
   ], d.disputes, "no disputes logged yet"));
   root.appendChild(el("h2", {}, "Findings"));
   const rows = [];
-  for (const p of d.findings) for (const f of p.rows) rows.push(Object.assign({_ts: p.ts, _target: p.target}, f));
+  for (const p of list(d.findings)) for (const f of list(p && p.rows)) if (f && typeof f === "object") rows.push(Object.assign({_ts: p.ts, _target: p.target}, f));
   root.appendChild(table([
     {h: "when", v: r => r._ts},
     {h: "target", v: r => r._target},
@@ -270,11 +286,12 @@ function renderHistory(d, root) {
     {h: "project", v: r => r.project},
     {h: "lead", v: r => r.lead},
     {h: "reason", v: r => r.reason},
-  ], d.markers.slice().reverse(), "no lead sessions logged yet"));
+  ], list(d.markers).slice().reverse(), "no lead sessions logged yet"));
 }
 
 function windowsText(ws) {
-  if (!ws || !ws.length) return null;
+  ws = list(ws).filter(w => w && typeof w === "object");
+  if (!ws.length) return null;
   return ws.map(w => w.name + " " + num(w.used_pct, 0) + "%" + (missing(w.resets_at) ? "" : " until " + when(w.resets_at))).join("; ");
 }
 
@@ -284,10 +301,10 @@ function renderNow(d, root) {
     {h: "plan", v: r => r.name},
     {h: "billing", v: r => r.billing},
     {h: "windows", v: r => (r.unknown ? null : windowsText(r.windows)), f: (v, r) => (r.unknown ? "unknown: " + (r.reason || NA) : v || NA),
-     src: r => (r.source ? r.source + " snapshot, observed " + age(r.age_s) + " ago" : "no usable reading (quota: " + r.quota + ")")},
-    {h: "source", v: r => r.source, src: r => "quota: " + r.quota},
+     src: r => (r.source ? r.source + " snapshot, observed " + age(r.age_s) + " ago" : "no usable reading (quota: " + r.quota_mode + ")")},
+    {h: "source", v: r => r.source, src: r => "quota: " + r.quota_mode + " — " + r.quota},
     {h: "age", v: r => r.age_s, f: age, num: true, src: r => (r.source ? r.source + " snapshot observed_at" : "no reading")},
-    {h: "pools", v: r => windowsText((r.pools || []).map(w => Object.assign({}, w, {name: w.name + " (" + (w.applies_to || []).join(", ") + ")"}))), src: () => "fresh Orca snapshot, whichever source won the windows"},
+    {h: "pools", v: r => windowsText(list(r.pools).filter(w => w && typeof w === "object").map(w => Object.assign({}, w, {name: w.name + " (" + list(w.applies_to).join(", ") + ")"}))), src: () => "fresh Orca snapshot, whichever source won the windows"},
     {h: "capped until", v: r => r.cap_until, f: v => (missing(v) ? "—" : when(v)), src: () => "cap record in the state dir"},
     {h: "cross-check", v: r => (r.cross_check ? windowsText(r.cross_check.windows) : null), f: v => v || "—", src: () => "Orca reading, shown, never used for decisions"},
     {h: "limits", v: r => (r.limits && r.limits.key_limit ? r.limits.key_limit : null),
@@ -331,9 +348,17 @@ async function show(tab) {
     d = {available: false, reason: "the cockpit server is not answering"};
   }
   if (tab !== current) return;
-  const out = el("section");
-  if (d.available === false || !RENDER[tab]) out.appendChild(para(tab + ": " + (d.reason || NA), "note warn"));
-  else RENDER[tab](d, out);
+  let out = el("section");
+  if (!d || typeof d !== "object" || d.available === false || !RENDER[tab]) {
+    out.appendChild(para(tab + ": " + ((d && d.reason) || NA), "note warn"));
+  } else {
+    try {
+      RENDER[tab](d, out);
+    } catch (e) {  /* data the page did not expect: say so, never stay on "loading" */
+      out = el("section");
+      out.appendChild(para(tab + ": could not render (" + ((e && e.name) || "error") + ")", "note warn"));
+    }
+  }
   root.replaceChildren(out);
 }
 

@@ -3,6 +3,7 @@
 `facts` is the data (the cockpit reads the same dict later); `render` is the text. Every
 external surface it touches (Orca, cc-switch) reads as `unknown` with a reason when absent.
 """
+import math
 import os
 import time
 
@@ -14,18 +15,46 @@ from lead.paths import read_json
 from lead.runtimes import ADAPTERS
 
 
-def _plans(config, state, now):
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _spend(snap, budget, now, every):
+    """A metered plan's month spend from its probe snapshot while fresh, else unknown with the reason."""
+    if not isinstance(snap, dict):
+        return {"unknown": True, "reason": "no probe reading", "budget_usd_month": budget}
+    if snap.get("unknown"):
+        return {"unknown": True, "reason": str(snap.get("reason") or "unknown"), "budget_usd_month": budget}
+    t, spend = snap.get("observed_at"), snap.get("spend_usd")
+    if not _num(t) or t > now + quota.FUTURE_SLACK_S or now - t > 2 * every * 60:
+        return {"unknown": True, "reason": "probe reading stale or undated", "budget_usd_month": budget}
+    if not _num(spend):
+        return {"unknown": True, "reason": str(snap.get("note") or "monthly spend unknown"), "budget_usd_month": budget}
+    return {"unknown": False, "spend_usd": spend, "budget_usd_month": budget, "observed_at": t}
+
+
+def plan_facts(config, state, now):
+    """Per plan: the arbitrated reading (windows, pools, source, age, reason, limits, cross-check),
+    its one-line summary, notice and cap; a metered plan with a budget adds its month `spend`."""
     rot = config["rotation"]
     every = rot.get("probe_every_min", 15)
     caps = quota.read_caps(state, now, rot["cap_expiry_hours"])
-    arbitrated = quota.read_quota(state, config, now)
+    sources = quota.read_sources(state)
+    arbitrated = {name: quota.arbitrate(sources.get(name, {}), pcfg, now, every)
+                  for name, pcfg in config["plans"].items()}
     out = []
     for name, plan in sorted(config["plans"].items()):
         a = arbitrated[name]
-        out.append({"name": name, "billing": plan["billing"], "quota": quota.summary(a),
-                    "source": a.get("source"), "age_s": a.get("age_s"), "cross_check": a.get("cross_check"),
-                    "pools": a.get("pools", []), "notice": quota.notice(a, plan, now, every),
-                    "capped_until": caps[name]["resets_at"] if name in caps else None})
+        unknown = bool(a.get("unknown"))
+        row = {"name": name, "billing": plan["billing"], "quota": quota.summary(a), "quota_mode": plan.get("quota", "none"),
+               "windows": [] if unknown else a.get("windows", []), "unknown": unknown,
+               "reason": a.get("reason") if unknown else None, "last_known_at": a.get("last_known_at"),
+               "source": a.get("source"), "age_s": a.get("age_s"), "cross_check": a.get("cross_check"),
+               "pools": a.get("pools", []), "limits": a.get("limits"), "notice": quota.notice(a, plan, now, every),
+               "capped_until": caps[name]["resets_at"] if name in caps else None}
+        if plan["billing"] == "metered" and plan.get("budget_usd_month") is not None:
+            row["spend"] = _spend((sources.get(name) or {}).get("probe"), plan["budget_usd_month"], now, every)
+        out.append(row)
     return out
 
 
@@ -79,14 +108,18 @@ def orca_checks(state, run=proc.run):
     return [presence] + orca.check_settings(*orca.read_settings(state, d))
 
 
+def worktree_facts(state):
+    """The local, shell-free half of `facts`: worktrees (current and pinned lead) and the open inbox."""
+    return {"worktrees": _worktrees(state), "inbox": _inbox(state)}
+
+
 def facts(config, state, now, run=proc.run):
-    return {"plans": _plans(config, state, now),
-            "worktrees": _worktrees(state),
+    return {"plans": plan_facts(config, state, now),
+            **worktree_facts(state),
             "leads": _leads(config),
             "guard": guard_review.status_lines(state),
             "checks": {"orca": orca_checks(state, run), "cc-switch": ccswitch.check_settings()},
-            "last_start": read_json(os.path.join(state, "start.json"), None),
-            "inbox": _inbox(state)}
+            "last_start": read_json(os.path.join(state, "start.json"), None)}
 
 
 def _shown_ok(c):

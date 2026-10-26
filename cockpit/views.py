@@ -4,7 +4,6 @@
 one metrics store load, at most one cc-switch copy. Numbers nobody reported are None ("unavailable"
 on the page), never 0. Nothing here writes a file.
 """
-import math
 import time
 from datetime import datetime
 
@@ -17,10 +16,6 @@ USAGE_DAYS = 30
 SMALL_N = 10  # below this many verdicts a row shows counts only, no rates
 # Design decision 20: the spec's task-based lead dimensions wait for `task` events and `panel.subject`.
 LEAD_COLUMNS_PENDING = ["throughput per task", "defects", "escapes", "clean work", "moderation quality"]
-
-
-def _num(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
 def _load(config):
@@ -48,44 +43,14 @@ def _seat_usage(data, since):
     return rows, skipped
 
 
-def _spend(snap, budget, now, every):
-    """A metered plan's month spend from its probe snapshot while fresh, else unknown with the reason."""
-    if not isinstance(snap, dict):
-        return {"unknown": True, "reason": "no probe reading", "budget_usd_month": budget}
-    if snap.get("unknown"):
-        return {"unknown": True, "reason": str(snap.get("reason") or "unknown"), "budget_usd_month": budget}
-    t, spend = snap.get("observed_at"), snap.get("spend_usd")
-    if not _num(t) or t > now + quota.FUTURE_SLACK_S or now - t > 2 * every * 60:
-        return {"unknown": True, "reason": "probe reading stale or undated", "budget_usd_month": budget}
-    if not _num(spend):
-        return {"unknown": True, "reason": str(snap.get("note") or "monthly spend unknown"), "budget_usd_month": budget}
-    return {"unknown": False, "spend_usd": spend, "budget_usd_month": budget, "observed_at": t}
-
-
 def _plans(config, state, now):
-    rot = config["rotation"]
-    every = rot.get("probe_every_min", 15)
-    arbitrated = quota.read_quota(state, config, now)
-    caps = quota.read_caps(state, now, rot["cap_expiry_hours"])
-    sources = quota.read_sources(state)
-    out = []
-    for name, plan in sorted(config["plans"].items()):
-        a = arbitrated[name]
-        row = {"name": name, "billing": plan["billing"], "quota": plan["quota"],
-               "windows": [] if a.get("unknown") else a.get("windows", []), "pools": a.get("pools", []),
-               "source": a.get("source"), "age_s": a.get("age_s"), "unknown": bool(a.get("unknown")),
-               "reason": a.get("reason") if a.get("unknown") else None, "last_known_at": a.get("last_known_at"),
-               "cap_until": caps[name].get("resets_at") if name in caps else None,
-               "notice": quota.notice(a, plan, now, every), "cross_check": a.get("cross_check"),
-               "limits": a.get("limits")}
-        if plan["billing"] == "metered" and plan.get("budget_usd_month") is not None:
-            row["spend"] = _spend(sources.get(name, {}).get("probe"), plan["budget_usd_month"], now, every)
-        out.append(row)
-    return out
+    """status.plan_facts, with the cap under the cockpit's name `cap_until`."""
+    return [dict({k: v for k, v in p.items() if k != "capped_until"}, cap_until=p["capped_until"])
+            for p in status.plan_facts(config, state, now)]
 
 
 def _worktrees(facts):
-    """The current and pinned lead per worktree, with its open inbox counts, from `status.facts`."""
+    """The current and pinned lead per worktree, with its open inbox counts, from `status.worktree_facts`."""
     box = facts.get("inbox")
     out = []
     for w in facts["worktrees"]:
@@ -99,8 +64,12 @@ def _worktrees(facts):
 def build(config, state, now_fn=time.time, run=proc.run) -> dict:
     def models():
         data = _load(config)
-        return {"seats": summary.seat_rows(data, config), "leads": summary.lead_rows(data, inbox.load(state)["items"]),
-                "lead_columns_pending": list(LEAD_COLUMNS_PENDING), "small_n": SMALL_N}
+        try:
+            items, readable = inbox.load(state)["items"], True
+        except (OSError, ValueError):  # an unreadable inbox costs the asks column, not the tab
+            items, readable = [], False
+        return {"seats": summary.seat_rows(data, config), "leads": summary.lead_rows(data, items),
+                "inbox_readable": readable, "lead_columns_pending": list(LEAD_COLUMNS_PENDING), "small_n": SMALL_N}
 
     def usage():
         since = now_fn() - USAGE_DAYS * 86400
@@ -117,7 +86,7 @@ def build(config, state, now_fn=time.time, run=proc.run) -> dict:
     def now():
         t = now_fn()
         data = _load(config)
-        f = status.facts(config, state, t, run=run)
+        f = status.worktree_facts(state)  # local reads only: no Orca or cc-switch check per request
         return {"generated_at": t, "plans": _plans(config, state, t), "worktrees": _worktrees(f),
                 "inbox_readable": f["inbox"] is not None, "watches": summary.watches(data)}
 

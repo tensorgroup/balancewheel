@@ -23,7 +23,11 @@ def iso(t):
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 
 
+CALLS = []
+
+
 def no_run(argv, timeout, **kw):
+    CALLS.append(list(argv))
     return Result(127, "", "not found", False)
 
 
@@ -160,6 +164,27 @@ class ViewsCase(unittest.TestCase):
         w = self.built()["now"]()["worktrees"]
         self.assertEqual(w, [{"worktree": "/w", "lead": "lead-a", "since": NOW - 60, "pinned": "lead-b",
                               "asks": 1, "notices": 1}])
+
+    def test_models_survives_an_unreadable_inbox(self):
+        self.synthetic()
+        (Path(self.state) / "inbox.jsonl").mkdir()  # reading it raises IsADirectoryError
+        m = self.built()["models"]()
+        self.assertFalse(m["inbox_readable"])
+        self.assertEqual(m["leads"][0]["asks"], 0)
+        json.dumps(m, allow_nan=False)
+
+    def test_models_reports_a_readable_inbox(self):
+        self.assertTrue(self.built()["models"]()["inbox_readable"])
+
+    def test_now_makes_no_shell_out_and_reads_no_orca(self):
+        orca_dir = self.root / "orca"
+        orca_dir.mkdir()  # Orca "installed": status.facts would ask `orca status` here
+        del CALLS[:]
+        self.synthetic()
+        b = self.built()
+        for name in ("now", "models", "usage", "history", "graph"):
+            b[name]()
+        self.assertEqual(CALLS, [])
 
     def test_capped_plan_shows_cap_until(self):
         caps = Path(self.state) / "caps"

@@ -51,6 +51,17 @@ class PageStatic(unittest.TestCase):
     def test_both_themes(self):
         self.assertIn("prefers-color-scheme: dark", PAGE)
 
+    def test_rendering_is_inside_a_try_so_bad_data_cannot_strand_the_tab(self):
+        body = PAGE[PAGE.index("async function show("):]
+        body = body[:body.index("\n}\n")]
+        self.assertRegex(body, r"try \{\s*RENDER\[tab\]\(d, out\);\s*\} catch \(e\)")
+        self.assertEqual(body.count("RENDER[tab](d, out)"), 1)
+        self.assertIn("could not render", body)
+
+    def test_an_unavailable_bar_is_marked_not_drawn_as_zero(self):
+        self.assertIn('"n/a"', PAGE)
+        self.assertNotIn("missing(v) ? 0", PAGE)
+
     def test_null_renders_unavailable(self):
         self.assertIn('"unavailable"', PAGE)
 
