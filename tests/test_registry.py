@@ -75,10 +75,35 @@ class RegistryCase(unittest.TestCase):
         self.assertIn(("profile:p", "seat:s2", "profile→seat"), edges)
         self.assertIn(("plan:pp", "model:m-pi", "plan→model"), edges)
 
-    def test_runtime_with_no_tool_makes_no_edge(self):
+    def test_runtime_with_no_configured_tool_gets_a_derived_node(self):
         del self.config["tools"]["codex"]
         reg = self.build()
-        self.assertFalse([e for e in reg["edges"] if e["from"] == "seat:s1" and e["kind"] == "seat→tool"])
+        self.assertFalse(self.by(reg, "tools", "codex")["configured"])
+        self.assertTrue(self.by(reg, "tools", "pi")["configured"])
+        self.assertTrue([e for e in reg["edges"] if e["from"] == "seat:s1" and e["kind"] == "seat→tool"])
+
+    def test_no_tools_section_derives_tool_nodes_and_edge_chain(self):
+        del self.config["tools"]
+        reg = self.build()
+        names = {t["name"] for t in reg["tools"]}
+        self.assertEqual(names, {"claude", "pi", "codex"})
+        t = self.by(reg, "tools", "claude")
+        self.assertEqual((t["configured"], t["install"], t["version"], t["runtime"]), (False, "", "1.2.3", "claude-code"))
+        edges = {(e["from"], e["to"], e["kind"]) for e in reg["edges"]}
+        for e in (("lead:lc", "tool:claude", "lead→tool"), ("tool:claude", "plan:pc", "tool→plan"),
+                  ("seat:s1", "tool:codex", "seat→tool"), ("plan:pc", "model:m-claude", "plan→model")):
+            self.assertIn(e, edges)
+        ids = {n["id"] for k in ("tools", "plans", "models", "seats", "leads", "profiles", "projects") for n in reg[k]}
+        self.assertTrue(all(f in ids and t in ids for f, t, _ in edges))
+
+    def test_not_required_lead_does_not_lower_tool_health(self):
+        from lead.registry import _tool_health
+        lead_by = {"a": {"verified": "verified"}, "b": {"verified": "not required"}}
+        leads = {"a": {"runtime": "r"}, "b": {"runtime": "r"}}
+        self.assertEqual(_tool_health("r", leads, lead_by), "verified")
+        lead_by["b"]["verified"] = "pending"
+        self.assertEqual(_tool_health("r", leads, lead_by), "pending")
+        self.assertEqual(_tool_health("r", {"b": {"runtime": "r"}}, {"b": {"verified": "not required"}}), "unknown")
 
     def test_capped_plan_node_is_capped(self):
         os.makedirs(os.path.join(self.state, "caps"))

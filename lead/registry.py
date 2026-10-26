@@ -21,11 +21,11 @@ import shutil
 import time
 
 from . import ccswitch, containment, proc, quota, sandbox
-from .locks import RuntimeLock, runtime_tools, tool_runtime
+from .locks import DEFAULT_TOOL_RUNTIME, RuntimeLock, runtime_tools, tool_runtime
 from .paths import read_json, write_json_atomic
 from .projects import worktree_key
 from .runtimes import ADAPTERS
-from .updates import installer_of, read_version
+from .updates import UNREADABLE, VERSION_TIMEOUT_S, installer_of, read_version
 
 HEALTH = ("verified", "pending", "capped", "unknown")
 UNAVAILABLE = "unavailable"
@@ -105,6 +105,30 @@ def _holder(state, key):
         os.close(fd)
 
 
+def _tool_health(runtime, leads, lead_by):
+    """Its leads' verification, aggregated; "not required" counts as no opinion."""
+    if not runtime:
+        return "unknown"
+    states = [lead_by[n]["verified"] for n, l in sorted(leads.items()) if l.get("runtime") == runtime and n in lead_by]
+    return _aggregate([None if v == "not required" else v for v in states])
+
+
+def _derived_tools(leads_cfg, seats_cfg, tools_cfg, rt_tool):
+    """{name: runtime} for each runtime a lead or seat uses that no configured tool maps to."""
+    by_default = {rt: name for name, rt in DEFAULT_TOOL_RUNTIME.items()}
+    out = {}
+    for x in list(leads_cfg.values()) + list(seats_cfg.values()):
+        rt = x.get("runtime")
+        if not rt or rt in rt_tool or rt in out.values():
+            continue
+        name = by_default.get(rt, rt)
+        if name in tools_cfg or name in out:
+            name = rt
+        if name not in tools_cfg and name not in out:
+            out[name] = rt
+    return out
+
+
 def _prices(state):
     try:
         out = ccswitch.prices(state)
@@ -178,25 +202,33 @@ def build(config, state, now, run=proc.run) -> dict:
                       "health": health})
     plan_health = {p["name"]: p["health"] for p in plans}
 
-    tools = []
-    for name, t in sorted(tools_cfg.items()):
-        t = _dict(t)
-        rt = tool_runtime(name, t)
+    def tool_node(name, t, rt, configured):
         entry = _dict(start_tools.get(name))
         version = entry.get("after") if isinstance(entry.get("after"), str) else None
         if not version:
             try:
-                version = read_version(name, t, run)
+                if configured:
+                    version = read_version(name, t, run)
+                else:
+                    ad = ADAPTERS.get(rt)
+                    r = run(list(ad.version_argv), VERSION_TIMEOUT_S) if ad else None
+                    line = next((x.strip() for x in (r.out or "").splitlines() if x.strip()), "") if r and r.rc == 0 else ""
+                    version = line or UNREADABLE
             except Exception:
-                version = "unreadable"
+                version = UNREADABLE
         last = entry.get("last_update_at")
-        tools.append({"id": f"tool:{name}", "name": name, "runtime": rt,
-                      "path": shutil.which(name) or t.get("app"), "version": version, "install": installer_of(t),
-                      "last_update_at": last if isinstance(last, (int, float)) and not isinstance(last, bool) else None,
-                      "auth": "unknown", "locks": _lock_state(state, rt),
-                      "health": _aggregate([lead_by[n]["verified"] for n, l in sorted(leads_cfg.items())
-                                            if rt and l.get("runtime") == rt and (n in lead_by)]
-                                           ) if rt else "unknown"})
+        ad = ADAPTERS.get(rt)
+        binary = os.path.basename(ad.version_argv[0]) if ad and not configured and ad.version_argv else name
+        return {"id": f"tool:{name}", "name": name, "runtime": rt, "configured": configured,
+                "path": shutil.which(binary) or t.get("app"), "version": version, "install": installer_of(t),
+                "last_update_at": last if isinstance(last, (int, float)) and not isinstance(last, bool) else None,
+                "auth": "unknown", "locks": _lock_state(state, rt), "health": _tool_health(rt, leads_cfg, lead_by)}
+
+    tools = [tool_node(n, _dict(t), tool_runtime(n, _dict(t)), True) for n, t in sorted(tools_cfg.items())]
+    for n, rt in sorted(_derived_tools(leads_cfg, seats_cfg, tools_cfg, rt_tool).items()):
+        tools.append(tool_node(n, {}, rt, False))
+        rt_tool[rt] = n
+    tools.sort(key=lambda t: t["name"])
     tool_names = {t["name"] for t in tools}
 
     def tool_of(runtime):
