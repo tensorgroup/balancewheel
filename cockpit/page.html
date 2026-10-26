@@ -5,14 +5,348 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>bw cockpit</title>
 <style nonce="{{NONCE}}">
-  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; padding: 1rem 1.25rem; }
+  :root {
+    --bg: #fbfbf9; --fg: #1d1d1b; --muted: #6b6b66; --line: #deddd6; --head: #f1f0eb;
+    --accent: #2f5f8f; --bar: #4c7fb0; --bar2: #b07a3c; --warn: #9a4b00; color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a; --fg: #e6e5e0; --muted: #9a9993; --line: #34363a; --head: #222427;
+      --accent: #8db8e3; --bar: #6f9fcf; --bar2: #d29a5a; --warn: #f0a85a; color-scheme: dark;
+    }
+  }
+  body { font: 14px/1.45 system-ui, sans-serif; margin: 0; padding: 1rem 1.25rem 2rem; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 1.15rem; margin: 0 0 .75rem; }
+  h2 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
+  nav { display: flex; flex-wrap: wrap; gap: .25rem; border-bottom: 1px solid var(--line); margin-bottom: 1rem; }
+  nav button { font: inherit; background: none; color: var(--muted); border: 0; border-bottom: 2px solid transparent;
+               padding: .4rem .75rem; cursor: pointer; }
+  nav button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+  .wrap { overflow-x: auto; }
+  table { border-collapse: collapse; font-variant-numeric: tabular-nums; margin-bottom: .5rem; }
+  th, td { border-bottom: 1px solid var(--line); padding: .3rem .6rem; text-align: left; vertical-align: top; }
+  th { background: var(--head); font-weight: 600; white-space: nowrap; }
+  td.num { text-align: right; white-space: nowrap; }
+  .muted, .na { color: var(--muted); }
+  .warn { color: var(--warn); }
+  .note { color: var(--muted); margin: .25rem 0 .75rem; }
+  svg.bars { display: block; max-width: 100%; height: auto; margin: .5rem 0 1rem; }
+  svg.bars rect.a { fill: var(--bar); }
+  svg.bars rect.b { fill: var(--bar2); }
+  svg.bars text { fill: var(--muted); font-size: 10px; }
+  svg.bars line { stroke: var(--line); }
+  #refresh { font: inherit; margin-left: auto; background: none; color: var(--accent); border: 0; cursor: pointer; }
 </style>
 </head>
 <body>
 <h1>bw cockpit</h1>
-<p id="status">The views arrive in the next build step.</p>
+<nav id="tabs" role="tablist"></nav>
+<main id="view" aria-live="polite"></main>
 <script nonce="{{NONCE}}">
-  "use strict";
+"use strict";
+const TABS = ["Models", "Usage", "History", "Now", "Graph"];
+const SVG_NS = "http://www.w3.org/2000/svg";
+const NA = "unavailable";
+let current = TABS[0];
+
+/* Every string reaches the DOM through textContent or setAttribute; nothing is parsed as markup. */
+function el(tag, attrs, text) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, String(v));
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+function svg(tag, attrs, text) {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, String(v));
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+function missing(v) { return v === null || v === undefined; }
+function num(v, digits) {
+  if (missing(v)) return NA;
+  if (typeof v !== "number") return String(v);
+  return digits === undefined ? v.toLocaleString() : v.toFixed(digits);
+}
+function when(v) {
+  if (missing(v)) return NA;
+  if (typeof v === "number") return new Date(v * 1000).toISOString().replace(".000Z", "Z");
+  return String(v);
+}
+function age(s) {
+  if (missing(s)) return NA;
+  const m = s / 60;
+  return m < 120 ? m.toFixed(0) + "m" : m < 2880 ? (m / 60).toFixed(0) + "h" : (m / 1440).toFixed(0) + "d";
+}
+function usd(v) {
+  if (missing(v)) return NA;
+  const x = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(x) ? "$" + x.toFixed(x < 1 ? 4 : 2) : String(v);
+}
+function para(text, cls) { return el("p", {class: cls || "note"}, text); }
+
+/* cols: [{h: header, v: row => value, f: formatter, src: row => hover text, num: bool}] */
+function table(cols, rows, empty) {
+  if (!rows || rows.length === 0) return para(empty || "nothing recorded yet");
+  const t = el("table");
+  const hr = el("tr");
+  for (const c of cols) hr.appendChild(el("th", c.title ? {title: c.title} : {}, c.h));
+  t.appendChild(el("thead")).appendChild(hr);
+  const body = t.appendChild(el("tbody"));
+  for (const r of rows) {
+    const tr = el("tr");
+    for (const c of cols) {
+      const raw = c.v(r);
+      const text = c.f ? c.f(raw, r) : missing(raw) ? NA : String(raw);
+      const td = el("td", {}, text);
+      if (c.num) td.setAttribute("class", missing(raw) ? "num na" : "num");
+      else if (missing(raw)) td.setAttribute("class", "na");
+      if (c.src) td.setAttribute("title", c.src(r));
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+  const w = el("div", {class: "wrap"});
+  w.appendChild(t);
+  return w;
+}
+
+/* bars: [{label, a, b}] with a/b numbers or null; null draws no bar and says so on hover. */
+function barChart(items, aName, bName, srcText) {
+  const W = 640, H = 160, pad = 24, n = Math.max(items.length, 1);
+  const max = Math.max(1, ...items.map(i => (i.a || 0) + (i.b || 0)));
+  const step = (W - pad) / n, bw = Math.max(2, step * 0.7);
+  const s = svg("svg", {class: "bars", viewBox: "0 0 " + W + " " + (H + 18), role: "img",
+                         "aria-label": aName + (bName ? " and " + bName : "") + " per day"});
+  s.appendChild(svg("line", {x1: pad, y1: H, x2: W, y2: H}));
+  s.appendChild(svg("text", {x: 0, y: 10}, num(max)));
+  items.forEach((it, i) => {
+    const x = pad + i * step;
+    let y = H;
+    for (const [key, cls, name] of [["a", "a", aName], ["b", "b", bName]]) {
+      if (!name) continue;
+      const v = it[key];
+      const h = missing(v) ? 0 : (v / max) * (H - 14);
+      const r = svg("rect", {class: cls, x: x.toFixed(1), y: (y - h).toFixed(1), width: bw.toFixed(1), height: h.toFixed(1)});
+      r.appendChild(svg("title", {}, it.label + " · " + name + ": " + num(v) + " — " + srcText));
+      s.appendChild(r);
+      y -= h;
+    }
+    if (n <= 16 || i % Math.ceil(n / 8) === 0) s.appendChild(svg("text", {x: x.toFixed(1), y: H + 14}, it.label.slice(5)));
+  });
+  return s;
+}
+
+function byDay(rows, keys) {
+  const out = new Map();
+  for (const r of rows) {
+    const d = out.get(r.day) || {label: r.day};
+    for (const [k, field] of keys) {
+      const v = r[field];
+      const sofar = k in d ? d[k] : 0;
+      d[k] = missing(sofar) || missing(v) ? null : sofar + v; /* one unreported group makes the day unavailable */
+    }
+    out.set(r.day, d);
+  }
+  return [...out.values()].sort((x, y) => (x.label < y.label ? -1 : 1));
+}
+
+function renderModels(d, root) {
+  const small = d.small_n;
+  root.appendChild(el("h2", {}, "Seats"));
+  root.appendChild(para("Verdicts are the moderator's code checks, logged with each panel. Rates appear at n ≥ " + small +
+                        "; below that a row shows counts only."));
+  const rate = (k) => (r) => (r.n >= small ? r[k] / r.n : null);
+  const pct = (v, r) => (r.n < small ? "counts only (n=" + r.n + ")" : (v * 100).toFixed(0) + "%");
+  root.appendChild(table([
+    {h: "seat", v: r => r.seat},
+    {h: "panels", v: r => r.panels, num: true, src: r => "panel records naming " + r.seat + " in findings"},
+    {h: "confirmed", v: r => r.confirmed, num: true, src: r => "sum of findings." + r.seat + ".confirmed over " + r.panels + " panels"},
+    {h: "partial", v: r => r.partial, num: true, src: r => "sum of findings." + r.seat + ".partial over " + r.panels + " panels"},
+    {h: "refuted", v: r => r.refuted, num: true, src: r => "sum of findings." + r.seat + ".refuted over " + r.panels + " panels"},
+    {h: "n", v: r => r.n, num: true, src: () => "confirmed + partial + refuted"},
+    {h: "confirmed rate", v: rate("confirmed"), f: pct, num: true, src: r => r.confirmed + " / " + r.n},
+    {h: "unique (recent)", v: r => r.unique_recent, num: true, src: r => "findings.unique over the last " + r.recent_panels + " panels"},
+    {h: "standout panels", v: r => r.standout_panels, num: true, src: () => "panels where this seat alone had a confirmed critical or major"},
+    {h: "challenges", v: r => r.challenges, num: true, src: () => "disputes this seat raised"},
+    {h: "wins / involved", v: r => r.wins, f: (v, r) => v + " / " + r.involved, num: true, src: () => "disputes won / disputes taken part in"},
+    {h: "calls", v: r => r.calls, num: true, src: () => "usage events for this seat"},
+    {h: "tokens in", v: r => r.tokens_in, f: v => num(v), num: true, src: () => "sum of reported tokens_in in usage events"},
+    {h: "tokens out", v: r => r.tokens_out, f: v => num(v), num: true, src: () => "sum of reported tokens_out in usage events"},
+    {h: "cost", v: r => r.cost_usd, f: usd, num: true, src: () => "sum of reported cost_usd in usage events"},
+  ], d.seats, "no seats configured or logged"));
+
+  root.appendChild(el("h2", {}, "Leads"));
+  root.appendChild(para("Per runtime and model, counts with n; no composite score."));
+  const cols = [
+    {h: "runtime", v: r => r.runtime},
+    {h: "model", v: r => r.model},
+    {h: "leads", v: r => r.leads.join(", ")},
+    {h: "sessions", v: r => r.sessions, num: true, src: () => "session start events"},
+    {h: "lead minutes", v: r => r.minutes, num: true, src: r => "ended sessions only; " + r.lost_sessions + " lost, " + r.unparsed_sessions + " with unreadable times not counted"},
+    {h: "cap switches", v: r => r.cap_switches, num: true, src: () => "sessions ended with reason switch"},
+    {h: "overrides", v: r => r.overrides, num: true, src: () => "lead events with reason override"},
+    {h: "lost", v: r => r.lost_sessions, num: true, src: () => "sessions closed as lost after a crash"},
+    {h: "good / bad", v: r => r.good, f: (v, r) => v + " / " + r.bad, num: true, src: () => "rating events"},
+    {h: "asks", v: r => r.asks, num: true, src: () => "inbox asks from these sessions"},
+  ];
+  for (const p of d.lead_columns_pending) cols.push({h: p, v: () => "needs task events (later step)", src: () => "needs task events and panel.subject"});
+  root.appendChild(table(cols, d.leads, "no lead sessions logged yet"));
+}
+
+function renderUsage(d, root) {
+  const cc = d.ccswitch;
+  root.appendChild(el("h2", {}, "Tools (cc-switch, last " + d.days + " days)"));
+  if (!cc.available) {
+    root.appendChild(para(cc.reason || NA, "note warn"));
+  } else {
+    root.appendChild(barChart(byDay(cc.groups, [["a", "requests"]]), "requests", null, "cc-switch session logs and daily rollups"));
+    if (cc.skipped_rows) root.appendChild(para(cc.skipped_rows + " rows skipped (unreadable timestamps)"));
+    const src = r => (r.origin === "rollup" ? "usage_daily_rollups (app " + r.tool + ")" : "proxy_request_logs session rows") + (r.unmapped ? "; unmapped data source" : "");
+    root.appendChild(table([
+      {h: "day", v: r => r.day},
+      {h: "tool", v: r => r.tool, src},
+      {h: "model", v: r => r.model},
+      {h: "requests", v: r => r.requests, f: v => num(v), num: true, src},
+      {h: "errors", v: r => r.errors, f: v => num(v), num: true, src},
+      {h: "tokens in", v: r => r.tokens_in, f: v => num(v), num: true, src},
+      {h: "tokens out", v: r => r.tokens_out, f: v => num(v), num: true, src},
+      {h: "cache read", v: r => r.cache_read, f: v => num(v), num: true, src},
+      {h: "cache write", v: r => r.cache_write, f: v => num(v), num: true, src},
+      {h: "cost", v: r => r.cost_usd, f: usd, num: true, src},
+    ], cc.groups, "no usage in this window"));
+  }
+  root.appendChild(el("h2", {}, "Seats (usage events)"));
+  if (d.seats.length) root.appendChild(barChart(byDay(d.seats, [["a", "calls"]]), "calls", null, "usage events in the metrics log"));
+  if (d.seat_events_skipped) root.appendChild(para(d.seat_events_skipped + " usage events skipped (unreadable timestamps)"));
+  const src = () => "usage events in the metrics log; totals only over calls that reported them";
+  root.appendChild(table([
+    {h: "day", v: r => r.day},
+    {h: "seat", v: r => r.seat},
+    {h: "model", v: r => r.model},
+    {h: "calls", v: r => r.calls, num: true, src},
+    {h: "tokens in", v: r => r.tokens_in, f: v => num(v), num: true, src},
+    {h: "tokens out", v: r => r.tokens_out, f: v => num(v), num: true, src},
+    {h: "cost", v: r => r.cost_usd, f: usd, num: true, src},
+  ], d.seats, "no seat usage in this window"));
+}
+
+function renderHistory(d, root) {
+  root.appendChild(el("h2", {}, "Panels"));
+  root.appendChild(table([
+    {h: "when", v: r => r.ts},
+    {h: "target", v: r => r.target},
+    {h: "raw findings", v: r => r.raw, num: true, src: () => "findings_raw, else the sum of per-seat totals"},
+    {h: "disputes", v: r => r.disputes, num: true, src: () => "disputes in the panel record"},
+    {h: "seats", v: r => r.seats.join(", ")},
+    {h: "immediate agreement", v: r => r.immediate_agreement},
+    {h: "model changes", v: r => r.model_changes.map(c => c.seat + ": " + c.from + " → " + c.to).join("; ")},
+  ], d.timeline.slice().reverse(), "no panels logged yet"));
+  root.appendChild(el("h2", {}, "Disputes"));
+  root.appendChild(table([
+    {h: "when", v: r => r.ts},
+    {h: "target", v: r => r.target},
+    {h: "claim", v: r => r.summary},
+    {h: "challenger", v: r => r.challenger},
+    {h: "winner", v: r => r.winner},
+    {h: "reason", v: r => r.reason},
+  ], d.disputes, "no disputes logged yet"));
+  root.appendChild(el("h2", {}, "Findings"));
+  const rows = [];
+  for (const p of d.findings) for (const f of p.rows) rows.push(Object.assign({_ts: p.ts, _target: p.target}, f));
+  root.appendChild(table([
+    {h: "when", v: r => r._ts},
+    {h: "target", v: r => r._target},
+    {h: "seat", v: r => r.seat},
+    {h: "severity", v: r => r.severity},
+    {h: "verdict", v: r => r.verdict, src: () => "the moderator's check against the code"},
+    {h: "group", v: r => r.group},
+    {h: "finding", v: r => r.summary !== undefined ? r.summary : r.title},
+  ], rows, "no findings detail logged yet"));
+  root.appendChild(el("h2", {}, "Sessions and lead changes"));
+  root.appendChild(table([
+    {h: "when", v: r => r.ts},
+    {h: "event", v: r => r.kind},
+    {h: "project", v: r => r.project},
+    {h: "lead", v: r => r.lead},
+    {h: "reason", v: r => r.reason},
+  ], d.markers.slice().reverse(), "no lead sessions logged yet"));
+}
+
+function windowsText(ws) {
+  if (!ws || !ws.length) return null;
+  return ws.map(w => w.name + " " + num(w.used_pct, 0) + "%" + (missing(w.resets_at) ? "" : " until " + when(w.resets_at))).join("; ");
+}
+
+function renderNow(d, root) {
+  root.appendChild(el("h2", {}, "Plans"));
+  root.appendChild(table([
+    {h: "plan", v: r => r.name},
+    {h: "billing", v: r => r.billing},
+    {h: "windows", v: r => (r.unknown ? null : windowsText(r.windows)), f: (v, r) => (r.unknown ? "unknown: " + (r.reason || NA) : v || NA),
+     src: r => (r.source ? r.source + " snapshot, observed " + age(r.age_s) + " ago" : "no usable reading (quota: " + r.quota + ")")},
+    {h: "source", v: r => r.source, src: r => "quota: " + r.quota},
+    {h: "age", v: r => r.age_s, f: age, num: true, src: r => (r.source ? r.source + " snapshot observed_at" : "no reading")},
+    {h: "pools", v: r => windowsText((r.pools || []).map(w => Object.assign({}, w, {name: w.name + " (" + (w.applies_to || []).join(", ") + ")"}))), src: () => "fresh Orca snapshot, whichever source won the windows"},
+    {h: "capped until", v: r => r.cap_until, f: v => (missing(v) ? "—" : when(v)), src: () => "cap record in the state dir"},
+    {h: "cross-check", v: r => (r.cross_check ? windowsText(r.cross_check.windows) : null), f: v => v || "—", src: () => "Orca reading, shown, never used for decisions"},
+    {h: "limits", v: r => (r.limits && r.limits.key_limit ? r.limits.key_limit : null),
+     f: v => (v ? usd(v.limit_remaining) + " left of " + usd(v.limit) : "—"), src: () => "the key's own credit limit from the probe"},
+    {h: "month spend", v: r => r.spend || null,
+     f: v => (!v ? "—" : v.unknown ? "unknown: " + v.reason : usd(v.spend_usd) + " of " + usd(v.budget_usd_month)),
+     src: r => (r.spend && !r.spend.unknown ? "probe snapshot observed " + when(r.spend.observed_at) : "probe snapshot")},
+    {h: "notice", v: r => r.notice, f: v => v || "—"},
+  ], d.plans, "no plans configured"));
+  root.appendChild(el("h2", {}, "Worktrees"));
+  if (!d.inbox_readable) root.appendChild(para("the inbox could not be read; ask counts unavailable", "note warn"));
+  root.appendChild(table([
+    {h: "worktree", v: r => r.worktree},
+    {h: "lead", v: r => r.lead, src: () => "the worktree lock"},
+    {h: "since", v: r => r.since, f: when},
+    {h: "pinned", v: r => r.pinned, f: v => v || "—", src: () => "leads.json pin"},
+    {h: "open asks", v: r => r.asks, num: true, src: () => "inbox.jsonl, unanswered asks"},
+    {h: "open notices", v: r => r.notices, num: true, src: () => "inbox.jsonl, unanswered notices"},
+  ], d.worktrees, "no worktree has a lead or a pin"));
+  root.appendChild(el("h2", {}, "Open watches"));
+  root.appendChild(table([
+    {h: "when", v: r => r.ts},
+    {h: "watch", v: r => r.kind},
+    {h: "target", v: r => r.target},
+    {h: "id", v: r => r.id},
+  ], d.watches, "no open watches"));
+}
+
+const RENDER = {Models: renderModels, Usage: renderUsage, History: renderHistory, Now: renderNow};
+
+async function show(tab) {
+  current = tab;
+  for (const b of document.querySelectorAll("#tabs button[data-tab]")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
+  const root = document.getElementById("view");
+  root.replaceChildren(para("loading…"));
+  let d;
+  try {
+    const r = await fetch("/api/" + tab.toLowerCase(), {credentials: "same-origin", cache: "no-store"});
+    d = r.ok ? await r.json() : {available: false, reason: "HTTP " + r.status};
+  } catch (e) {
+    d = {available: false, reason: "the cockpit server is not answering"};
+  }
+  if (tab !== current) return;
+  const out = el("section");
+  if (d.available === false || !RENDER[tab]) out.appendChild(para(tab + ": " + (d.reason || NA), "note warn"));
+  else RENDER[tab](d, out);
+  root.replaceChildren(out);
+}
+
+const nav = document.getElementById("tabs");
+for (const t of TABS) {
+  const b = el("button", {type: "button", role: "tab", "data-tab": t, "aria-selected": "false"}, t);
+  b.addEventListener("click", () => show(t));
+  nav.appendChild(b);
+}
+const again = el("button", {type: "button", id: "refresh", title: "read every source again"}, "refresh");
+again.addEventListener("click", () => show(current));
+nav.appendChild(again);
+show(current);
 </script>
 </body>
 </html>

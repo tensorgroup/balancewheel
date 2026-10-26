@@ -26,8 +26,16 @@ not against the prose.
   in use is a one-line error and exit 1, and so is a `--port` that lead sandboxes do not deny
   (anything but 8765 or the configured `cockpit.port`): set `cockpit.port` and re-run
   `bw sandbox verify` instead. Idle connections close after 10 s, the port is never bound with
-  address reuse, and a browser hanging up mid-response prints nothing. The page is a stub until
-  the views land.
+  address reuse, and a browser hanging up mid-response prints nothing. The page (`cockpit/page.html`, one file, vanilla JS
+  and inline SVG, every string through `textContent`/`setAttribute`, light and dark) has tabs
+  Models, Usage, History, Now, Graph over `cockpit/views.py`: `/api/models` (seat rows, lead rows,
+  the lead columns that wait for `task` events, `small_n` 10), `/api/usage` (cc-switch groups for
+  the last 30 days, or `available: false` with the reason, plus per-day seat rows from `usage`
+  events), `/api/history` (panels, disputes, findings, session and lead markers), `/api/now`
+  (per plan: windows, pools, source and age, cap, notice, cross-check, limits, and a metered plan's
+  month spend from its probe snapshot; per worktree the current and pinned lead and open inbox
+  counts; open watches) and `/api/graph` (`available: false` until the graph lands). An
+  unreported number is `null` in the JSON and "unavailable" on the page, never 0.
 - **Config `cockpit.port`** (`metrics/config.py`): an integer from 1024 to 65535, default 8765;
   anything else is a config error. Unknown `cockpit.*` keys warn and are ignored, as under
   `tools.*`. The resolved config's `cockpit` is `{"port": N}`. Every lead sandbox already denies

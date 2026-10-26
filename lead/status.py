@@ -37,7 +37,7 @@ def _worktrees(state):
         meta = read_json(os.path.join(locks, f), {}) or {}
         key = f[:-5]
         if meta.get("lead") or key in pins:
-            out.append({"worktree": meta.get("worktree", key), "lead": meta.get("lead", "idle"),
+            out.append({"key": key, "worktree": meta.get("worktree", key), "lead": meta.get("lead", "idle"),
                         "since": meta.get("started"), "pinned": pins.get(key)})
     return out
 
