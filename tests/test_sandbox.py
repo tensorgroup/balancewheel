@@ -90,6 +90,39 @@ class Grants(unittest.TestCase):
                 self.assertIn(rule, prof)
                 self.assertIn(rule, raw)
 
+    def test_ccswitch_dir_is_a_secret_read(self):
+        prof = sandbox.seatbelt_profile(self.grants(self.wt), str(self.root / "scratch"))
+        p = os.path.realpath(os.path.expanduser("~/.cc-switch"))
+        deny = next(part for part in prof.split(")(") if part.startswith("deny file-read* (subpath"))
+        self.assertIn(f'(subpath "{p}")', deny)
+
+    def test_ports_denied_in_both_backends(self):
+        ports = sandbox.denied_ports({"cockpit": {"port": 9100}})
+        self.assertEqual(ports, [6768, 8765, 9100, 15721])
+        self.assertEqual(sandbox.denied_ports(), [6768, 8765, 15721])
+        g = self.grants(self.wt)
+        prof = sandbox.seatbelt_profile(g, str(self.root / "scratch"), ports)
+        raw = "\n".join(sandbox.nono_profile(g, str(self.root / "scratch"), ports)["unsafe_macos_seatbelt_rules"])
+        for port in (6768, 15721, 8765, 9100):
+            rule = f'(deny network-outbound (remote ip "localhost:{port}"))'
+            self.assertIn(rule, prof)
+            self.assertIn(rule, raw)
+
+    def test_sealed_dir_denied_and_inbox_view_readable(self):
+        g = self.grants(self.wt)
+        sealed, view = str(self.state / "sealed"), str(self.state / "inbox-view")
+        prof = sandbox.seatbelt_profile(g, str(self.root / "scratch"))
+        self.assertIn(f'(deny file-read* (subpath "{sealed}"))', prof)
+        p = sandbox.nono_profile(g, str(self.root / "scratch"))
+        fs = p["filesystem"]
+        for key in ("allow", "write", "read", "read_file"):
+            self.assertFalse(any("sealed" in x for x in fs[key]), (key, fs[key]))
+        self.assertFalse(any("sealed" in r and "allow" in r for r in p["unsafe_macos_seatbelt_rules"]))
+        self.assertIn(view, g.read)
+        self.assertIn(view, fs["read"])
+        for _, _, path in g.rules:
+            self.assertFalse(view == path or view.startswith(path.rstrip("/") + "/"), path)
+
     def test_nono_profile_shape(self):
         p = sandbox.nono_profile(self.grants(self.wt), str(self.root / "scratch"))
         self.assertEqual(p["extends"], "default")
@@ -258,6 +291,66 @@ class EscapesUnderSeatbelt(unittest.TestCase):
             self.assertNotIn("CONNECTED", r.stdout)
         finally:
             server.close()
+
+    def test_ccswitch_db_unreadable(self):
+        home = self.root / "h"
+        (home / ".cc-switch").mkdir(parents=True)
+        (home / ".cc-switch" / "cc-switch.db").write_bytes(b"SQLite format 3\x00CCSW-c4n4ry")
+        probe = f'cat "{home}/.cc-switch/cc-switch.db"'
+        self.assertIn("CCSW-c4n4ry", subprocess.run(["/bin/sh", "-c", probe], capture_output=True, text=True).stdout)
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            r = self.sh(self.wt, probe)
+        self.assertNotIn("CCSW-c4n4ry", r.stdout)
+
+    def test_sealed_copy_unreadable(self):
+        d = self.state / "sealed" / "x"; d.mkdir(parents=True)
+        (d / "copy.db").write_text("SEALED-c4n4ry")
+        probe = f'cat "{d}/copy.db"'
+        self.assertIn("SEALED-c4n4ry", subprocess.run(["/bin/sh", "-c", probe], capture_output=True, text=True).stdout)
+        self.assertNotIn("SEALED-c4n4ry", self.sh(self.wt, probe).stdout)
+
+    def test_inbox_view_readable_not_writable(self):
+        view = self.state / "inbox-view"; view.mkdir(exist_ok=True)
+        f = view / "k.md"; f.write_text("ANSWER-c4n4ry\n")
+        before = f.read_bytes()
+        r = self.sh(self.wt, f'cat "{f}"')
+        self.assertIn("ANSWER-c4n4ry", r.stdout, r.stderr)
+        r = self.sh(self.wt, f'echo x > "{f}"')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(f.read_bytes(), before)
+
+    PORT_PROBE = ('/usr/bin/python3 -c "import socket\n'
+                  'try:\n socket.create_connection((\'127.0.0.1\', {port}), 2); print(\'CONNECTED\')\n'
+                  'except OSError as e: print(\'REFUSED\', e)"')
+
+    def assert_port_unconnectable(self, port):
+        server = socket.socket()
+        try:
+            server.bind(("127.0.0.1", port))
+            server.listen(4)
+        except OSError:
+            server.close(); server = None
+            try:
+                socket.create_connection(("127.0.0.1", port), 2).close()  # held by its owner (Orca owns 6768)
+            except OSError:
+                self.skipTest(f"port {port} is taken and refuses connections; nothing to probe")
+        try:
+            probe = self.PORT_PROBE.format(port=port)
+            control = subprocess.run(["/bin/sh", "-c", probe], capture_output=True, text=True)
+            self.assertIn("CONNECTED", control.stdout, control.stderr)  # the probe works outside
+            r = self.sh(self.wt, probe)
+            self.assertNotIn("CONNECTED", r.stdout, port)
+        finally:
+            if server is not None:
+                server.close()
+
+    def test_denied_ports_unconnectable(self):
+        for port in (6768, sandbox.DEFAULT_COCKPIT_PORT):
+            with self.subTest(port=port):
+                self.assert_port_unconnectable(port)
+
+    def test_ccswitch_proxy_port_unconnectable(self):
+        self.assert_port_unconnectable(15721)
 
     def test_commit_inside_still_works(self):
         r = self.sh(self.wt, "echo y > g && git add g && git -c user.email=t@t -c user.name=t commit -qm in")

@@ -138,7 +138,8 @@ class Session:
                 rg = rg._replace(write=list(rg.write) + [home])
             scratch = os.path.realpath(tempfile.mkdtemp(prefix="bw-lead-"))
             grants = sandbox.lead_grants(ctx.project, rg, ctx.state)
-            argv, self.cleanup = sandbox.wrap(argv, grants, ctx.backend, home, scratch, rg.env)
+            argv, self.cleanup = sandbox.wrap(argv, grants, ctx.backend, home, scratch, rg.env,
+                                              sandbox.denied_ports(ctx.config))
         self.argv = argv
         self.proc = subprocess.Popen(argv, cwd=ctx.project.worktree, env=env, pass_fds=(ctx.lock.fd,),
                                      preexec_fn=_child_setup)

@@ -7,10 +7,12 @@ lets a later rule override an earlier one, which is how a linked worktree gets i
 dir back after the shared `worktrees/` dir is denied. Both backends also deny asking other
 processes to act (LaunchServices opens, Apple Events, preference writes, launchctl): a payload
 written to scratch could otherwise run unsandboxed. For the same reason they hide a canvas's
-control token and refuse its socket (CANVAS_CONTROL_DIRS).
+control token and refuse its socket (CANVAS_CONTROL_DIRS), and refuse loopback connections to
+the canvas and cockpit ports (denied_ports). bw's sealed copies of third-party databases are
+unreadable; the lead's answers view is readable, and no write rule covers it.
 
     python3 -m lead.sandbox run --worktree DIR --state-dir DIR [--read P]... [--write P]...
-        [--env K=V]... [--private-home] [--backend nono|sandbox-exec] -- argv...
+        [--env K=V]... [--private-home] [--deny-port N]... [--backend nono|sandbox-exec] -- argv...
 """
 import json
 import os
@@ -20,7 +22,8 @@ import sys
 import tempfile
 from collections import namedtuple
 
-Grants = namedtuple("Grants", "rules read")              # rules: [(allow|deny, subpath|literal, path)]
+Grants = namedtuple("Grants", "rules read deny_read")    # rules: [(allow|deny, subpath|literal, path)]
+Grants.__new__.__defaults__ = ((),)  # deny_read: paths no read grant reaches (bw's sealed copies)
 RuntimeGrants = namedtuple("RuntimeGrants", "read write env private_home deny_write")
 RuntimeGrants.__new__.__defaults__ = ((),)  # deny_write: paths inside `write` that stay read-only
 
@@ -35,9 +38,24 @@ IPC_DENIES = ["(deny lsopen)", "(deny appleevent-send)", "(deny user-preference-
 # socket under its config dir). A filesystem allow-list does not cover asking an uncontained
 # process to write: hide the token and refuse the socket. Denied whether or not installed.
 CANVAS_CONTROL_DIRS = ["Library/Application Support/orca", ".config/herdr"]
+# Loopback ports that take commands or hand out data: Orca's orcad WebSocket and cc-switch's
+# proxy. The cockpit's port is denied too: cookies are not port-isolated (RFC 6265 §8.5).
+CANVAS_CONTROL_PORTS = [6768, 15721]
+DEFAULT_COCKPIT_PORT = 8765
 SECRET_READS = [".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker/config.json",
                 ".codex/auth.json", ".claude/.credentials.json", ".kimi-code/credentials", ".pi/agent/auth.json",
-                ".gemini/oauth_creds.json", ".config/gcloud"]
+                ".gemini/oauth_creds.json", ".config/gcloud",
+                ".cc-switch"]  # its DB holds Codex auth and copies of every vendor config
+
+
+def denied_ports(config=None):
+    """Loopback ports every lead sandbox refuses: the canvas ports, the default cockpit port,
+    and the configured cockpit port (read raw; the config loader validates it)."""
+    ports = set(CANVAS_CONTROL_PORTS) | {DEFAULT_COCKPIT_PORT}
+    port = ((config or {}).get("cockpit") or {}).get("port")
+    if port is not None:
+        ports.add(int(port))  # never a string spliced into a profile
+    return sorted(ports)
 
 
 def check_path(p):
@@ -76,6 +94,9 @@ def lead_grants(project, runtime, state_dir):
             refuse_overlap(rp, [state])
     handoffs = os.path.join(state, "handoffs", project.worktree_key)
     os.makedirs(handoffs, exist_ok=True)
+    # The answers view is bw's: readable by the lead, inside no write grant.
+    inbox_view = os.path.join(state, "inbox-view")
+    os.makedirs(inbox_view, exist_ok=True)
     rules = [("allow", "subpath", wt), ("allow", "subpath", common), ("allow", "subpath", handoffs)]
     rules += [("allow", "subpath", _real(p)) for p in runtime.write]
     rules += [("deny", "subpath", _real(p)) for p in runtime.deny_write]
@@ -104,24 +125,32 @@ def lead_grants(project, runtime, state_dir):
     # A symlinked path (dotfiles) is read through its link: grant the link node as well.
     reads += [check_path(os.path.abspath(os.path.expanduser(p))) for p in list(runtime.read) + git_cfg
               if os.path.islink(os.path.expanduser(p))]
-    return Grants(rules, reads)
+    reads.append(check_path(inbox_view))
+    # Copies of third-party databases (cc-switch, Orca) bw reads: never readable by a lead.
+    return Grants(rules, reads, [check_path(os.path.join(state, "sealed"))])
 
 
 def _rule(action, kind, path):
     return f'({action} file-write* ({kind} "{path}"))'
 
 
-def canvas_denies():
+def canvas_denies(ports):
     home = os.path.expanduser("~")
     out = []
     for d in CANVAS_CONTROL_DIRS:
         p = check_path(os.path.realpath(os.path.join(home, d)))
         out += [f'(deny file-read* (subpath "{p}"))',
                 f'(deny network-outbound (remote unix-socket (subpath "{p}")))']
+    # "localhost" covers 127.0.0.1 and ::1 (checked by connect, not docs).
+    out += [f'(deny network-outbound (remote ip "localhost:{int(p)}"))' for p in ports]
     return out
 
 
-def seatbelt_profile(grants, scratch):
+def _read_denies(grants):
+    return [f'(deny file-read* (subpath "{check_path(p)}"))' for p in grants.deny_read]
+
+
+def seatbelt_profile(grants, scratch, ports=None):
     home = os.path.expanduser("~")
     parts = ["(version 1)", "(allow default)", "(deny file-write*)",
              f'(allow file-write* (subpath "/dev") (subpath "{check_path(os.path.realpath(scratch))}"))']
@@ -131,11 +160,12 @@ def seatbelt_profile(grants, scratch):
     paths = [p for p in paths if not any(p == o or p.startswith(o.rstrip("/") + "/") for o in own)]
     secrets = " ".join(f'(subpath "{check_path(p)}")' for p in paths)
     parts.append(f"(deny file-read* {secrets})")
-    parts += IPC_DENIES + canvas_denies()
+    parts += _read_denies(grants)
+    parts += IPC_DENIES + canvas_denies(denied_ports() if ports is None else ports)
     return "".join(parts)
 
 
-def nono_profile(grants, scratch):
+def nono_profile(grants, scratch, ports=None):
     first_allows, ordered = [], []
     seen_deny = False
     for r in grants.rules:
@@ -155,7 +185,8 @@ def nono_profile(grants, scratch):
                        "read_file": [p for p in grants.read if not os.path.islink(p) and os.path.isfile(p)]},
         # nono resolves grants to real paths; the link node itself needs a raw read rule.
         "unsafe_macos_seatbelt_rules": [f'(allow file-read* (literal "{p}"))' for p in grants.read if os.path.islink(p)]
-                                       + ordered + IPC_DENIES + canvas_denies(),
+                                       + ordered + _read_denies(grants)  # nono's default reads $TMPDIR
+                                       + IPC_DENIES + canvas_denies(denied_ports() if ports is None else ports),
     }
 
 
@@ -163,16 +194,17 @@ def backend():
     return "nono" if shutil.which("nono") else "sandbox-exec"
 
 
-def wrap(argv, grants, which, home, scratch, env):
-    """The argv that runs `argv` contained, and a cleanup for any profile file written."""
+def wrap(argv, grants, which, home, scratch, env, ports=None):
+    """The argv that runs `argv` contained, and a cleanup for any profile file written.
+    `ports`: loopback ports to refuse (default `denied_ports()`)."""
     envs = [f"HOME={home}", f"TMPDIR={scratch}"] + [f"{k}={v}" for k, v in env.items()]
     if which == "nono":
         fd, path = tempfile.mkstemp(prefix="bw-lead-", suffix=".json", dir=scratch)
         with os.fdopen(fd, "w") as f:
-            json.dump(nono_profile(grants, scratch), f)
+            json.dump(nono_profile(grants, scratch, ports), f)
         return (["nono", "run", "--silent", "--allow-cwd", "--profile", path, "--", "/usr/bin/env", *envs, *argv],
                 lambda: os.path.exists(path) and os.remove(path))
-    return (["sandbox-exec", "-p", seatbelt_profile(grants, scratch), "/usr/bin/env", *envs, *argv], lambda: None)
+    return (["sandbox-exec", "-p", seatbelt_profile(grants, scratch, ports), "/usr/bin/env", *envs, *argv], lambda: None)
 
 
 def _cli(args):
@@ -188,6 +220,7 @@ def _cli(args):
     run.add_argument("--deny-write", action="append", default=[])
     run.add_argument("--env", action="append", default=[])
     run.add_argument("--private-home", action="store_true")
+    run.add_argument("--deny-port", action="append", type=int, default=[])
     run.add_argument("--backend", choices=["nono", "sandbox-exec"])
     run.add_argument("argv", nargs=argparse.REMAINDER)
     a = ap.parse_args(args)
@@ -205,7 +238,7 @@ def _cli(args):
         _link_git_identity(home)
         writes.append(home)
     grants = lead_grants(project, RuntimeGrants(a.read, writes, env, a.private_home, a.deny_write), a.state_dir)
-    full, _ = wrap(argv, grants, a.backend or backend(), home, scratch, env)
+    full, _ = wrap(argv, grants, a.backend or backend(), home, scratch, env, a.deny_port or denied_ports())
     os.chdir(project.worktree)
     os.execvp(full[0], full)
 

@@ -4,7 +4,11 @@
 from its docs, its source (main at `a4e6e1f0`), and a hands-on spike on the author's machine.
 A deep four-seat design review of the adoption followed (43 raw findings, 17 after dedupe,
 none refuted); its conclusions are folded in below. Orca ships near-daily, so re-check the
-version-specific facts here before relying on them. Revised 2026-10-25: how the `bw guard` agy hook composes with Orca's.*
+version-specific facts here before relying on them. Revised 2026-10-25: how the `bw guard` agy hook composes with Orca's.
+Revised 2026-10-26 (re-checked on 1.4.240): no account auto-switch setting exists;
+orchestration is a skill, not an Experimental toggle (install step 3 rewritten); Orca's pi
+extensions join the list of files it edits; orcad's WebSocket port, cc-switch's proxy port
+and the cockpit port are now denied to every sandbox.*
 
 [Orca](https://github.com/stablyai/orca) is an MIT-licensed desktop "agent IDE": it runs
 Claude Code, Codex, agy, pi, Kimi Code and other CLI agents side by side, each in its own
@@ -24,8 +28,8 @@ only at the edges.
 | Panes, tabs, worktree per task, diff review, browser | Yes — its core | No (uses Orca or a terminal) |
 | Notifications, "needs you" badges, mobile companion | Yes | No |
 | Quota and reset times per vendor plan | Yes: Claude, Codex, agy pools, Kimi, GLM, Cursor and more | Reads Orca's snapshot; Claude's statusline and OpenRouter's key endpoint itself |
-| Same-vendor account switching | Yes (manual; auto at 90% is new) | No — and it must be off for bw-managed work (below) |
-| Multi-agent orchestration (runs, tasks, workers, decision gates) | Yes, experimental | No; the panel protocol is a different thing |
+| Same-vendor account switching | Yes, manual (1.4.240 has no auto-switch setting) | No — and Orca must manage no accounts for bw-managed work (below) |
+| Multi-agent orchestration (runs, tasks, workers, decision gates) | Yes, as an installable skill | No; the panel protocol is a different thing |
 | **Moving the lead to another vendor when a plan is capped, with a handoff, and back** | No (open feature requests only) | Yes — `bw lead` |
 | **Profiles**: a project's lead order, checkpoint rosters, panel depth | No | Yes |
 | **A review panel**: blind first round, claim-only cross-examination, moderator verifies every finding against the code | No — "race three agents" leaves the judging to you | Yes — the core idea |
@@ -79,6 +83,9 @@ bw's questions.
    Orca's pane variables and do nothing outside Orca, with one exception: the agy hook
    answers `{"decision":"ask"}` to PreToolUse *before* its gate, which can turn every tool
    call of a headless agy run outside Orca into an approval prompt.
+   It also writes three pi extensions, `~/.pi/agent/extensions/orca-agent-status.ts`,
+   `orca-prefill.ts` and `orca-titlebar-spinner.ts`, gated on `ORCA_PANE_KEY`. A pi lead in
+   bypass mode loads them; a guarded pi lead runs `--no-extensions` and does not.
 4. **Orca's own agent launch bypasses permissions** (`claude --dangerously-skip-permissions`,
    and the equivalent for every agent) unless set to Manual.
    **Composition with `bw guard`.** Orca's agy hook and the guard's both sit under agy's
@@ -102,18 +109,25 @@ bw's questions.
    blocks both channels; denying connections to its socket is defense in depth. Both were
    verified. This applies whenever the Orca app is running, whether or not the agent is in
    an Orca pane.
+7. **orcad listens on loopback port 6768** (its WebSocket). Before 2026-10-26 both sandboxes
+   could connect to it; orcad rejects any frame that is not a paired `e2ee_hello`, and the
+   pairing keys sit in the already-denied Orca directory, so nothing was reachable through
+   it. It is now denied anyway. Orca's agent-hook endpoint takes a token that sits in the
+   same denied directory (`agent-hooks/endpoint.env`).
 
 ## How to integrate
 
 ### Install and first launch
 
 1. Take Balancewheel's backup first (`setup/backup.sh`); do not rely on Orca's `.bak` files.
-   Orca's hook files are listed in `setup/paths.txt`.
+   Orca's hook files and its pi extensions directory are listed in `setup/paths.txt`.
 2. Install: `brew install --cask stablyai/orca/orca`. Start it with telemetry off:
    `open --env DO_NOT_TRACK=1 -a Orca`, and turn off Settings → Privacy → "Share anonymous
    usage data" so a Dock launch stays off too.
-3. In Orca's settings: Agents → Agent Permissions → **Manual**; Accounts → leave automatic
-   account switching **off**; leave Experimental → Orchestration off for managed worktrees.
+3. In Orca's settings: Agents → Agent Permissions → **Manual**; Accounts → add **no managed
+   accounts** (1.4.240 has no automatic switching setting; an account Orca manages is one it
+   can switch, so `bw start` checks there are none). Orchestration is a skill, not a setting:
+   do not install it for managed worktrees.
 4. Decide on Orca's status hooks. On (the default) gives Orca's working/waiting/done badges;
    `orca agent hooks off` removes them from every vendor config. Balancewheel never uses them
    as a signal, so either works — but with them on, agy-based seats and leads need their own
@@ -129,6 +143,13 @@ bw's questions.
   no connections to its socket, in both the nono and `sandbox-exec` profiles, for leads and
   seats (`lead/sandbox.py`, `CANVAS_CONTROL_DIRS`, since 2026-10-25). The attack script
   tries `orca terminal create` from inside whenever `orca` is installed.
+- **Every sandbox refuses loopback connections to the canvas and cockpit ports**
+  (`CANVAS_CONTROL_PORTS`, `denied_ports`, since 2026-10-26): 6768 (orcad), 15721 (cc-switch's
+  proxy), 8765 (the cockpit's default) and `cockpit.port` when configured — the cockpit too,
+  because cookies are not port-isolated. Both backends; each rule checked by a real connect
+  in `tests/test_sandbox.py`, and the attack script probes each port. Both also deny reads of
+  `~/.cc-switch` (its database holds Codex auth and copies of every vendor config) and of
+  bw's `state_dir/sealed/`, where bw's copies of Orca's and cc-switch's databases live.
 - **Seats load no user-level hooks** and `seat` and `bw lead` strip `ORCA_*` variables from
   what they pass to a seat; the seat verification key hashes every user-level config or hook
   file the runtime loads, so a canvas editing one forces re-verification instead of passing

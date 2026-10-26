@@ -52,6 +52,9 @@
 ~/.gemini/settings.json
 ~/.gemini/config/hooks.json
 ~/.kimi-code/config.toml
+# Orca also writes pi extensions here (orca-agent-status, orca-prefill, orca-titlebar-spinner);
+# they act only inside an Orca pane (ORCA_PANE_KEY).
+~/.pi/agent/extensions
 
 # git: global excludes for tool litter
 ~/.config/git/ignore

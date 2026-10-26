@@ -93,6 +93,7 @@ class SetupScriptsTest(unittest.TestCase):
                   if l.strip() and not l.lstrip().startswith("#")]
         self.assertIn("~/.local/state/balancewheel/leads.json", listed)
         self.assertIn("~/.local/state/balancewheel/handoffs", listed)
+        self.assertIn("~/.pi/agent/extensions", listed)  # Orca writes its pi extensions there
         for live in ("locks", "quota", "caps", "models", "containment.json", "guard.jsonl", "guard-verify.json", "guard"):
             self.assertFalse(any(l.rstrip("/").endswith(live) for l in listed), live)
 
