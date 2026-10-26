@@ -299,7 +299,7 @@ a `setup/new-project.sh`; the judgment steps (2, 4, 6) stay with the agent.
 
 The **lead** is the agent you work in for a project; it is also the moderator of every
 panel it convenes. One plan usually runs out first, so a project's **profile** (config
-schema 2) names its leads in order, and `bw lead` picks one:
+schema 3; a schema-2 file still loads) names its leads in order, and `bw lead` picks one:
 
     bw lead                  # start the profile's lead for this worktree
     bw lead --use <lead>     # pin a lead for this worktree; bw lead --auto unpins
@@ -309,6 +309,8 @@ schema 2) names its leads in order, and `bw lead` picks one:
     bw guard review          # audit the guard's stops and sampled allows, one evidence key at a time
     bw guard verify <rt>     # attack-test the guard on a runtime (pi) and record a pass
     bw guard install agy     # add the guard's entry to agy's hooks file (uninstall: bw guard uninstall agy)
+
+First time? See "Start leading" at the end of this section.
 
 - **Switching.** When the current lead's plan is capped, bw stops the lead (its whole
   process group, confirmed gone), writes a handoff from git facts and the lead's last
@@ -379,6 +381,39 @@ schema 2) names its leads in order, and `bw lead` picks one:
   worktree lock. Orca adds hooks to every vendor's config when it first starts, and a
   sandboxed process can drive Orca's control channel unless the sandbox denies it — read
   [docs/orca.md](docs/orca.md) before installing it. Plain terminal tabs work the same.
+
+### Start leading (first run)
+
+1. **Install `bw` from a checkout no lead works in.** A lead can edit its worktree, so if
+   `bw` ran from that same checkout the lead could change the guard and the sandbox profiles
+   of the next `bw lead`. Keep a separate clone you only ever update:
+
+       git clone https://github.com/tensorgroup/balancewheel ~/.local/share/balancewheel
+       ln -sf ~/.local/share/balancewheel/bin/bw ~/.local/bin/bw
+       ln -sf ~/.local/share/balancewheel/bin/bw-statusline ~/.local/bin/bw-statusline
+
+   Update it with `git -C ~/.local/share/balancewheel pull`. A clone you develop
+   balancewheel in stays separate. `bw` needs Python 3.9+; a guarded pi lead also needs
+   Node 22.6+.
+2. **Name your leads** in the config (`schema_version` 3): each lead's `runtime`, `model`,
+   `plan`, and an `autonomy` where the default does not suit (an agy lead needs `manual` or
+   `bypass` for now). List them in each profile's `lead_order`, map project paths to
+   profiles under `projects`, and validate with
+   `python3 ~/.local/share/balancewheel/metrics/log.py config`.
+3. **Let Claude Code leads report quota** through the status line, in
+   `~/.claude/settings.json` (leave out `BW_STATUSLINE_CHAIN` if you had no status line):
+
+       "statusLine": {"type": "command",
+         "command": "BW_STATUSLINE_CHAIN=\"<your previous command>\" ~/.local/bin/bw-statusline <plan>"}
+
+4. **Verify what `bw` contains**, once per runtime version: `bw sandbox verify pi` and
+   `bw sandbox verify kimi` for pi and Kimi leads (`bw lead` refuses them without a pass),
+   and `bw guard verify pi` for a guarded pi lead (without it, the lead starts with a note).
+   Each run spends a little model quota.
+5. **Lead.** In a project's worktree, `bw status` shows plans, leads and guard lines; `bw
+   lead` starts the profile's lead in your terminal (an Orca pane or a plain tab). Quit the
+   lead to end the session; `bw guard review` later shows what a guarded lead's guard
+   logged.
 
 ## Working with OpenEscapement
 
