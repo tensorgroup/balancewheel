@@ -9,7 +9,10 @@ Revised 2026-10-25 (re-checked on 1.4.240): no account auto-switch setting exist
 orchestration is a skill, not an Experimental toggle (install step 3 rewritten); Orca's pi
 extensions join the list of files it edits; orcad's WebSocket port, cc-switch's proxy port
 and the cockpit port are now denied to every sandbox. Revised 2026-10-25 (`bw start`): the
-launch argv and the settings check below are written as built.*
+launch argv and the settings check below are written as built. Revised 2026-10-25 (quota
+and the inbox): the Orca quota adapter's rules below are as built, with `orca_windows`, the
+mid-session re-read, and the fallback to a Terminal tab when `orca terminal create` fails.
+Earlier dates in this document were corrected to 2026-10-25, the day the work was done.*
 
 [Orca](https://github.com/stablyai/orca) is an MIT-licensed desktop "agent IDE": it runs
 Claude Code, Codex, agy, pi, Kimi Code and other CLI agents side by side, each in its own
@@ -136,12 +139,15 @@ bw's questions.
 
 ### Rules `bw` and setup enforce
 
-- **One launch path.** Orca hosts `bw lead`; it never starts a lead itself. `bw start` runs, once `orca status --json` says the app is running,
-  `orca terminal create --worktree path:<worktree> --title "<worktree basename> lead" --command "<cmd>"`,
-  where `<cmd>` is `env BALANCEWHEEL_CONFIG=… BW_STATE_DIR=… <real path of bin/bw> lead` (the
-  two assignments only when set in bw's own environment). It refuses first when bw lies
-  inside the target worktree or its common git dir, and opens nothing when the worktree's
-  lock is held.
+- **One launch path.** Orca hosts `bw lead`; it never starts a lead itself. `bw start` runs,
+  once `orca status --json` says the app is running,
+  `orca terminal create --worktree path:<worktree> --title "<worktree basename> lead"
+  --command "<cmd>"`, where `<cmd>` is
+  `env BALANCEWHEEL_CONFIG=… BW_STATE_DIR=… <real path of bin/bw> lead` (the two assignments
+  only when set in bw's own environment). If Orca is running but that command fails or times
+  out, `bw start` says so and opens a Terminal tab instead (see "Without Orca"). It refuses
+  first when bw lies inside the target worktree or its common git dir, and opens nothing when
+  the worktree's lock is held.
   Orca's `agent launch`, orchestration workers, automations, and session restore are not used
   on a worktree bw manages, because none of them take bw's worktree lock or its containment.
 - **The settings check** (`lead/orca.py`, shown by `bw status` and `bw start`) reads the
@@ -167,23 +173,59 @@ bw's questions.
   what they pass to a seat; the seat verification key hashes every user-level config or hook
   file the runtime loads, so a canvas editing one forces re-verification instead of passing
   silently. agy seats get their own configuration directory.
-- **Quota from Orca is advisory and bounded.** A plan with `"quota": "orca"` takes Orca's
-  provider entry only if `status` is ok with no `error`; `observed_at` is Orca's `updatedAt`
-  (never the time bw read it); readings older than twice `probe_every_min` are `unknown`;
-  `resetsAt` is converted from milliseconds; only account-wide windows feed rotation, and
-  model-pool buckets (Claude's Fable-only window, agy's pools) are ignored unless config maps
-  one to a lead or seat; Orca readings never create or clear a cap; the Orca version is
-  recorded with each snapshot. If Orca is closed or its JSON changes shape, the plan reads
-  `unknown` with a reason, `bw status` says rotation is running on observed caps only, and
-  everything else keeps working.
-- **Order of trust for quota**: Claude statusline → documented vendor surfaces (agy
-  `/usage`, OpenRouter `/api/v1/key`) → Orca's snapshot → `unknown` plus `bw cap`.
+- **Quota from Orca is advisory and bounded** (`lead/orca.py`, `lead/quota.py`):
+  - *Which entry.* A plan names its provider with `orca_provider` (`claude`, `codex`, `kimi`,
+    `antigravity`, … as `orca account list --json` spells them; config data, not constants in
+    code). Orca's entry is taken only if its `status` is ok with no `error`; anything else is
+    `unknown` with Orca's own words, escaped. `observed_at` is Orca's `updatedAt`, never the
+    time bw read it, and `resetsAt` is converted from milliseconds and bounds-checked.
+  - *Shape.* Each mapped provider's entry is checked on its own for the fields bw reads
+    (types, windows present). A failure makes the plans mapped to that provider `unknown`
+    with "Orca <version> changed shape: <path>"; other providers keep working. A change of
+    Orca's version re-runs the check and the next `bw start`, `bw probe`, or poll-loop re-read
+    prints what it found. The Orca version is recorded with each snapshot.
+  - *Freshness.* A reading older than twice `probe_every_min`, dated more than 300 s in the
+    future, or with malformed windows is `unknown`. Orca's list is its cache, so re-reading
+    it is not a fresh observation.
+  - *Windows.* Only account-wide windows (`session`, `weekly`) feed rotation, and only when
+    the plan's source is Orca (`quota: "orca"`, or `quota: "probe"` when the probe has no
+    usable reading). On a `statusline` plan with `orca_provider` set, Orca's windows are
+    shown as a cross-check and never chosen. Orca's reading is never logged with a `lead`
+    event's quota.
+  - *Pools.* A model-pool window (Claude's Fable-only weekly window, `fableWeekly`; agy's
+    buckets, `bucket:<name>`) is ignored unless `plans.*.orca_windows` maps it to lead or seat
+    names, which are checked against the config. Pools come from Orca's freshest known,
+    non-stale snapshot **whatever source won the plan's windows**, so a Claude plan read from
+    the statusline still sees its Fable-only pool. A lead named in a full pool (100% used,
+    reset in the future) is not started at `start` or at a boundary, and is skipped as a
+    replacement when a cap forces a switch; a pool alone never moves a running lead, never
+    takes out the plan, and seats in a pool are shown only. A malformed mapped pool is dropped
+    with a note; the plan's windows still stand.
+  - *Caps.* Orca readings never create or extend a cap. bw clears a cap past its `resets_at`
+    only once a fresh, known reading observed at or after that time exists for the plan, or
+    `cap_expiry_hours` after it; an unexpired cap is never touched.
+  - *Mid-session.* In the poll loop `bw lead` re-reads Orca's local cache synchronously (10 s
+    cap, no thread, no network) and rewrites the Orca snapshots for display and freshness; the
+    running decision still acts on caps alone, and a failing re-read is noted once and never
+    stops the lead.
+  - *Closed or changed.* If Orca is closed or its JSON changed shape, the plan reads `unknown`
+    with a reason, `bw status` says rotation is running on observed caps only (after a probe
+    interval with no reading), and everything else keeps working.
+- **Order of trust for quota** (per plan, by its `quota` setting): a `statusline` plan reads
+  the Claude statusline; a `probe` plan reads its documented vendor surface (OpenRouter's
+  `/api/v1/key`; agy's `/usage` once its output has been observed) and then Orca when
+  `orca_provider` is set; an `orca` plan reads Orca; otherwise `unknown` plus `bw cap`. The
+  first source with a known, fresh reading wins.
+- **agy has no probe yet.** `probe: "agy"` reads `unknown` ("awaiting Task G") until agy's
+  `/usage` output has been observed in a live run. A Google plan reads Orca's `antigravity`
+  entry meanwhile.
 
 ### Without Orca
 
 Nothing changes in behaviour: `bw start` opens a Terminal tab (a `.command` file in the
-state dir, run with `open -a Terminal`) with `bw lead`, Codex and Kimi
-quota read `unknown`, and rotation runs on observed caps and `bw cap`, as v0 does.
+state dir, run with `open -a Terminal`) with `bw lead` (also the fallback when Orca is running
+but `orca terminal create` fails), plans whose only source is Orca (Codex, Kimi) read
+`unknown`, and rotation runs on observed caps and `bw cap`, as v0 does.
 
 ## Open items
 

@@ -33,11 +33,14 @@ not against the prose.
   quota of every plan the profile touches and the lead it would start; then opens the worktree
   in an Orca pane (`orca terminal create`) when Orca runs, else in a Terminal tab through
   `state_dir/start/<worktree-key>.command` (0700), and prints the command to run (exit 1) when
-  neither works. A worktree that already has a lead is not opened again. Results go to
+  neither works; a running Orca whose `orca terminal create` fails falls back to the Terminal
+  tab. A worktree that already has a lead is not opened again. Results go to
   `state_dir/start.json` (`ts`, `project`, `tools`, `verify`, `orca_version`), which `bw status`
   reads for its `last start:` line. `--dry-run` runs only git and `orca status` and writes
   nothing. Containment and guard passes are now recorded under an flock on `<store>.lock`, so
-  concurrent re-verifies never drop one.
+  concurrent re-verifies never drop one. Docs: the README, the Orca
+  guide, and the 2026-10-24 spec (amendments A3–A6) describe `bw start`; the spec's cc-switch
+  version reads 4.0.20.
 - **`bw probe [plan...]`** (`bin/bw`, `lead/probes.py`): a new command. It reads quota now for
   the named plans (all plans without one) and prints one line per plan: the arbitrated summary
   with its source and age, plus any notice. One `orca account list` is shared by every
@@ -53,6 +56,24 @@ not against the prose.
   <time>`. A key credit limit is shown under `limits`, never a window. Probe `agy` is unknown
   (`agy /usage: awaiting Task G`) and runs nothing. `bw start` (step 4) and `bw lead` (before its
   first decision and at the session boundary, never in the poll loop) run the same refresh.
+- **Per-source quota snapshots and an arbiter** (`lead/quota.py`, `lead/orca.py`,
+  `lead/rotation.py`, `lead/runner.py`, `lead/status.py`). Besides the statusline's
+  `quota/<plan>.json`, each source writes `quota/<plan>.<source>.json` (`probe`, `orca`); an
+  unknown snapshot carries `last_known_at`. `quota.read_quota(state, config)` now arbitrates per
+  plan: windows from the first known, fresh source in the plan's order (`statusline`; `probe`
+  then `orca`; `orca`), where `probe` and `orca` readings older than twice `probe_every_min`,
+  dated more than 300 s ahead, or malformed are unknown; pools (`orca_windows`) from the
+  freshest known, non-stale Orca snapshot whichever source won; Orca's windows on a statusline
+  plan only as `cross_check`, display-only. `rotation.decide` does not start a lead named in a
+  full pool at `start` or `boundary` and skips it as a replacement when a cap forces a switch;
+  a pool never moves a running lead. Caps past their `resets_at` are cleared by bw once a fresh
+  known reading observed at or after that time exists, else `cap_expiry_hours` later. The Orca
+  adapter checks each mapped provider's shape on its own and re-checks on a version change; a
+  malformed mapped pool is dropped with a note. `bw lead` re-reads Orca's local cache in its
+  poll loop (synchronous, 10 s cap, display only; a failure never stops the lead). **Log
+  content change:** a `lead` event's `quota` is the arbitrated reading and no longer carries
+  `cross_check`. Docs: the README, the Orca guide, `docs/stack.md`, the 2026-10-24 spec
+  (amendments A7–A10) and the guard spec (decision 7 superseded) describe it as built.
 - **Orca and cc-switch checks in `bw status`** (`bin/bw`, `lead/status.py`, `lead/orca.py`,
   `lead/sqlite_ro.py`): `bw status` adds `orca:` and `cc-switch:` lines. Orca's are whether
   it runs (`orca status --json`; installed but not running gets its own line) and its
@@ -192,9 +213,7 @@ not against the prose.
 - **Runtime locks and verification output** (`lead/locks.py`, `lead/verify.py`): `bw lead`
   takes its shared runtime lock before the verification check, and bw keeps a second
   non-inherited shared lock so a lead cannot unlock or upgrade the inherited one; mid-session
-  takes never block. Verification failure output now goes to stderr. Docs: the README, the
-  Orca guide, and the 2026-10-24 spec (amendments A3–A6) describe `bw start`; the spec's
-  cc-switch version reads 4.0.20.
+  takes never block. Verification failure output now goes to stderr.
 
 - **Lead sandboxes deny cc-switch's data, bw's sealed copies, and the canvas and cockpit
   ports; leads read their answers view** (`lead/sandbox.py`, `lead/runner.py`). Both backends

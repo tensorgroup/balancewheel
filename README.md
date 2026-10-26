@@ -102,6 +102,7 @@ is a liability. In the reference setup the paths are:
 | `~/.config/git/ignore` | tool-litter patterns | appends |
 | `~/.codex/hooks.json`, `~/.gemini/settings.json`, `~/.gemini/config/hooks.json`, `~/.kimi-code/config.toml`, `~/.pi/agent/extensions` | vendor hook config | *nothing* — listed because [Orca](docs/orca.md), the recommended canvas, adds its status hooks here (and to the Claude Code settings and Codex config above, plus pi extensions) on first launch; back up before installing it |
 | `~/.cc-switch/settings.json` | [cc-switch](docs/stack.md)'s settings (usage view; optional) | creates, only when absent, before its first launch (`bw setup cc-switch`); refuses to overwrite a file that differs |
+| `~/.local/state/balancewheel/inbox.jsonl` | the asks leads put to you, bw's notices, and your answers (`bw inbox`, `bw answer`); the user's own record | nothing at setup; backed up. Its `inbox-view/` answers files are regenerated from it and stay out |
 | `~/.codex/auth.json`, `~/.pi/agent/auth.json`, your secrets file | credentials | reads only; never written, never backed up |
 
 Everything on that list is under your home directory. A repo's own instruction files
@@ -305,7 +306,10 @@ schema 3; a schema-2 file still loads) names its leads in order, and `bw lead` p
     bw start [path]          # update tools, re-verify, pick the lead, open it in Orca or a Terminal tab
     bw lead                  # start the profile's lead for this worktree
     bw lead --use <lead>     # pin a lead for this worktree; bw lead --auto unpins
-    bw status                # plans (quota, caps), worktrees, leads and how each is contained
+    bw status                # plans (quota, caps), worktrees, leads, how each is contained, open inbox items
+    bw probe [plan...]       # read quota now (OpenRouter key, Orca), one line per plan
+    bw inbox [--project] [--all]   # open asks from leads and notices from bw (--all: answered too)
+    bw answer <id> "<text>"  # answer an ask, or close a notice
     bw cap <plan>            # record that a plan is capped (for leads without a statusline)
     bw sandbox verify <rt>   # attack-test a bw-contained runtime (pi, kimi) and record a pass
     bw guard review          # audit the guard's stops and sampled allows, one evidence key at a time
@@ -386,18 +390,22 @@ First time? See "Start leading" at the end of this section.
      across installers and one after another within one (two Homebrew casks, two npm
      globals), one line per tool as it finishes. A tool counts as updated only when both
      versions read and differ. A tool whose runtime is in use by a running lead is skipped
-     and tried next start; Orca and other self-updating apps are version-only. `--no-update`
-     skips this step and keeps the tools' last recorded history.
+     and tried next start; Orca and other self-updating apps are version-only.
+     `updates.min_interval_hours` (default 0: every start) skips a tool that was updated more
+     recently than that (`skipped-interval`). `--no-update` skips this step and keeps the
+     tools' last recorded history.
   2. **re-verifies each lead runtime** whose containment key (pi, Kimi) or guard key (guarded
      leads) changed, on a pool with one worker per runtime, starting as that tool's update
      finishes. This runs whether or not anything updated, spends a little model quota, and
      leaves a runtime `pending` with the reason when the test cannot run (plan capped,
      version unreadable, agy's hook spike not done) or with `--no-verify`.
-  3. **shows the quota** of every plan the profile touches and the lead it would start.
-  4. **opens the worktree.** With Orca running: an Orca pane titled `<worktree> lead` through
-     `orca terminal create --worktree path:<worktree> --command "<bw> lead"`. Otherwise a
-     Terminal tab, through a small `.command` file under the state dir's `start/` that
-     `open -a Terminal` runs. If neither works, it prints the command and exits 1. A
+  3. **reads and shows the quota** of every plan the profile touches (OpenRouter's key
+     endpoint and Orca's cache, see "Quota sources") and the lead it would start.
+  4. **opens the worktree.** With Orca running: an Orca pane titled `<worktree basename> lead`
+     through `orca terminal create --worktree path:<worktree> --command "<bw> lead"`. Otherwise
+     a Terminal tab, through a small `.command` file under the state dir's `start/` that
+     `open -a Terminal` runs; so too when Orca is running but `orca terminal create` fails
+     (bw says so first). If neither works, it prints the command and exits 1. A
      worktree that already has a lead is not opened again. `bw start` never starts the
      cockpit; it prints the `bw cockpit` hint.
 
@@ -405,7 +413,64 @@ First time? See "Start leading" at the end of this section.
   line). `--dry-run` runs only git and `orca status` and changes nothing. **Runtime locks:**
   every `bw lead` holds a shared lock on its runtime from before the verification check
   through the session, so an update can land neither between the check and the launch nor
-  under a running lead; a switch mid-session never waits on an update.
+  under a running lead. `bw lead` waits for an update of its runtime that is in progress when
+  it starts; a switch mid-session never waits on one (it stays on the current lead until a
+  later poll finds the lock free).
+- **Quota sources (`plans.*.quota`, since 2026-10-25).** Each plan names where its numbers
+  come from: `statusline` (Claude Code reports them; `bin/bw-statusline`), `probe` (a
+  documented vendor surface, chosen by `plans.*.probe`, which defaults from the plan's
+  `vendor`: `openrouter` reads OpenRouter's key endpoint, `google` is agy's `/usage`), `orca`
+  (Orca's cached poll of that provider, named by `orca_provider`), or `none`. Every source
+  writes its own snapshot under the state dir's `quota/`, and bw picks per plan by precedence:
+  a `statusline` plan reads the statusline only, a `probe` plan its probe and then Orca (when
+  `orca_provider` is set), an `orca` plan Orca; the first source whose reading is known and
+  fresh wins, and a plan with none reads `unknown` with every source's reason (a notice after a
+  probe interval without one). Readings from `probe` and `orca` older than twice
+  `probe_every_min`, dated in the future, or malformed are `unknown`. `bw probe [plan...]`
+  reads now and prints one line per plan; `bw start` and `bw lead` (at its start and each
+  session boundary) do the same, and no network probe ever runs mid-session. In the poll loop
+  `bw lead` re-reads Orca's local cache only, for display and freshness, and a failing re-read
+  never stops the lead.
+  - **Orca.** `orca_provider` (a name from `orca account list --json`: `claude`, `codex`,
+    `kimi`, `antigravity`, …) is checked per provider for the shape bw reads, and a version
+    change re-checks it, so an Orca update that renames a field makes only that provider's
+    plans `unknown` ("Orca <version> changed shape: <path>"). Account-wide windows feed
+    rotation only when Orca is the plan's source; on a `statusline` plan they ride along as a
+    cross-check, shown and never chosen. **Pools** (Claude's Fable-only window, agy's
+    per-model buckets) are ignored unless `orca_windows` maps one (`fableWeekly` or
+    `bucket:<name>`) to lead or seat names: a lead named in a full pool does not start, and is
+    skipped as a replacement when a cap forces a switch, while a pool alone never moves a
+    running lead or caps a plan. Pools come from Orca's freshest known reading whichever
+    source won the plan's windows. A malformed pool is dropped with a note; the plan's windows
+    stand.
+  - **OpenRouter.** `probe: "openrouter"` sends the key from `key_env` (default
+    `OPENROUTER_API_KEY`) to `https://openrouter.ai/api/v1/key` and nowhere else; redirects are
+    refused and the key appears in no file, output, or error. With `budget_usd_month > 0` the
+    plan gets a `budget` window: the UTC month's spend (`usage_monthly`) against it, reset on
+    the 1st. If the key's response lacks `usage_monthly`, monthly spend reads **unknown**
+    unless bw's own first reading of the month was taken by 00:00 UTC on the 1st, so it never
+    understates spend; the plan then has no budget window and says so. The key's own credit
+    limit is shown, never a window. A budget of 0 means no budget window.
+  - **agy and Google.** agy's `/usage` output has not been observed yet, so `probe: "agy"` reads
+    `unknown` ("awaiting Task G") and runs nothing. Until then a Google plan can read Orca's
+    `antigravity` entry (`quota: "orca"`).
+  - **Caps.** A reading never creates or extends a cap. bw removes a cap past its
+    `resets_at` once a fresh known reading taken at or after that time exists, else
+    `cap_expiry_hours` after it; an unexpired cap is never touched by a reading.
+- **The inbox (since 2026-10-25).** A lead asks you something only you can answer by writing
+  a file, not by printing it: it writes `$BW_ASKS/.tmp-<random>` and renames it to
+  `$BW_ASKS/<random>.ask`, one question per file (`BW_ASKS` is a directory the lead can
+  write). bw reads only complete `*.ask` regular files, bounded in size and number (50 per
+  session, then one notice), and records each in `inbox.jsonl` in the state dir, which only bw
+  writes; it drains once more when the lead exits or is switched, so open asks reach the
+  handoff. `bw inbox` lists open asks and bw's own notices (all leads capped, a pinned lead
+  capped, a guard that could not be reached, an ingest problem); `--project` limits it to
+  this worktree and `--all` adds answered ones. `bw answer <id> "<text>"` answers an ask or
+  closes a notice, and `bw status` shows open items. Answers reach the lead through a file
+  bw rewrites (`BW_INBOX`, in `inbox-view/`) that holds **only your answers**, never ask text,
+  and that the lead can read but not write, so everything in it is your words. Whatever a lead
+  wrote is shown escaped and shortened wherever bw prints it. A `bw lead --use` that changes
+  the lead the profile order would have picked is logged as an `override`.
 - **Settings checks (`bw status`, `bw start`).** `orca:` warns when Orca's agent permission
   default (or any per-agent override) is a full-access value, when telemetry is on, or when
   it holds managed Claude or Codex accounts; it says so when Orca is installed but not running.
@@ -414,8 +479,8 @@ First time? See "Start leading" at the end of this section.
 - **Where you watch it: Orca (recommended, never required).** [Orca](https://github.com/stablyai/orca)
   is an MIT desktop app that hosts agent panes per worktree, with notifications and a
   per-plan quota view. `bw start` opens `bw lead` in an Orca terminal
-  (`orca terminal create --command "bw lead"`); never launch a lead through Orca's own agent launch, which bypasses permissions and bw's
-  worktree lock. Orca adds hooks to every vendor's config when it first starts, and a
+  (`orca terminal create --command "bw lead"`); never launch a lead through Orca's own
+  agent launch, which bypasses permissions and bw's worktree lock. Orca adds hooks to every vendor's config when it first starts, and a
   sandboxed process can drive Orca's control channel unless the sandbox denies it — read
   [docs/orca.md](docs/orca.md) before installing it. Plain terminal tabs work the same.
 

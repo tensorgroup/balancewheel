@@ -19,6 +19,10 @@ otherwise. Tool versions were read on the author's machine on this date: Claude 
 *Amended 2026-10-25 (the starter): how `bw start` was built differs in four places; see
 "Amendments from the starter" (A3-A6).*
 
+*Amended 2026-10-25 (quota sources and the inbox): how snapshots, the arbiter, pools, cap
+expiry and the inbox were built differs in four places; see "Amendments from quota sources
+and the inbox" (A7-A10).*
+
 *Amended 2026-10-25: Orca (1.4.240, MIT) replaces nodeterm as the recommended, optional
 canvas, and the cockpit, inbox, and quota-probe work it duplicates is trimmed. A spike and a
 deep four-seat review (43 raw findings, 17 after dedupe) shaped the change; the sections
@@ -798,9 +802,10 @@ runtime-lock paragraph as built.
 
 - **A3. Workspace opening (decisions 11 and 18).** Without Orca, `bw start` writes
   `state_dir/start/<worktree-key>.command` (0700) and runs `open -a Terminal <file>`; no
-  `osascript`. The Orca pane title is the worktree's basename, not the project name. `bw
-  start` refuses when bw's own path is inside the target worktree or its common git dir, and
-  does not reopen a worktree whose lock is held. The cockpit is never started by `bw start`
+  `osascript`. The Orca pane title is "<worktree basename> lead", not the project name. When
+  Orca is running but `orca terminal create` fails or times out, `bw start` says so and falls
+  back to the Terminal tab. `bw start` refuses when bw's own path is inside the target
+  worktree or its common git dir, and does not reopen a worktree whose lock is held. The cockpit is never started by `bw start`
   (step 7 prints the hint); every sandbox denies its port.
 - **A4. Re-verification (decisions 12 and 14).** Re-verification covers every runtime any
   configured lead uses and is independent of updates: it runs with `--no-update`, and
@@ -816,10 +821,59 @@ runtime-lock paragraph as built.
   one printed line per tool as it finishes instead of a live status line. Versions come from
   `tools.<t>.version`, the runtime adapter, or an app bundle's `Info.plist`, else
   `unreadable`; "updated" requires two readable, different versions.
-- **A6. Account switching (replaces the sentence in step 6).** Orca 1.4.240 has no automatic
+- **A6. Account switching (replaces the sentence in step 6 that begins "Setup checks that
+  Orca's agent permission default is Manual and its automatic account switching is off").**
+  Orca 1.4.240 has no automatic
   account-switching setting. Setup and `bw status` check instead that Orca holds no managed
   Claude or Codex accounts (an account Orca can switch is one that could change under a
   running lead), alongside the agent-permission default and telemetry checks.
+
+### Amendments from quota sources and the inbox (2026-10-25)
+
+Named in `docs/superpowers/plans/2026-10-26-plan-4-starter-quota-inbox-cockpit.md`, Design
+decisions 3-8, 10 and 17; they change "Quota probes", "The inbox" and the config notes as
+built.
+
+- **A7. Snapshots, windows and pools, and the mid-session read (decisions 3-6).** Each source
+  writes its own snapshot file: the statusline `quota/<plan>.json`, the others
+  `quota/<plan>.<source>.json` (`probe`, `orca`), with probe bookkeeping (Orca's shape record,
+  OpenRouter's month baseline) under `probes/`. Account-wide windows and pools are arbitrated
+  apart. Windows come from the first known, fresh source in the plan's order (`statusline`
+  only; `probe` then `orca`; `orca`; none), which is the precedence above applied per plan.
+  Pools (`plans.*.orca_windows`) come from the freshest known, non-stale Orca snapshot
+  whichever source won the windows, so a Claude plan on the statusline still sees its
+  Fable-only pool. "bw does not use Orca's Claude numbers for decisions" is narrowed
+  accordingly: on a `statusline` plan Orca's percentages are a cross-check only (shown, never
+  chosen), but its pools may exclude the leads `orca_windows` names. A reading is unknown
+  when older than 2 x `probe_every_min`, dated more than 300 s ahead, or malformed; an
+  unknown snapshot carries `last_known_at`. No network probe runs mid-session (they run at
+  `bw start`, at `bw lead`'s start and boundary, and on `bw probe`); `bw lead` does re-read
+  Orca's local cache in its poll loop, synchronously, for display and freshness only, and a
+  failing re-read never stops the lead. The `lead` event's logged quota is the arbitrated
+  reading without the cross-check.
+- **A8. Pools on replacement, and expired caps (decisions 7-8).** A lead named in a full pool
+  (100% used, reset in the future) is not startable at `start` or `boundary`, and is skipped as
+  a replacement when a cap forces a mid-session switch; a pool alone never switches a running
+  lead or takes out a plan. "Orca readings never ... clear a cap" stands for an unexpired
+  cap, but a cap past its `resets_at` is removed by bw (`quota.clear_expired_caps`) once a
+  fresh, known windows reading observed at or after that time exists from any source, else
+  `cap_expiry_hours` after it. This is not "a reading clears a cap": without it a plan capped
+  once and then read only by Orca or a probe stayed blocked, because only the statusline
+  cleared caps.
+- **A9. The inbox crosses the sandbox by files (decision 10).** A lead publishes each ask as
+  its own file (write `.tmp-<random>`, rename to `<random>.ask`) in `BW_ASKS`, a directory it
+  can write; bw ingests complete `*.ask` regular files (no links, no blocking, bounded size
+  and count), records them in `state_dir/inbox.jsonl` (`ts` in epoch seconds), and drains
+  once more after the lead exits, before the handoff. Answers go back in `state_dir/inbox-view/`
+  (`BW_INBOX`), a bw-owned file outside every write grant holding only answers, never ask
+  text. `bw inbox [--project] [--all]` and `bw answer <id> "<text>"` are the user's side;
+  `ask`/`answer` metrics events carry no text; a `bw lead --use` that changes the order's pick
+  logs a `lead` event with reason `override`. Notices and handoff text built from lead-written
+  text are bounded and escaped.
+- **A10. No schema bump (decision 17).** `plans.*.orca_provider`, `orca_windows`, `probe`,
+  `key_env`, `tools.*` keys and `cockpit.port` are additive and optional on schemas 2 and 3;
+  `quota` gains `"orca"`. An unknown key under `tools.*` or `cockpit` is a warning printed
+  once by `bw`, not an error.
 
 ## Extraction gate
 

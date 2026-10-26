@@ -368,7 +368,10 @@ The code wins over this document where they differ. The decisions, as named amen
    prefixes). Reading a repo's esc pack for these waits until the pack field is agreed with
    esc's maintainers.
 7. **Notices before the inbox exists:** "guard unreachable" is one printed `bw:` line per
-   session plus the `unreachable` count in the `guard` event.
+   session plus the `unreachable` count in the `guard` event. *Superseded 2026-10-25 (plan 4,
+   the inbox): the notice is also an inbox notice of kind `guard-unreachable` (one open per
+   kind and worktree, closed with `bw answer`), listed by `bw inbox` and counted in `bw status`; the
+   printed line and the `unreachable` count stay.*
 8. **Local redaction for the log.** `guard.jsonl` stores the call after best-effort
    redaction (bearer tokens, `KEY=`/`TOKEN=`/`SECRET=`/`PASSWORD=` assignments,
    `--password`/`--token` values, `user:pass@` in URLs, `Authorization:` header values).
