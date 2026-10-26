@@ -28,7 +28,7 @@ import tempfile
 import time
 import uuid
 
-from . import containment, guard as guardpkg, quota as quotamod, rotation, sandbox
+from . import containment, guard as guardpkg, orca as orcamod, proc, quota as quotamod, rotation, sandbox
 from .handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text
 from .guard import broker as brk, install as guard_install, launch
 from .guard.launch import GuardUnavailable
@@ -438,7 +438,14 @@ def _rating(ctx, session_id):
         ctx.log({"type": "rating", "session_id": session_id, "value": "good" if ch == "g" else "bad", "note": ""})
 
 
-def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, backend=None, out=None):
+def _logged_quota(q):
+    """Arbitrated quota for a lead event: Orca's cross-check reading is display only, not logged."""
+    return {plan: {k: v for k, v in a.items() if k != "cross_check"} if isinstance(a, dict) else a
+            for plan, a in q.items()}
+
+
+def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, backend=None, out=None,
+        run=proc.run):
     out = out or sys.stdout
     adapters = adapters or ADAPTERS
     project = resolve_project(cwd, config)
@@ -523,6 +530,11 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                     os.remove(sig)
                     quotamod.record_cap(state, session.lead["plan"], time.time(),
                                         expiry_hours=rot["cap_expiry_hours"], source="lead-hook")
+                # Orca's local cache, re-read for display and freshness only (no network, no cap):
+                # the running decision below acts on caps alone.
+                shape_note = orcamod.refresh(state, config, time.time(), run=run)
+                if shape_note:
+                    ctx.say(f"bw: {shape_note}")
                 q, caps = now_state()
                 d = rotation.decide(profile, config["leads"], rot, current, pinned, q, caps, time.time(), "running")
                 if d.reason == "none-eligible":
@@ -572,7 +584,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                          "from": {"lead": current, "runtime": session.lead["runtime"], "model": session.lead["model"]},
                          "to": {"lead": d.lead, "runtime": config["leads"][d.lead]["runtime"],
                                 "model": config["leads"][d.lead]["model"]},
-                         "reason": d.reason, "quota": q})
+                         "reason": d.reason, "quota": _logged_quota(q)})
                 handoff = build_handoff(project.worktree, session.head, state, project.worktree_key, [])
                 ctx.say(f"bw: {current} is capped; handing off to {d.lead}")
                 current, switched = d.lead, True
@@ -612,6 +624,6 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                               "model": config["leads"][current]["model"]},
                      "to": {"lead": d.lead, "runtime": config["leads"][d.lead]["runtime"],
                             "model": config["leads"][d.lead]["model"]},
-                     "reason": "returned", "quota": q})
+                     "reason": "returned", "quota": _logged_quota(q)})
             ctx.say(f"bw: {d.lead} is available again — the next `bw lead` starts it")
         return 0

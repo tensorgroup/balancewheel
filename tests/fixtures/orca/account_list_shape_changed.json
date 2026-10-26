@@ -1,0 +1,26 @@
+{
+  "_meta": {"cli": "test"},
+  "id": "req-3",
+  "ok": true,
+  "result": {
+    "rateLimits": {
+      "codex": {
+        "provider": "codex",
+        "session": null,
+        "weekly": {"usedPercent": 25, "windowMinutes": 10080, "resetsAt": "2026-10-30T00:00:00Z", "resetDescription": "in 4 days"},
+        "updatedAt": 1793000000000,
+        "error": null,
+        "status": "ok"
+      },
+      "kimi": {
+        "provider": "kimi",
+        "session": {"usedPercent": 60, "windowMinutes": 300, "resetsAt": 1793005000000, "resetDescription": "in 80 minutes"},
+        "weekly": null,
+        "updatedAt": 1793000000000,
+        "error": null,
+        "status": "ok"
+      },
+      "kimiConfigured": true
+    }
+  }
+}

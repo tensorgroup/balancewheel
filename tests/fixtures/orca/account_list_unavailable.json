@@ -1,0 +1,26 @@
+{
+  "_meta": {"cli": "test"},
+  "id": "req-2",
+  "ok": true,
+  "result": {
+    "rateLimits": {
+      "codex": {
+        "provider": "codex",
+        "session": null,
+        "weekly": null,
+        "updatedAt": 1793000000000,
+        "error": "Not signed in",
+        "status": "unavailable"
+      },
+      "kimi": {
+        "provider": "kimi",
+        "session": {"usedPercent": 60, "windowMinutes": 300, "resetsAt": 1793005000000, "resetDescription": "in 80 minutes"},
+        "weekly": null,
+        "updatedAt": 1793000000000,
+        "error": "token refresh failed",
+        "status": "ok"
+      },
+      "cursorAuthConfigured": false
+    }
+  }
+}

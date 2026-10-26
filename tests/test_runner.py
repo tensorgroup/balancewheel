@@ -111,6 +111,9 @@ class Runner(RunnerCase):
         self.assertEqual(b["earlier_alive"], [], "next lead started while the capped one was alive")
         self.assertIn("@next handoff", " ".join(b["argv"]))
         self.assertEqual([e["reason"] for e in self.events("leads")], ["capped"])
+        self.assertEqual(sorted(self.events("leads")[0]["quota"]), ["pa", "pb"])
+        for plan, q in self.events("leads")[0]["quota"].items():
+            self.assertNotIn("cross_check", q, plan)  # Orca's numbers on a statusline plan are display only
         reasons = sorted(s["end_reason"] for s in self.events("sessions"))
         self.assertEqual(reasons, ["exit", "switch"])
 
@@ -592,6 +595,39 @@ def _alive(pid):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OrcaReRead(RunnerCase):
+    def config(self, root):
+        cfg = super().config(root)
+        cfg["plans"]["chatgpt"] = {"billing": "plan", "quota": "orca", "orca_provider": "codex"}
+        cfg["leads"]["la"]["plan"] = "chatgpt"
+        return cfg
+
+    def test_poll_loop_writes_orca_snapshot_and_a_full_reading_does_not_switch(self):
+        doc = json.loads((HERE / "fixtures" / "orca" / "account_list_ok.json").read_text())
+        codex = doc["result"]["rateLimits"]["codex"]
+        codex["updatedAt"] = int(time.time() * 1000)
+        codex["weekly"].update(usedPercent=100, resetsAt=int((time.time() + 3 * 86400) * 1000))
+        payload = self.out.parent / "orca-payload.json"  # not in FAKE_OUT: the fake reads every *.json there
+        payload.write_text(json.dumps(doc))
+        p = self.start("--orca-payload", str(payload), env={"FAKE_MODE_a": "sleep", "BW_PROBE_SECONDS": "0"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        snap_path = self.state / "quota" / "chatgpt.orca.json"
+        self.assertTrue(wait_for(lambda: snap_path.exists()))
+        time.sleep(0.5)  # several more polls with the plan at 100 %
+        snap = json.loads(snap_path.read_text())
+        self.assertEqual(snap["windows"][0]["used_pct"], 100.0)
+        self.assertEqual(snap["source_version"], "9.9.9-test")
+        self.assertIsNone(p.poll(), "the runner exited")
+        self.assertIsNone(self.fake("b"), "a reading switched the lead")
+        self.assertFalse((self.state / "caps").exists() and list((self.state / "caps").glob("*.json")))
+        calls = (self.out / "orca-calls.jsonl").read_text().splitlines()
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertEqual({tuple(json.loads(c)["argv"]) for c in calls}, {("orca", "account", "list", "--json")})
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        self.assertEqual(p.wait(10), 0)
+        self.assertEqual(self.events("leads"), [])
 
 
 class HolderLine(unittest.TestCase):

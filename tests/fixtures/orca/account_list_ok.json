@@ -1,0 +1,70 @@
+{
+  "_meta": {"cli": "test"},
+  "id": "req-1",
+  "ok": true,
+  "result": {
+    "rateLimits": {
+      "claude": {
+        "provider": "claude",
+        "session": {"usedPercent": 12, "windowMinutes": 300, "resetsAt": 1793010000000, "resetDescription": "in 3 hours"},
+        "weekly": {"usedPercent": 40, "windowMinutes": 10080, "resetsAt": 1793300000000, "resetDescription": "in 3 days"},
+        "fableWeekly": {"usedPercent": 100, "windowMinutes": 10080, "resetsAt": 1793200000000, "resetDescription": "in 2 days"},
+        "extraUsage": {"balance": null, "unit": "usd", "currencyCode": "USD", "enabled": false, "disabledReason": "off",
+                       "spent": 0, "spendLimit": 0, "spentPercent": 0, "resetsAt": null},
+        "updatedAt": 1793000000000,
+        "error": null,
+        "status": "ok",
+        "usageMetadata": {}
+      },
+      "codex": {
+        "provider": "codex",
+        "session": null,
+        "weekly": {"usedPercent": 25.5, "windowMinutes": 10080, "resetsAt": 1793400000000, "resetDescription": "in 4 days"},
+        "rateLimitResetCredits": {"availableCount": 1, "totalEarnedCount": 2, "nextExpiresAt": 1794000000000,
+                                  "credits": [{"status": "available", "expiresAt": 1794000000000, "grantedAt": 1792000000000}]},
+        "updatedAt": 1793000000000,
+        "error": null,
+        "status": "ok",
+        "usageMetadata": {}
+      },
+      "kimi": {
+        "provider": "kimi",
+        "session": {"usedPercent": 60, "windowMinutes": 300, "resetsAt": 1793005000000, "resetDescription": "in 80 minutes"},
+        "weekly": null,
+        "updatedAt": 1793000000000,
+        "error": null,
+        "status": "ok",
+        "usageMetadata": {}
+      },
+      "antigravity": {
+        "provider": "antigravity",
+        "session": {"usedPercent": 5, "windowMinutes": 300, "resetsAt": 1793010000000, "resetDescription": null},
+        "weekly": {"usedPercent": 30, "windowMinutes": 10080, "resetsAt": 1793300000000, "resetDescription": null},
+        "buckets": [
+          {"name": "model-a", "group": "group-1", "windowName": "weekly", "usedPercent": 100, "windowMinutes": 10080,
+           "resetsAt": 1793250000000, "resetDescription": null},
+          {"name": "model-b", "group": "group-2", "windowName": "weekly", "usedPercent": 10, "windowMinutes": 10080,
+           "resetsAt": 1793250000000, "resetDescription": null}
+        ],
+        "updatedAt": 1793000000000,
+        "error": null,
+        "status": "ok",
+        "usageMetadata": {"source": "test"}
+      },
+      "gemini": {
+        "provider": "gemini",
+        "session": null,
+        "weekly": null,
+        "updatedAt": 1793000000000,
+        "error": "Not signed in",
+        "status": "unavailable"
+      },
+      "minimaxCookieConfigured": true,
+      "cursorAuthConfigured": true,
+      "grokAuthConfigured": false,
+      "claudeTarget": {"runtime": "native", "wslDistro": null},
+      "inactiveClaudeAccounts": [],
+      "inactiveCodexAccounts": []
+    }
+  }
+}

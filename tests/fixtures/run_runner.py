@@ -2,7 +2,7 @@
 
 argv: run_runner.py <config.json> <worktree> [--use LEAD] [--auto] [--contained-by-bw RUNTIME]
                     [--guard RUNTIME [--no-hook] [--no-spike]] [--fail-after-launch] [--no-client] [--fail-in-poll]
-                    [--verified] [--fail-in-caps] [--probe-lock-in-verify]
+                    [--verified] [--fail-in-caps] [--probe-lock-in-verify] [--orca-payload FILE]
 Every runtime maps to tests/fixtures/fake_lead.py; --contained-by-bw marks one as bw-contained
 (without a containment record), to test the refusal path. --guard RUNTIME makes every lead of that
 runtime guarded (autonomy "guard", source "config"), points BW_AGY_HOOKS at a temp hooks file with
@@ -14,6 +14,8 @@ grant, so the fake can leave its evidence); each per-session scratch dir is prin
 --fail-in-caps makes every read_caps after the lead started wait for the lead to exit, then raise.
 --probe-lock-in-verify makes each _verified call try the lead's runtime lock exclusively from a second
 process, append {"runtime", "exclusive"} to FAKE_OUT/verify-lock.jsonl, and count the lead as verified.
+--orca-payload FILE answers every `orca ...` shell-out with FILE's content (each argv appended to
+FAKE_OUT/orca-calls.jsonl) and reports Orca's version as 9.9.9-test; without it any `orca` call fails.
 """
 import atexit, os, shutil, sys, tempfile
 from pathlib import Path
@@ -109,5 +111,24 @@ if "--fail-in-caps" in args:
         raise RuntimeError("injected failure after the lead exited")
     runner.Session.__init__ = _session_init
     quota.read_caps = _caps
+from lead import orca  # noqa: E402
+from lead.proc import Result, run as real_run  # noqa: E402
+
+orca.app_version = lambda *a, **k: "9.9.9-test"  # never the real app bundle
+orca_payload = args[args.index("--orca-payload") + 1] if "--orca-payload" in args else None
+
+
+def fake_run(argv, timeout, **kw):
+    if argv[:1] != ["orca"]:
+        return real_run(argv, timeout, **kw)
+    if orca_payload is None:
+        return Result(127, "", "orca: not found", False)
+    import json
+    with open(os.path.join(os.environ["FAKE_OUT"], "orca-calls.jsonl"), "a") as f:
+        f.write(json.dumps({"argv": argv, "timeout": timeout}) + "\n")
+    with open(orca_payload) as f:
+        return Result(0, f.read(), "", False)
+
+
 sys.exit(runner.run(config, config["state_dir"], worktree, use=use, auto=auto, rating=False,
-                    adapters=adapters, backend="sandbox-exec"))
+                    adapters=adapters, backend="sandbox-exec", run=fake_run))
