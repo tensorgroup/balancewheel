@@ -10,6 +10,7 @@ One `bw start:` line per event. Steps:
   4. refresh quota for every plan the profile touches (`lead.probes`: OpenRouter's key, one Orca
      read; agy awaits its shape), one line per plan with its source and age, then the lead
      decision at the "start" moment;
+  5. rebuild `state_dir/registry.json` (`lead.registry`), a derived snapshot;
   6. open the worktree: an Orca pane when Orca runs, else a Terminal tab through a `.command`
      file in the state dir; neither → print the command and exit 1. A worktree whose lock is
      held already has a lead and is not opened again;
@@ -24,7 +25,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import ccswitch, checks, orca, probes, proc, quota, rotation, runner, updates, verify as verifymod
+from . import ccswitch, checks, orca, probes, proc, quota, registry, rotation, runner, updates, verify as verifymod
 from .status import orca_checks
 from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
@@ -182,6 +183,13 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     write_json_atomic(os.path.join(state, "start.json"),
                       {"ts": now, "project": project.worktree, "tools": results,
                        "verify": [i._asdict() for i in verify_items], "orca_version": orca_version})
+
+    # 5. the registry (derived; after start.json, which holds the versions it shows)
+    try:
+        registry.write(state, registry.build(config, state, now, run=run))
+        say(f"registry: {registry.path(state)}")
+    except Exception as e:  # a derived file; never the start's end, and never the exception's text
+        say(f"registry not written ({type(e).__name__})")
 
     # 6. the workspace
     code = _workspace(state, project, run, bw, env, say)

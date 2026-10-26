@@ -8,6 +8,8 @@
   bw status                                       leads, quota, caps, pins, Orca and cc-switch checks
   bw probe [plan...]                              read quota now (OpenRouter key, Orca; agy awaits its
                                                   shape), one line per plan
+  bw registry [--print]                           rebuild state_dir/registry.json (tools, plans, models, seats,
+                                                  leads, profiles, projects, edges); --print shows it
   bw cap <plan> [--resets-at <epoch>]             record that a plan is capped
   bw inbox [--project] [--all]                    open asks from leads and notices from bw (--project: this
                                                   worktree only; --all: answered ones too)
@@ -22,12 +24,13 @@
                                                   audit stops and sampled allows, one evidence key at a time
 """
 import argparse
+import json
 import os
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from lead import ccswitch, inbox, probes, quota, runner, start, status, verify  # noqa: E402
+from lead import ccswitch, inbox, probes, quota, registry, runner, start, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.guard.review import safe  # noqa: E402
 from lead.paths import ConfigError, load_config, state_dir  # noqa: E402  (also puts metrics/ on sys.path)
@@ -77,6 +80,18 @@ def cmd_probe(a, config, state):
         print(f"{name}: {' — '.join(parts)}")
     for line in res["notes"]:
         print(f"bw: {line}")
+    return 0
+
+
+def cmd_registry(a, config, state):
+    reg = registry.build(config, state, time.time())
+    registry.write(state, reg)
+    if a.print:
+        print(json.dumps(reg, indent=2, sort_keys=True))
+    else:
+        counts = ", ".join(f"{len(reg[k])} {k}" for k in ("tools", "plans", "models", "seats", "leads", "profiles",
+                                                           "projects", "edges"))
+        print(f"bw: wrote {registry.path(state)} ({counts})")
     return 0
 
 
@@ -195,6 +210,7 @@ def main(argv=None):
     g.add_argument("--use"); g.add_argument("--auto", action="store_true")
     ld.add_argument("--no-rating", action="store_true")
     sub.add_parser("status")
+    sub.add_parser("registry").add_argument("--print", action="store_true")
     sub.add_parser("probe").add_argument("plans", nargs="*")
     sa = sub.add_parser("start"); sa.add_argument("path", nargs="?", default=None)
     for flag in ("--dry-run", "--no-update", "--no-verify"):
@@ -228,7 +244,7 @@ def main(argv=None):
         return cmd_guard(a, config, state)
     if a.cmd == "lead" and a.use and a.use not in config["leads"]:
         sys.exit(f"bw: unknown lead {a.use!r}")
-    return {"lead": cmd_lead, "start": cmd_start, "status": cmd_status, "cap": cmd_cap, "probe": cmd_probe,
+    return {"lead": cmd_lead, "start": cmd_start, "status": cmd_status, "cap": cmd_cap, "registry": cmd_registry, "probe": cmd_probe,
             "sandbox": cmd_verify, "inbox": cmd_inbox, "answer": cmd_answer}[a.cmd](a, config, state)
 
 

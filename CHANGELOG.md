@@ -15,6 +15,12 @@ not against the prose.
 
 ### Added
 
+- **`bw registry`** (`lead/registry.py`, `bin/bw`, `lead/start.py`): a derived snapshot at
+  `state_dir/registry.json` of tools, plans, models, seats, leads, profiles, projects and the edges
+  between them, each node with an `id` (`<kind>:<name>`) and a `health` of `verified`, `pending`,
+  `capped` or `unknown`. Rebuilt by `bw registry [--print]` and by `bw start` step 5; deleting it loses
+  nothing. A tool's `auth` is always `unknown` (bw reads no credentials) and its `locks` is `held` or
+  `free`, read by a non-blocking try that never disturbs a running lead.
 - **Usage token and cost fields; seat and lead summaries** (`metrics/log.py`, `metrics/summary.py`):
   log schema, additive. A `usage` line may carry `tokens_in`, `tokens_out` (integers >= 0),
   `cost_usd` (a finite number >= 0) and `session_id`, written by `log.py usage --tokens-in

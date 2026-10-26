@@ -335,6 +335,27 @@ class StartCase(unittest.TestCase):
         self.assertNotIn("no update lock for runtime pi", out)
         self.assertIn("bw start: verify kimi containment: pending — --no-verify", out)
 
+    def test_start_writes_the_registry_with_versions_from_start_json(self):
+        run = FakeRun()
+        code, out = self.start(run, verify=False)
+        with open(os.path.join(self.state, "registry.json")) as f:
+            reg = json.load(f)
+        self.assertEqual({t["name"] for t in reg["tools"]}, {"pi", "kimi", "codex"})
+        self.assertEqual({t["name"]: t["version"] for t in reg["tools"]},
+                         {n: e["after"] for n, e in self.start_json()["tools"].items()})
+        self.assertIn("bw start: registry: ", out)
+
+    def test_registry_failure_never_ends_the_start(self):
+        with mock.patch("lead.registry.build", side_effect=RuntimeError("secret detail")):
+            code, out = self.start(FakeRun(), verify=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("bw start: registry not written (RuntimeError)", out)
+        self.assertNotIn("secret detail", out)
+
+    def test_dry_run_writes_no_registry(self):
+        self.start(FakeRun(), dry_run=True)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "registry.json")))
+
     def test_quota_and_lead_lines(self):
         run = FakeRun()
         code, out = self.start(run, verify=False, update=False)
