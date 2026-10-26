@@ -592,3 +592,18 @@ def _alive(pid):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HolderLine(unittest.TestCase):
+    def test_malformed_lock_content_says_only_that_it_is_held(self):
+        from lead import runner
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "k.lock")
+            for content in ("[1, 2]", '{"started": "soon"}', '{"started": 1e300}', "not json", '"text"'):
+                with open(p, "w") as f:
+                    f.write(content)
+                self.assertEqual(runner.holder_line("/w", p), "/w is held by another bw lead", content)
+            with open(p, "w") as f:
+                json.dump({"lead": "lx", "pid": 1, "child": 2, "started": 1000}, f)
+            self.assertEqual(runner.holder_line("/w", p),
+                             f"/w already has a lead: lx (bw pid 1, lead pid 2, since {time.ctime(1000)})")

@@ -125,7 +125,8 @@ class StartCase(unittest.TestCase):
         out = io.StringIO()
         kw.setdefault("bw_path", self.bw)
         kw.setdefault("env", self.env)
-        code = start.start(self.config, self.state, str(path or self.repo), run=run, out=out, now=NOW, **kw)
+        kw.setdefault("now", NOW)
+        code = start.start(self.config, self.state, str(path or self.repo), run=run, out=out, **kw)
         return code, out.getvalue()
 
     def record_pi(self, version):
@@ -212,6 +213,21 @@ class StartCase(unittest.TestCase):
         self.assertIn(f"{self.repo} already has a lead: lx (bw pid {child.pid}, lead pid 99, since {time.ctime(1000)})",
                       out)
         self.assertEqual(len(self.ran(run, PI_UPDATE)), 1)  # updates still ran
+
+    def test_malformed_lock_file_never_breaks_the_holder_line(self):
+        key = runner_key(self.repo)
+        for content in ("[1, 2]", '{"lead": "lx", "started": "soon"}'):
+            child = subprocess.Popen([sys.executable, "-c", HOLDER, str(ROOT), self.state, key, content],
+                                     stdout=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual(child.stdout.readline().strip(), "ready")
+                run = FakeRun(orca="running")
+                code, out = self.start(run, verify=False, update=False)
+                self.assertEqual(code, 0, out)
+                self.assertIn(f"bw start: {self.repo} is held by another bw lead; not opening another", out)
+                self.assertEqual(self.ran(run, CREATE), [])
+            finally:
+                child.kill(); child.wait(); child.stdout.close()
 
     def test_bw_inside_target_worktree_refused(self):
         for bw in (str(self.repo / "bin" / "bw"), str(self.repo / ".git" / "bw" / "bin" / "bw")):
@@ -343,6 +359,22 @@ class StartCase(unittest.TestCase):
         self.assertIn({"runtime": "pi", "kind": "containment", "state": "pending", "reason": "--no-verify"},
                       doc["verify"])
 
+    def test_no_update_keeps_tool_history_and_the_interval_holds(self):
+        run = FakeRun()
+        run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.1", 0.0, 0)
+        self.start(run, verify=False)
+        self.assertEqual(self.start_json()["tools"]["pi"]["last_update_at"], NOW)
+        code, out = self.start(FakeRun(), verify=False, update=False, now=NOW + 60)
+        self.assertEqual(code, 0, out)
+        doc = self.start_json()
+        self.assertEqual(doc["ts"], NOW + 60)
+        self.assertEqual(doc["tools"]["pi"]["last_update_at"], NOW)
+        self.config["updates"]["min_interval_hours"] = 1
+        run = FakeRun()
+        code, out = self.start(run, verify=False, now=NOW + 120)
+        self.assertEqual(self.ran(run, PI_UPDATE), [])
+        self.assertEqual(self.start_json()["tools"]["pi"]["result"], "skipped-interval")
+
     def test_status_shows_last_start(self):
         self.start(FakeRun(), verify=False, update=False)
         f = status.facts(self.config, self.state, NOW, run=FakeRun())
@@ -356,7 +388,10 @@ from lead.runner import Lock
 lock = Lock(sys.argv[2], sys.argv[3])
 assert lock.acquire()
 import os
-lock.write({"lead": "lx", "pid": os.getpid(), "child": 99, "started": 1000})
+if len(sys.argv) > 4:
+    os.ftruncate(lock.fd, 0); os.write(lock.fd, sys.argv[4].encode())
+else:
+    lock.write({"lead": "lx", "pid": os.getpid(), "child": 99, "started": 1000})
 print("ready", flush=True)
 time.sleep(60)
 """

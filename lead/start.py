@@ -152,7 +152,10 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
 
     submitted = set()
     waiting = [rt for rt in runtimes if update and rt in rt_tool]
-    results = {}
+    last = read_json(os.path.join(state, "start.json"), {})
+    previous = last.get("tools") if isinstance(last, dict) else None
+    previous = previous if isinstance(previous, dict) else {}
+    results = dict(previous)  # --no-update keeps each tool's history (last_update_at) for the next start
     with ThreadPoolExecutor(max_workers=max(1, len(runtimes))) as pool:
         def submit(rt, version_ok):
             if rt not in submitted:
@@ -173,7 +176,6 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
                 if res.runtime in waiting:
                     submit(res.runtime, res.after != updates.UNREADABLE)
 
-            previous = (read_json(os.path.join(state, "start.json"), {}) or {}).get("tools") or {}
             results = updates.update_all(config, state, now, run=run, on_done=on_done, previous=previous)
             for rt in waiting:  # a runtime whose tool never reported still gets its check
                 submit(rt, True)
@@ -181,7 +183,8 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
 
     # 4. quota and the lead
     _quota_and_lead(config, state, project, profile, plans, now, say)
-    orca_version = (results.get("orca") or {}).get("after") or orca.app_version()
+    orca_entry = results.get("orca")
+    orca_version = (orca_entry.get("after") if isinstance(orca_entry, dict) else None) or orca.app_version()
     write_json_atomic(os.path.join(state, "start.json"),
                       {"ts": now, "project": project.worktree, "tools": results,
                        "verify": [i._asdict() for i in verify_items], "orca_version": orca_version})
@@ -215,9 +218,7 @@ def _workspace(state, project, run, bw, env, say):
     lock = runner.Lock(state, project.worktree_key)
     try:
         if not lock.acquire():
-            h = runner._holder(lock.path)
-            say(f"{project.worktree} already has a lead: {h.get('lead')} (bw pid {h.get('pid')}, "
-                f"lead pid {h.get('child')}, since {time.ctime(h.get('started', 0))}); not opening another")
+            say(f"{runner.holder_line(project.worktree, lock.path)}; not opening another")
             return 0
     finally:
         os.close(lock.fd)  # closing releases the flock taken just to test it

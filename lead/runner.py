@@ -80,6 +80,20 @@ def _holder(path):
         return {}
 
 
+def holder_line(worktree, path):
+    """Who holds a worktree lock, from its file; any malformed content says only that it is held."""
+    h = _holder(path)
+    started = h.get("started") if isinstance(h, dict) else None
+    try:
+        if not isinstance(started, (int, float)) or isinstance(started, bool):
+            raise ValueError
+        since = time.ctime(started)
+        return (f"{worktree} already has a lead: {h.get('lead')} (bw pid {h.get('pid')}, "
+                f"lead pid {h.get('child')}, since {since})")
+    except (ValueError, OverflowError, OSError):
+        return f"{worktree} is held by another bw lead"
+
+
 JOB_SIGNALS = (signal.SIGTTOU, signal.SIGTTIN, signal.SIGINT, signal.SIGQUIT, signal.SIGTSTP)
 
 
@@ -434,9 +448,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         return NO_LEADS
     lock = Lock(state, project.worktree_key)
     if not lock.acquire():
-        h = _holder(lock.path)
-        print(f"bw: {project.worktree} already has a lead: {h.get('lead')} (bw pid {h.get('pid')}, "
-              f"lead pid {h.get('child')}, since {time.ctime(h.get('started', 0))})", file=out)
+        print(f"bw: {holder_line(project.worktree, lock.path)}", file=out)
         return LOCKED
     ctx = Context(config, state, project, lock, adapters, backend or sandbox.backend(), out)
     stale = lock.read()
