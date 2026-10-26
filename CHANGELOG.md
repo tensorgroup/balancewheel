@@ -15,6 +15,13 @@ not against the prose.
 
 ### Added
 
+- **Orca and cc-switch checks in `bw status`** (`bin/bw`, `lead/status.py`, `lead/orca.py`,
+  `lead/sqlite_ro.py`): `bw status` adds `orca:` and `cc-switch:` lines. Orca's are whether
+  it runs (`orca status --json`) and its active profile's settings: agent permissions not
+  Manual, telemetry on, or managed Claude/Codex accounts warn. bw reads Orca's profile
+  database only from a copy in the state dir's `sealed/` (0700, denied to every sandbox),
+  removed after the read. `BW_ORCA_SUPPORT` overrides Orca's support dir. `sealed/` is live
+  state and stays out of `setup/paths.txt`.
 - **Config `tools.*` keys, and config warnings** (`metrics/config.py`, `lead/updates.py`,
   `bin/bw`): a tool takes `update` and `version` (argv lists), `app` (an app bundle path; its
   `Info.plist` gives the version), `self_updating` (version only, never updated by bw),

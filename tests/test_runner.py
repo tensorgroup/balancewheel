@@ -46,7 +46,8 @@ class RunnerCase(unittest.TestCase):
         cfg = self.config(root)
         self.cfg = root / "config.json"; self.cfg.write_text(json.dumps(cfg))
         self.env = {**os.environ, "FAKE_OUT": str(self.out), "BW_PROBE_SECONDS": "0.3", "BW_STOP_GRACE": "0.5",
-                    "BALANCEWHEEL_CONFIG": str(self.cfg)}
+                    "BALANCEWHEEL_CONFIG": str(self.cfg),
+                    "BW_ORCA_SUPPORT": str(root / "no-orca"), "BW_CCSWITCH_DIR": str(root / "no-cc-switch")}
         self.procs = []
 
     def tearDown(self):

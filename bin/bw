@@ -2,7 +2,7 @@
 """bw — leads and rotation (build-order step 2).
 
   bw lead [--use <lead> | --auto] [--no-rating]   start the right lead for this worktree
-  bw status                                       leads, quota, caps, pins
+  bw status                                       leads, quota, caps, pins, Orca and cc-switch checks
   bw cap <plan> [--resets-at <epoch>]             record that a plan is capped
   bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
   bw setup cc-switch                              pre-write cc-switch's settings (before its first launch)
@@ -18,12 +18,10 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from lead import ccswitch, quota, runner, verify  # noqa: E402
+from lead import ccswitch, quota, runner, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
-from lead.paths import ConfigError, load_config, read_json, state_dir  # noqa: E402
+from lead.paths import ConfigError, load_config, state_dir  # noqa: E402
 from lead.projects import resolve_project  # noqa: E402
-from lead.rotation import effective_quota  # noqa: E402
-from lead.runtimes import ADAPTERS  # noqa: E402
 
 
 def _count(s):
@@ -38,33 +36,7 @@ def cmd_lead(a, config, state):
 
 
 def cmd_status(a, config, state):
-    now = time.time()
-    caps = quota.read_caps(state, now, config["rotation"]["cap_expiry_hours"])
-    snaps = quota.read_quota(state)
-    print("plans:")
-    for name, plan in sorted(config["plans"].items()):
-        q = effective_quota(snaps.get(name), now)
-        qs = quota.summary(q) if q else "quota unknown"
-        cs = f" · capped until {time.ctime(caps[name]['resets_at'])}" if name in caps else ""
-        print(f"  {name} ({plan['billing']}): {qs}{cs}")
-    pins = read_json(os.path.join(state, "leads.json"), {}) or {}
-    locks = os.path.join(state, "locks")
-    print("worktrees:")
-    for f in sorted(os.listdir(locks)) if os.path.isdir(locks) else []:
-        meta = read_json(os.path.join(locks, f), {}) or {}
-        key = f[:-5]
-        if meta.get("lead") or key in pins:
-            since = time.ctime(meta["started"]) if meta.get("started") else "-"
-            print(f"  {meta.get('worktree', key)}: {meta.get('lead', 'idle')} since {since}"
-                  + (f" · pinned {pins[key]}" if key in pins else ""))
-    print("leads:")
-    for name, ld in sorted(config["leads"].items()):
-        print(f"  {name}: {ld['runtime']} {ld['model']} on {ld['plan']} · contained by {ADAPTERS[ld['runtime']].contained_by}")
-    gl = guard_review.status_lines(state)
-    if gl:
-        print("guard:")
-        print("\n".join(gl))
-    print(runner.V0_SCOPE)
+    print("\n".join(status.render(status.facts(config, state, time.time()))))
     return 0
 
 

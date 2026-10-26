@@ -1,0 +1,1 @@
+{"agentPermissionDefault": "full-access", "telemetry": {"optedIn": true}, "agentStatusHooksEnabled": false, "claudeManagedAccounts": [{"id": "acct-a"}], "codexManagedAccounts": [{"id": "acct-b"}]}
