@@ -880,24 +880,24 @@ built.
 
 ### Amendments from the registry, usage, and the cockpit (2026-10-26)
 
-Named in the same plan, Design decisions 5, 17, 18 and 20; they change "The registry", "Usage
+Named in the same plan, Design decisions 9, 18, 19 and 20 (and its Rulings 17, 18 and 20); they change "The registry", "Usage
 and cost data" and "The cockpit" as built.
 
-- **A11. cc-switch's database is read by sealed copy (decision 5; replaces the direct
+- **A11. cc-switch's database is read by sealed copy (Design decision 9; replaces the direct
   `mode=ro` open).** A direct read-only open of a WAL database still creates a `-shm` file, and
   it failed on Orca's; so bw copies the database and its `-wal` (never `-shm`) into
   `state_dir/sealed/` (0700, bounded at 256 MiB, denied to every sandbox), opens the copy
   `query_only`, and removes it afterwards. The original is never opened or written. An
   inconsistent snapshot reads `unknown` for that refresh. The same copy-then-read serves
   Orca's profile database.
-- **A12. Usage rows (decision 17 and the cockpit's Usage tab).** `lead/ccswitch.usage` returns
+- **A12. Usage rows (Design decision 19, the cockpit's Usage tab).** `lead/ccswitch.usage` returns
   groups by tool and model plus rollups for the last 30 days, with `skipped_rows` counting
   rows it could not read (a timestamp out of range, a malformed count) rather than guessing.
   Tokens, requests, and cost a row does not carry make the group's field `null`, shown as
   "unavailable", never 0; a schema it does not recognise is `available: false` with the reason.
   Prices for metered models come from cc-switch's `model_pricing` table, never from bw's own
   list, and are used by the registry only.
-- **A13. The Leads table until task events exist (decision 20; changes "What is measured" and
+- **A13. The Leads table until task events exist (Design decision 20; changes "What is measured" and
   "How it is shown").** Only the columns measurable from today's log ship: sessions, minutes
   (a `lost` or unparseable session is left out), cap switches, overrides (a `lead` event with
   reason `override`, credited to the model that ran), ratings, and asks. Throughput per task,
@@ -905,7 +905,7 @@ and cost data" and "The cockpit" as built.
   `panel.subject`, and the table lists them as pending. Small n (under 10) shows counts only.
   Views never fail whole: a source that cannot be read answers `available: false` with a reason
   and the other tabs still load.
-- **A14. Registry and cockpit details (decisions 18, 21 and the Task 16 and 17 rulings).** A
+- **A14. Registry and cockpit details (Design decision 18; Rulings 17, 20 and the Task 16 ruling).** A
   tool's `auth` is always `unknown`, since bw reads no credential. A runtime a lead or seat
   uses with no `tools` entry gets a derived tool node (`configured: false`) so the
   lead-to-tool-to-plan edges exist. The cockpit serves only on a port every sandbox denies

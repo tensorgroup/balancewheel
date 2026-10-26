@@ -43,8 +43,8 @@ Plan 4 shipped as three phases on `main`, each reviewed task by task.
 
 ## Deliberately left alone
 
-- **Task G (agy hook spike and agy `/usage` parser).** Skipped: Google quota is exhausted until
-  about 2026-10-31. Until it runs, `probe: "agy"` reads `unknown` ("awaiting Task G"), a Google
+- **Task G (agy hook spike and agy `/usage` parser).** Skipped until the Google plan's quota allows a
+  live agy run. Until it runs, `probe: "agy"` reads `unknown` ("awaiting Task G"), a Google
   plan can read Orca's `antigravity` entry, and agy's guard stays refused. A parser written
   without seeing the real output could read the wrong field as quota.
 - **Jev (the decision model)** stays advisory; the acting-mode work is not built.
@@ -63,7 +63,7 @@ Plan 4 shipped as three phases on `main`, each reviewed task by task.
   `bw sandbox verify pi`, `bw sandbox verify kimi`, and `bw guard verify pi`. The review left two
   live questions for the last: whether the pi extension control loads, and whether 900 s is
   enough for the guard attack.
-- **Task G** once Google quota is back (about 2026-10-31).
+- **Task G** once the Google plan's quota allows a live agy run.
 - **Look at `bw cockpit` in a browser, in light and dark.** Every check so far was headless.
 - **A live `bw start` with Orca running**, including an Orca pane launch (checked only with
   Orca quit, through the dry run and the Terminal path).
@@ -75,13 +75,13 @@ Plan 4 shipped as three phases on `main`, each reviewed task by task.
   `build_handoff` argv size should be checked end to end against `read_checkpoint`'s cap;
   a few test classes sit after the `__main__` guard; `_guarded` and `_num` are duplicated across
   modules; `bw status` does not render the Orca cross-check; the Graph view builds the registry
-  per request (about 0.6 s with version probes).
+  per request (version probes make it slower than the other tabs).
 
 ## Where to pick up
 
 1. Run the three verifications above and a live `bw start` with Orca open.
 2. Open `bw cockpit` and read each tab in both themes.
-3. When Google quota returns, run Task G, then switch agy's probe and guard on.
+3. When the Google plan's quota allows it, run Task G, then switch agy's probe and guard on.
 4. Decide whether `task` events and `panel.subject` are next; the Leads table's pending columns
    and the lead comparison the spec motivates both wait on them.
 5. Plan the `packs/` export step only after the extraction gate in `docs/roadmap.md` holds.

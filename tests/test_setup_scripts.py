@@ -96,8 +96,10 @@ class SetupScriptsTest(unittest.TestCase):
         self.assertIn("~/.pi/agent/extensions", listed)  # Orca writes its pi extensions there
         self.assertIn("~/.local/state/balancewheel/inbox.jsonl", listed)  # the user's asks and answers
         for live in ("locks", "quota", "caps", "models", "containment.json", "guard.jsonl", "guard-verify.json", "guard",
-                     "inbox-view"):  # the view is regenerated from inbox.jsonl
-            self.assertFalse(any(l.rstrip("/").endswith(live) for l in listed), live)
+                     "inbox-view",  # the view is regenerated from inbox.jsonl
+                     "registry.json", "start.json", "probes", "sealed", "start"):  # derived or live
+            # whole path component, so "start" cannot match "start.json" or a name that merely ends in it
+            self.assertFalse(any(l.rstrip("/").rsplit("/", 1)[-1] == live for l in listed), live)
 
     def test_restore_puts_originals_back_and_takes_a_safety_backup(self):
         dest, _ = self.backup()
