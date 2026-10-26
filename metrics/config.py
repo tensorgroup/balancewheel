@@ -140,6 +140,7 @@ def _validate_plans(obj):
                           "probe", "key_env"})
         if bad:
             raise ConfigError(f"{kp}.{bad[0]}: unknown key")
+        _expect(isinstance(p.get("vendor", ""), str), f"{kp}.vendor: must be a string")
         _expect(p.get("billing") in BILLING, f"{kp}.billing: must be one of {sorted(BILLING)}")
         quota = p.get("quota", "none")
         _expect(quota in QUOTA_SOURCES, f"{kp}.quota: must be one of {sorted(QUOTA_SOURCES)}")
@@ -150,7 +151,7 @@ def _validate_plans(obj):
                     f"{kp}.budget_usd_month: must be a non-negative number")
         provider = p.get("orca_provider")
         if "orca_provider" in p:
-            _expect(isinstance(provider, str) and ORCA_PROVIDER.match(provider),
+            _expect(isinstance(provider, str) and ORCA_PROVIDER.fullmatch(provider),
                     f"{kp}.orca_provider: must match [A-Za-z][A-Za-z0-9]*")
             _expect(quota != "none", f"{kp}.orca_provider: not allowed with quota \"none\"")
         _expect(quota != "orca" or provider, f"{kp}.orca_provider: required when quota is \"orca\"")
@@ -159,7 +160,7 @@ def _validate_plans(obj):
             _expect(isinstance(windows, dict), f"{kp}.orca_windows: must be an object")
             _expect(not windows or provider, f"{kp}.orca_windows: requires orca_provider")
             for wid, names in windows.items():
-                _expect(isinstance(wid, str) and ORCA_WINDOW.match(wid),
+                _expect(isinstance(wid, str) and ORCA_WINDOW.fullmatch(wid),
                         f"{kp}.orca_windows.{wid}: id must be fableWeekly or bucket:<name>")
                 _expect(isinstance(names, list) and all(isinstance(n, str) for n in names),
                         f"{kp}.orca_windows.{wid}: must be a list of lead or seat names")
@@ -169,7 +170,7 @@ def _validate_plans(obj):
         elif quota == "probe":
             probe = PROBE_FOR_VENDOR.get(p.get("vendor", ""))  # None: reported unknown at probe time
         if "key_env" in p:
-            _expect(isinstance(p["key_env"], str) and ENV_NAME.match(p["key_env"]),
+            _expect(isinstance(p["key_env"], str) and ENV_NAME.fullmatch(p["key_env"]),
                     f"{kp}.key_env: must match [A-Z_][A-Z0-9_]*")
             _expect(probe == "openrouter", f"{kp}.key_env: only with probe \"openrouter\"")
         out[name] = {"vendor": p.get("vendor", ""), "billing": p["billing"], "quota": quota,

@@ -227,6 +227,16 @@ class PlanOrcaAndProbeKeys(unittest.TestCase):
             self.rejects(self.plan(probe="openrouter", key_env=bad), "plans.plan-b.key_env")
         self.rejects(self.plan(vendor="google", key_env="MY_KEY"), "plans.plan-b.key_env")
 
+    def test_trailing_newline_never_passes_a_pattern(self):
+        self.rejects(self.plan(orca_provider="codex\n"), "plans.plan-b.orca_provider")
+        self.rejects(self.plan(orca_provider="claude", orca_windows={"fableWeekly\n": ["alpha"]}),
+                     "plans.plan-b.orca_windows")
+        self.rejects(self.plan(vendor="other", probe="openrouter", key_env="MY_KEY\n"), "plans.plan-b.key_env")
+
+    def test_vendor_must_be_a_string(self):
+        for bad in (["google"], {"a": 1}, 3, None):
+            self.rejects(self.plan(vendor=bad, quota="probe"), "plans.plan-b.vendor")
+
     def test_example_has_orca_plans_without_warnings(self):
         c = cfg.load_config(str(HERE.parent / "balancewheel.example.json"))
         self.assertEqual(c["warnings"], [])
