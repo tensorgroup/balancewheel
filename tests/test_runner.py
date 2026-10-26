@@ -354,6 +354,14 @@ class RuntimeLocks(RunnerCase):
         modes = [m for i, m in self.fake("a")["fds"] if i == ino]
         self.assertEqual(modes, [os.O_RDONLY])
 
+    def test_lead_unlocking_its_inherited_fd_does_not_free_the_runtime(self):
+        p = self.start(env={"FAKE_MODE_a": "sleep", "FAKE_UNLOCK_a": "1"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        self.assertFalse(self.exclusive("codex"), "a lead's LOCK_UN let an update in under the live session")
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        self.assertEqual(p.wait(10), 0, p.stdout.read())
+        self.assertTrue(self.exclusive("codex"), "the runtime lock outlived the session")
+
     def test_refused_start_releases_runtime_lock(self):
         p = self.start("--contained-by-bw", "codex")
         self.assertEqual(p.wait(10), 4)

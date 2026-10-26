@@ -5,6 +5,7 @@ env:  FAKE_OUT (dir for evidence), FAKE_MODE_<name> = sleep | ignore_term | exit
       guard_probe: sends one allowed pi-shaped call to the guard broker over BW_GUARD_SOCKET and
       records the reply, then exits like `exit`. FAKE_STATE (the bw state dir) makes it replay the
       logged self-test call instead of `ls`. FAKE_GUARD_RUNTIME names the runtime (default pi).
+      FAKE_UNLOCK_<name> set: flock(LOCK_UN) every inherited descriptor before writing the evidence.
 Writes <FAKE_OUT>/<name>.json: pid, pgid, argv, the BW_GUARD_* variable names, the probe reply, whether every pid listed in FAKE_OUT/*.json
 from earlier leads is gone, whether it holds the terminal's foreground, and each inherited descriptor
 above 2 as [inode, access mode].
@@ -67,6 +68,13 @@ if mode == "guard_probe":
     probe = json.loads(buf)
     s.close()
     mode = "exit"
+if os.environ.get(f"FAKE_UNLOCK_{name}"):  # a lead dropping the locks it inherited
+    import fcntl
+    for fd in range(3, 256):
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
 with open(os.path.join(out, f"{name}.json"), "w") as fh:
     json.dump({"pid": os.getpid(), "pgid": os.getpgrp(), "argv": sys.argv, "foreground": fg, "probe": probe,
                "guard_env": sorted(k for k in os.environ if k.startswith("BW_GUARD_")),

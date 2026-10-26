@@ -5,7 +5,8 @@ A tool's update runs only under its runtime's lock taken exclusively without blo
 neither under a running lead nor between a check and the launch it allowed. A held lock skips
 the tool. A tool with an update command and no runtime is not updated at all; Orca and
 cc-switch update with no lock. Versions are read before and after (10 s each); a version that
-cannot be read after the attempt is "unreadable", which leaves that runtime's re-verify pending.
+cannot be read after the attempt is "unreadable", which leaves that runtime's re-verify pending; a
+successful update is "updated" only when both versions were read and differ.
 """
 import os
 import plistlib
@@ -20,7 +21,7 @@ from .runtimes import ADAPTERS
 
 ToolResult = namedtuple("ToolResult", "tool runtime before after result detail seconds")
 RESULTS = ("updated", "current", "failed", "timed-out", "skipped-locked", "skipped-interval",
-           "skipped-no-lock", "no-update-command", "self-updating")
+           "skipped-no-lock", "no-update-command", "self-updating", "unreadable")
 UNREADABLE = "unreadable"
 VERSION_TIMEOUT_S = 10
 DEFAULT_UPDATE_TIMEOUT_S = 600
@@ -110,6 +111,10 @@ def _update_one(name, tool_cfg, state, now, interval_s, previous, run):
                         f"no result after {tool_cfg.get('timeout_s', DEFAULT_UPDATE_TIMEOUT_S)} s", now)
         if r.rc != 0:
             return done(before, after, "failed", _failure_detail(r), now)
+        if after == UNREADABLE:
+            return done(before, after, UNREADABLE, "version unreadable after update", now)
+        if before == UNREADABLE:
+            return done(before, after, UNREADABLE, "version unreadable before update", now)
         return done(before, after, "updated" if after != before else "current", "", now)
     finally:
         if lock is not None:
@@ -151,5 +156,9 @@ def update_all(config, state, now, run=proc.run, on_done=None, previous=None) ->
             entry["last_update_at"] = at
             out[res.tool] = entry
             if on_done is not None:
-                on_done(res)
+                try:
+                    on_done(res)
+                except Exception as e:  # a display failure is the tool's note, never the run's end
+                    note = f"on_done failed: {type(e).__name__}: {e}"
+                    entry["detail"] = f"{entry['detail']}; {note}" if entry["detail"] else note
     return out

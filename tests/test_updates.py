@@ -234,6 +234,44 @@ class Updates(unittest.TestCase):
         self.assertLess(seen[0][1] - t0, 0.4)  # reported before the slow one finished
         self.assertTrue(all(s[2] for s in seen))
 
+    def one(self, versions, rc=0):
+        run = FakeRun(updates={("claude", "update"): (rc, 0, False)}, versions={("v1",): versions})
+        return updates.update_all(cfg({"claude": {"update": ["claude", "update"], "version": ["v1"]}}),
+                                  self.state, NOW, run=run)["claude"]
+
+    def test_success_with_unreadable_after_version_is_unreadable_not_updated(self):
+        r = self.one(["1.0", None])
+        self.assertEqual((r["before"], r["after"], r["result"], r["detail"]),
+                         ("1.0", "unreadable", "unreadable", "version unreadable after update"))
+
+    def test_success_with_unreadable_before_version_is_not_updated(self):
+        r = self.one([None, "1.1"])
+        self.assertEqual((r["before"], r["after"], r["result"], r["detail"]),
+                         ("unreadable", "1.1", "unreadable", "version unreadable before update"))
+
+    def test_success_with_equal_versions_is_current(self):
+        r = self.one(["1.0", "1.0"])
+        self.assertEqual((r["result"], r["detail"]), ("current", ""))
+
+    def test_on_done_raising_is_recorded_and_never_escapes(self):
+        tools = {"a": {"update": ["ainst", "x"], "version": ["va"], "runtime": "pi"},
+                 "b": {"update": ["binst", "x"], "version": ["vb"], "runtime": "kimi"}}
+        run = FakeRun(updates={("ainst", "x"): (0, 0, False), ("binst", "x"): (0, 0.2, False)},
+                      versions={("va",): ["1", "2"], ("vb",): ["1", "2"]})
+        seen = []
+
+        def on_done(r):
+            seen.append(r.tool)
+            if r.tool == "a":
+                raise RuntimeError("display broke")
+
+        out = updates.update_all(cfg(tools), self.state, NOW, run=run, on_done=on_done)
+        self.assertEqual(sorted(out), ["a", "b"])
+        self.assertEqual(seen, ["a", "b"])
+        self.assertEqual(out["a"]["result"], "updated")
+        self.assertIn("on_done failed: RuntimeError: display broke", out["a"]["detail"])
+        self.assertEqual((out["b"]["result"], out["b"]["detail"]), ("updated", ""))
+
     def test_installer_of(self):
         self.assertEqual(updates.installer_of({"update": ["/opt/homebrew/bin/brew", "upgrade"]}), "brew")
         self.assertEqual(updates.installer_of({}), "")

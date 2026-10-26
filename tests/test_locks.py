@@ -93,6 +93,44 @@ class RuntimeLockTest(unittest.TestCase):
         self.assertTrue(other.try_exclusive())
 
 
+    def unlock_in_child(self, fd):
+        """A lead child that inherited `fd` and drops the flock on it."""
+        code = "import fcntl, sys; fcntl.flock(int(sys.argv[1]), fcntl.LOCK_UN)"
+        subprocess.run([sys.executable, "-c", code, str(fd)], pass_fds=(fd,), check=True, timeout=30)
+
+    def test_child_unlocking_the_passed_fd_does_not_release_the_session(self):
+        for take in ("shared", "try_shared"):
+            lk = locks.RuntimeLock(self.state, "pi")
+            self.assertTrue(getattr(lk, take)())
+            self.unlock_in_child(lk.fd)
+            other = locks.RuntimeLock(self.state, "pi")
+            self.assertFalse(other.try_exclusive(), take)
+            lk.release()
+            self.assertTrue(other.try_exclusive(), take)
+            other.release()
+
+    def test_session_fd_is_separate_read_only_and_not_inheritable(self):
+        import fcntl
+        lk = locks.RuntimeLock(self.state, "pi")
+        self.addCleanup(lk.release)
+        self.assertTrue(lk.shared())
+        self.assertIsNotNone(lk.session_fd)
+        self.assertNotEqual(lk.session_fd, lk.fd)
+        self.assertFalse(os.get_inheritable(lk.session_fd))
+        self.assertEqual(fcntl.fcntl(lk.session_fd, fcntl.F_GETFL) & os.O_ACCMODE, os.O_RDONLY)
+        lk.release()
+        self.assertIsNone(lk.session_fd)
+
+    def test_try_shared_failing_leaves_no_session_fd(self):
+        held = locks.RuntimeLock(self.state, "codex")
+        self.addCleanup(held.release)
+        self.assertTrue(held.try_exclusive())
+        lk = locks.RuntimeLock(self.state, "codex")
+        self.addCleanup(lk.release)
+        self.assertFalse(lk.try_shared())
+        self.assertIsNone(lk.session_fd)
+
+
 class ToolRuntimeTest(unittest.TestCase):
     def test_defaults(self):
         self.assertEqual(locks.tool_runtime("claude", {}), "claude-code")

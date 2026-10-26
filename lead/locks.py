@@ -2,7 +2,9 @@
 
 `bw lead` takes the shared lock on its lead's runtime before checking that runtime's verification
 and holds it through the launch and the session; the descriptor is passed to the lead, so the
-kernel keeps the lock until bw AND the lead are gone (the worktree lock's pattern). An updater
+kernel keeps the lock until bw AND the lead are gone (the worktree lock's pattern). The passed
+descriptor's lock is shared with the lead, which could drop it with LOCK_UN, so bw also holds the
+shared lock on a second, non-inheritable open of the file for as long as its session lasts. An updater
 takes it exclusively without blocking and skips the tool when it is held, so an update can land
 neither between a verification check and the launch it allowed, nor under a running lead.
 """
@@ -40,18 +42,34 @@ class RuntimeLock:
         # Read-only: flock needs no write access, and nothing should write to the lock file
         # through the descriptor a lead inherits.
         self.fd = os.open(self.path, os.O_RDONLY | os.O_CREAT, 0o600)
+        self.session_fd = None  # bw's own open file description; never passed to a lead
+
+    def _open_session(self):
+        if self.session_fd is None:
+            self.session_fd = os.open(self.path, os.O_RDONLY | os.O_CLOEXEC)
+            os.set_inheritable(self.session_fd, False)
+
+    def _close_session(self):
+        if self.session_fd is not None:
+            os.close(self.session_fd)
+            self.session_fd = None
 
     def shared(self) -> bool:
         """Blocks while an update holds the lock exclusively."""
+        self._open_session()
+        fcntl.flock(self.session_fd, fcntl.LOCK_SH)
         fcntl.flock(self.fd, fcntl.LOCK_SH)
         return True
 
     def try_shared(self) -> bool:
         """False while an update holds the lock exclusively (never blocks)."""
+        self._open_session()
         try:
+            fcntl.flock(self.session_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
             fcntl.flock(self.fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
             return True
         except BlockingIOError:
+            self._close_session()
             return False
 
     def try_exclusive(self) -> bool:
@@ -64,6 +82,7 @@ class RuntimeLock:
     def release(self):
         """Close, never LOCK_UN: a lead that inherited the descriptor shares the lock, and an
         unlock would drop it for the lead too. Closing ours leaves the lead's copy holding it."""
+        self._close_session()
         if self.fd is not None:
             os.close(self.fd)
             self.fd = None
