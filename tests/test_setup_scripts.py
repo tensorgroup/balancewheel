@@ -152,6 +152,11 @@ class SetupScriptsTest(unittest.TestCase):
         self.assertEqual((self.home / ".claude" / "CLAUDE.md").read_text(), "original rules\n")
         self.assertEqual(len([p for p in self.root.iterdir()]), 1, "a failed restore must not take a safety backup")
 
+    def test_real_paths_list_has_only_ccswitch_settings(self):
+        lines = [l.strip() for l in (REPO / "setup" / "paths.txt").read_text().splitlines()]
+        cc = [l for l in lines if l and not l.startswith("#") and l.startswith("~/.cc-switch")]
+        self.assertEqual(cc, ["~/.cc-switch/settings.json"])
+
     def test_help_flags(self):
         for s in (BACKUP, RESTORE):
             r = self.run_script(s, "--help")

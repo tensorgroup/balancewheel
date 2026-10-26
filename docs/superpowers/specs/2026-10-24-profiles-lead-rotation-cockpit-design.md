@@ -13,6 +13,9 @@ otherwise. Tool versions were read on the author's machine on this date: Claude 
 "contained by self" argument is narrowed to the sandbox, and config moves to schema 3; see
 "Amendments from `bw guard` v0".*
 
+*Amended 2026-10-25 (plan 4): cc-switch is adopted for the Usage view and the
+`data_source` values are corrected; see "Amendments from plan 4".*
+
 *Amended 2026-10-25: Orca (1.4.240, MIT) replaces nodeterm as the recommended, optional
 canvas, and the cockpit, inbox, and quota-probe work it duplicates is trimmed. A spike and a
 deep four-seat review (43 raw findings, 17 after dedupe) shaped the change; the sections
@@ -68,7 +71,8 @@ macOS only for now.
   routing, failover, and aggregation modes stay **off**; everything here works with them
   off (verified: cc-switch's session-log scanners write usage rows with routing off —
   `services/session_usage_{codex,agy,gemini,kimi,pi}.rs` insert into
-  `proxy_request_logs` with `data_source = 'session_log'`).
+  `proxy_request_logs`; each scanner has its own `data_source` value, not `session_log`
+  — corrected by amendment A2, "Amendments from plan 4").
 - **Not a harness replacement.** Balancewheel launches and watches vendor CLIs; the user
   works *in* one. Rotation picks which; it never sits between the user and it.
 - **Not a hosted service, and nothing runs when you are not working.** The only
@@ -608,7 +612,7 @@ Config is canonical; the registry is a derived snapshot rebuilt by `bw registry`
 
 - **The user's own sessions** (leads, and anything else run in the default vendor homes):
   cc-switch's `~/.cc-switch/cc-switch.db`, tables `proxy_request_logs` (rows with
-  `data_source = 'session_log'`) and `usage_daily_rollups`, opened read-only
+  `data_source` other than `proxy`; amendment A2) and `usage_daily_rollups`, opened read-only
   (`sqlite3.connect("file:...?mode=ro", uri=True)`), one short connection per refresh,
   unknown columns or tables treated as `unknown` rather than an error. cc-switch is
   optional; without it the view says so.
@@ -759,6 +763,29 @@ it. Changes, by section:
   a headless agy run outside Orca (untested live: Google quota capped); the agy seat's own
   configuration directory covers seats, and the agy lead needs `orca agent hooks off` or an
   upstream fix. `BW_STATE_DIR` does not yet redirect the metrics log.
+
+### Amendments from plan 4 (2026-10-26)
+
+Named in `docs/superpowers/plans/2026-10-26-plan-4-starter-quota-inbox-cockpit.md`.
+
+- **A1. Two decisions by the user.** (1) The three remaining build steps (the starter, quota
+  sources and the inbox, the registry and read-only cockpit) are planned together as three
+  phases in one plan, each shipping on its own, where this document said one plan per step.
+  (2) **cc-switch is adopted** as the usage-and-cost source for the Usage view, replacing
+  "deferred, may be parsed directly": installed from the Homebrew cask `cc-switch` (4.0.20);
+  its database is read-only (by copy); routing, failover, aggregation, Codex provider
+  management, and every config, prompt, MCP, and skill sync stay off; Orca stays the only
+  canvas quota source and cc-switch is never a quota source. Its settings are written
+  before its first launch by `bw setup cc-switch` (`~/.cc-switch/settings.json`, now in
+  `setup/paths.txt`). Verified on 4.0.20: with the settings pre-written, the first launch
+  changed no file in `setup/paths.txt` and no shell profile, and its Codex history migration
+  ran and rewrote nothing; besides `~/.cc-switch` it writes only its own app state under the
+  user's `Library`.
+- **A2. `data_source` values.** `session_log` is Claude Code's alone. The other scanners
+  write `codex_session`, `gemini_session`, `pi_session`, `kimi_session`, and `agy_session`
+  (observed in a first-launch database). The Non-goals sentence that every scanner writes
+  `session_log` is corrected in place, and "Usage and cost data" selects rows with
+  `data_source` other than `proxy` and maps the value to a tool.
 
 ## Extraction gate
 

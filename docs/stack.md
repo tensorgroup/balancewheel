@@ -1,6 +1,6 @@
 # The stack — what we use, what we don't, and why
 
-*Started 2026-10-25; revised 2026-10-25 for `bw guard` v0. One row per tool that has been used, planned, retired, or evaluated for
+*Started 2026-10-25; revised 2026-10-25 for `bw guard` v0 and again for cc-switch's adoption. One row per tool that has been used, planned, retired, or evaluated for
 the reference setup, with the reason and what would change the call. Update it in the same
 commit as any change of tool; date the row. Settings and boundaries for each adopted tool
 live in the owning doc linked from its row (the 2026-10-24 spec's "Third-party tools"
@@ -11,7 +11,7 @@ inside a repo (instructions, skills, rule packs); Balancewheel's setup writes on
 home directory (`setup/paths.txt`). A tool is adopted only if it leaves both alone or is
 configured to: Orca reads a repo's `.claude/`/`.codex/` config and, per its docs, leaves it and `CLAUDE.md`/`AGENTS.md` alone (its hooks
 go to the home-level vendor files, which is why those are in `paths.txt`); cc-switch's sync
-features would write both layers, so they stay off.
+features would write both layers, so they stay off (and `bw setup cc-switch` pre-writes the settings that keep them off).
 
 ## In use
 
@@ -26,13 +26,12 @@ features would write both layers, so they stay off.
 | **nono** | default backend for `bw sandbox` and the OS-sandboxed seats | Apache-2.0 | 2026-10-24 | Kernel-enforced write *and* read allow-lists (blocks secret reads), passed every attack run; `sandbox-exec` (ships with macOS) is the zero-install fallback. |
 | **Orca** | the recommended canvas: one pane per worktree running `bw lead`, notifications, a per-plan quota view whose snapshot feeds `quota: "orca"` | MIT | 2026-10-25 | Replaced nodeterm (below). Optional; plain terminal tabs work the same. Read `docs/orca.md` before installing: it edits vendor configs and its control channel must be denied in every sandbox (done in `lead/sandbox.py`). |
 | **`bw guard`** (rules-only, shadow) | per-lead autonomy for runtimes with no native judge: a broker in `bw lead` with a thin pi extension or agy hook; logs what it would decide, blocks nothing | ours | 2026-10-25 | Built for pi and verified by attack on both sandbox backends. The agy side is built but refused until agy's hook behaviour is observed (a usage-capped spike). A model judge (v1) waits on a week of shadow data. Design in the 2026-10-25 spec. |
+| **cc-switch** (4.0.20, Homebrew cask `cc-switch`) | usage and cost for the user's own lead sessions, read from its SQLite by copy (the cockpit's Usage view); never a quota source | MIT | 2026-10-25 | It scans the session logs of Claude Code, Codex, agy, Kimi Code, pi, and Gemini into one table with routing off: usage history we would otherwise parse per vendor. Its first launch populated `proxy_request_logs` with `data_source` values `session_log` (Claude Code only), `codex_session`, `pi_session`, `agy_session`, `kimi_session`, and `gemini_session`. **Settings are written before the first launch** by `bw setup cc-switch` (`~/.cc-switch/settings.json`; proxy, stack mode, failover, Codex history unification, launch on startup, and tool-update checks off; session auto-sync on); with them in place the launch changed no file in `setup/paths.txt` and no shell profile, and its Codex history migration rewrote nothing. There is no global switch for prompt or MCP sync or for Codex provider management, so the rule is: **never enable an item and never switch a provider in its UI**. First launch copies `~/.claude/settings.json`, Codex `config.toml` and `auth.json`, Gemini settings, `CLAUDE.md`/`AGENTS.md`, and MCP configs into its database, so `~/.cc-switch` is a credential store that every sandbox denies reading. Its tray reads Claude Code's Keychain item (cc-switch's read, not bw's). Its proxy stays off; enabling it is unsupported with nono-contained leads if the port deny cannot be enforced there. Besides `~/.cc-switch` it writes only its own app state under the user's `Library/{Application Support,Caches,WebKit}/com.ccswitch.desktop`, which setup does not write and `paths.txt` does not list. Decision and amendments: 2026-10-24 spec, "Amendments from plan 4". |
 | git, `gh`, Python 3.9+ stdlib | everything else | — | start | No packages to install, by rule. |
 
 ## Planned, not installed yet
 
-| Tool | Planned role | License | Why | Status |
-|---|---|---|---|---|
-| **cc-switch** | usage and cost for the user's own lead sessions, read from its SQLite (read-only) | MIT | It already scans the session logs of Claude Code, Codex, agy, Kimi Code, and pi into one table, with routing off — usage history we would otherwise have to parse per vendor. It is **not** the quota source: it keeps quota in memory only, with no CLI or API. Its config, prompt, MCP, and skill sync is **not** wanted: those files belong to OpenEscapement (repo level) and Balancewheel's setup (home level), and a third writer would break the rule that the two never write the same file. | Not installed; deferred to the cockpit's Usage view (build step 6), where it competes with Orca's own usage tracking (2026-10-25: Orca aggregates tokens and estimated cost for Claude Code, Codex, OpenCode, and Muse, but only in its UI, with no runtime RPC, and not for agy, Kimi, or pi) and with parsing session logs directly. If chosen, it runs read-only with routing, failover, aggregation, Codex provider management, and every sync **off**. |
+Nothing at the moment.
 
 ## Retired
 

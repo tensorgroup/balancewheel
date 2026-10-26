@@ -56,5 +56,12 @@
 # they act only inside an Orca pane (ORCA_PANE_KEY).
 ~/.pi/agent/extensions
 
+# cc-switch (usage and cost source for the cockpit's Usage view; docs/stack.md). `bw setup
+# cc-switch` writes this one file before its first launch, so its proxy, failover, and
+# startup behaviours stay off; bw otherwise only reads its database. The rest of
+# ~/.cc-switch (the database, which holds copies of vendor credentials and configs) is the
+# app's own state: not listed, not backed up.
+~/.cc-switch/settings.json
+
 # git: global excludes for tool litter
 ~/.config/git/ignore

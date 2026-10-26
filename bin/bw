@@ -5,6 +5,7 @@
   bw status                                       leads, quota, caps, pins
   bw cap <plan> [--resets-at <epoch>]             record that a plan is capped
   bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
+  bw setup cc-switch                              pre-write cc-switch's settings (before its first launch)
   bw guard install agy                            add the guard hook entry to agy's hooks file
   bw guard uninstall agy                          remove it (other entries are left alone)
   bw guard verify <runtime> [--lead <lead>]       attack-test the guard on a runtime, record a pass
@@ -18,7 +19,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from lead import containment, quota, runner, sandbox  # noqa: E402
+from lead import ccswitch, containment, quota, runner, sandbox  # noqa: E402
 from lead.guard import verify as guard_verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.paths import ConfigError, ROOT, load_config, read_json, state_dir  # noqa: E402
@@ -148,6 +149,12 @@ def cmd_guard(a, config, state):
     return 0
 
 
+def cmd_setup(a):
+    code, msg = ccswitch.write_settings()
+    print(msg)
+    return code
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="bw", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -166,7 +173,10 @@ def main(argv=None):
     rv = gds.add_parser("review"); rv.add_argument("--profile", default=None)
     rv.add_argument("--recent", type=_count, default=20); rv.add_argument("--sample", type=_count, default=5)
     rv.add_argument("--list", action="store_true")
+    st = sub.add_parser("setup"); st.add_argument("what", choices=["cc-switch"])
     a = ap.parse_args(argv)
+    if a.cmd == "setup":  # touches only the tool's own settings file, so it needs no config
+        return cmd_setup(a)
     if a.cmd == "guard" and a.sub not in ("review", "verify"):  # touches only the hooks file, so it needs no config
         return cmd_guard(a, None, None)
     try:

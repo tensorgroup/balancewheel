@@ -15,6 +15,15 @@ not against the prose.
 
 ### Added
 
+- **`bw setup cc-switch`, the cc-switch settings check, and `lead/proc.py`** (`bin/bw`,
+  `lead/ccswitch.py`, `lead/checks.py`, `lead/proc.py`): cc-switch is adopted as the usage
+  and cost source for the Usage view (docs/stack.md). `bw setup cc-switch` writes
+  `~/.cc-switch/settings.json` (proxy, stack mode, failover, Codex history unification,
+  launch on startup, and tool-update checks off; session auto-sync on) before the app's
+  first launch, and refuses to overwrite a file that differs; it needs no config.
+  `setup/paths.txt` gains `~/.cc-switch/settings.json` (the rest of `~/.cc-switch` stays
+  out: it is the app's database and holds copies of credentials). `lead/proc.py` is the one
+  shell-out helper later modules take as `run=`.
 - **`bw guard` commands** (`bin/bw`, `lead/guard/`): `bw guard review [--profile] [--recent]
   [--sample] [--list]` (audit stops and sampled allows, marks recorded in `guard.jsonl`),
   `bw guard verify <runtime>` (the attack in `tests/attack/guard_attack.sh`; a pass is
