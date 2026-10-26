@@ -468,9 +468,13 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         signal.signal(s, signal.SIG_IGN)
 
     def now_state():
-        # expired caps included: a plan that was capped must clear the return threshold first
-        return quotamod.read_quota(state), quotamod.read_caps(state, time.time(), rot["cap_expiry_hours"],
-                                                              include_expired=True)
+        # per-plan arbitrated quota; caps past their reset are cleared once a fresh reading (or
+        # the expiry window) says so, and the rest stay included: a plan that was capped must
+        # clear the return threshold first
+        now = time.time()
+        q = quotamod.read_quota(state, config, now)
+        quotamod.clear_expired_caps(state, q, now, rot["cap_expiry_hours"])
+        return q, quotamod.read_caps(state, now, rot["cap_expiry_hours"], include_expired=True)
 
     q, caps = now_state()
     d = rotation.decide(profile, config["leads"], rot, None, pinned, q, caps, time.time(), "start")

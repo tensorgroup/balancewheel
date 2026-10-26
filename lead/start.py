@@ -27,7 +27,7 @@ from .status import orca_checks
 from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
 from .projects import resolve_project
-from .rotation import decide, effective_quota
+from .rotation import decide
 
 PASSED_ENV = ("BALANCEWHEEL_CONFIG", "BW_STATE_DIR")
 ORCA_CREATE_TIMEOUT_S = 30
@@ -182,7 +182,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     verify_items = [i for rt in runtimes for i in items_by_rt.get(rt, [])]
 
     # 4. quota and the lead
-    _quota_and_lead(config, state, project, profile, plans, now, say)
+    _quota_and_lead(config, state, project, profile, plans, now, say, clear_caps=True)
     orca_entry = results.get("orca")
     orca_version = (orca_entry.get("after") if isinstance(orca_entry, dict) else None) or orca.app_version()
     write_json_atomic(os.path.join(state, "start.json"),
@@ -201,11 +201,13 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     return code
 
 
-def _quota_and_lead(config, state, project, profile, plans, now, say):
-    snaps = quota.read_quota(state)
+def _quota_and_lead(config, state, project, profile, plans, now, say, clear_caps=False):
+    snaps = quota.read_quota(state, config, now)
     for p in plans:
-        say(f"quota {p}: {quota.summary(effective_quota(snaps.get(p), now))}")
+        say(f"quota {p}: {quota.summary(snaps.get(p))}")
     rot = config.get("rotation") or {}
+    if clear_caps:  # never on a dry run, which writes nothing
+        quota.clear_expired_caps(state, snaps, now, rot.get("cap_expiry_hours", 5))
     caps = quota.read_caps(state, now, rot.get("cap_expiry_hours", 5), include_expired=True)
     pinned = runner.read_pin(state, project.worktree_key)
     d = decide(profile, config["leads"], rot, None, pinned, snaps, caps, now, "start")

@@ -344,6 +344,15 @@ class StartCase(unittest.TestCase):
         self.assertIn("bw start: lead: lp (order)", out)
         self.assertIn("bw start: cockpit: run bw cockpit", out)
 
+    def test_start_clears_an_expired_cap_and_a_dry_run_does_not(self):
+        from lead import quota
+        quota.record_cap(self.state, "pp", NOW - 7 * 3600, resets_at=NOW - 6 * 3600)  # past its 5 h expiry window
+        caps = os.path.join(self.state, "caps", "pp.json")
+        code, out = self.start(FakeRun(), verify=False, update=False, dry_run=True)
+        self.assertTrue(os.path.exists(caps), out)
+        code, out = self.start(FakeRun(), verify=False, update=False)
+        self.assertFalse(os.path.exists(caps), out)
+
     def test_start_json_written(self):
         run = FakeRun()
         run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.1", 0.0, 0)

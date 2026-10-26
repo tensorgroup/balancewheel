@@ -110,5 +110,64 @@ class Decide(unittest.TestCase):
         self.assertIn("pinned", d.notice)
 
 
+
+def full_pool(applies_to, resets_in=H, used=100):
+    return {"name": "fableWeekly", "used_pct": used, "resets_at": NOW + resets_in, "applies_to": applies_to}
+
+
+def pooled(plan, *pools):
+    return {plan: {"unknown": True, "pools": list(pools)}}
+
+
+SHARED = {"a": {"plan": "pa"}, "b": {"plan": "pa"}, "c": {"plan": "pc"}}
+
+
+class Pools(unittest.TestCase):
+    def test_full_pool_blocks_only_named_lead_at_start(self):
+        d = decide(PROFILE, SHARED, ROT, None, None, pooled("pa", full_pool(["a"])), {}, NOW, "start")
+        self.assertEqual((d.lead, d.reason), ("b", "pool-full"))
+
+    def test_pool_not_full_or_past_reset_or_malformed_blocks_nobody(self):
+        for p in (full_pool(["a"], used=99), full_pool(["a"], resets_in=-1), {"applies_to": ["a"]},
+                  {"used_pct": 100, "applies_to": "a", "resets_at": NOW + H}, "junk",
+                  {"used_pct": 100, "resets_at": None, "applies_to": ["a"]}):
+            d = decide(PROFILE, SHARED, ROT, None, None, pooled("pa", p), {}, NOW, "start")
+            self.assertEqual((d.lead, d.reason), ("a", "order"), p)
+
+    def test_pool_alone_never_switches_mid_session(self):
+        d = run(current="a", quota=pooled("pa", full_pool(["a"])), moment="running")
+        self.assertEqual((d.lead, d.reason), ("a", "stay"))
+
+    def test_cap_switch_skips_pool_full_candidate(self):
+        d = run(current="a", quota=pooled("pb", full_pool(["b"])), caps={"pa": cap(H)}, moment="running")
+        self.assertEqual((d.lead, d.reason), ("c", "capped"))
+
+    def test_cap_switch_with_every_candidate_pool_full_stays(self):
+        q = {**pooled("pb", full_pool(["b"])), **pooled("pc", full_pool(["c"]))}
+        d = run(current="a", quota=q, caps={"pa": cap(H)}, moment="running")
+        self.assertEqual((d.lead, d.reason), ("a", "none-eligible"))
+
+    def test_boundary_leaves_a_pool_full_current(self):
+        d = run(current="b", quota=pooled("pb", full_pool(["b"])), caps={"pa": cap(H)}, moment="boundary")
+        self.assertEqual((d.lead, d.reason), ("c", "pool-full"))
+
+    def test_boundary_does_not_return_to_pool_full_lead(self):
+        d = run(current="b", quota=pooled("pa", full_pool(["a"])), caps={"pa": cap(-60)}, moment="boundary")
+        self.assertEqual((d.lead, d.reason), ("b", "stay"))
+
+    def test_pinned_pool_full_falls_through_with_notice(self):
+        d = run(pinned="c", quota=pooled("pc", full_pool(["c"])))
+        self.assertEqual(d.lead, "a")
+        self.assertIn("pinned lead c", d.notice)
+
+    def test_every_lead_pool_full_starts_nobody(self):
+        q = pooled("pa", full_pool(["a", "b"]))
+        q.update(pooled("pc", full_pool(["c"], resets_in=2 * H)))
+        d = decide(PROFILE, SHARED, ROT, None, None, q, {}, NOW, "start")
+        self.assertEqual((d.lead, d.reason), (None, "none-eligible"))
+        self.assertIn("full quota pool", d.notice)
+        self.assertIn(f"{NOW + H:.0f}", d.notice)
+
+
 if __name__ == "__main__":
     unittest.main()

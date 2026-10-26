@@ -100,7 +100,7 @@ class StatusCase(unittest.TestCase):
         self.assertIsNone(f["last_start"])
         lines = status.render(f)
         self.assertIn("plans:", lines)
-        self.assertIn("  pa (plan): quota unknown", lines)
+        self.assertTrue(any(ln.startswith("  pa (plan): quota unknown") for ln in lines), lines)
         self.assertIn("leads:", lines)
         self.assertTrue(any("bw cap <plan>" in ln for ln in lines))
 
@@ -120,6 +120,41 @@ class StatusCase(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("orca: unknown — ", r.stdout)
         self.assertIn("cc-switch: unknown — ", r.stdout)
+
+    def test_facts_carry_source_age_cross_check_pools_and_notice(self):
+        from lead import quota
+        now = time.time()
+        self.config["plans"]["pa"]["orca_provider"] = "claude"
+        self.config["plans"]["pb"] = {"billing": "plan", "quota": "probe"}
+        quota.record_statusline(self.state, "pa", {"rate_limits": {"five_hour": {"used_percentage": 25}}}, now - 120)
+        pool = {"name": "fableWeekly", "used_pct": 100, "resets_at": now + 3600, "applies_to": ["la"]}
+        orca = {"windows": [{"name": "session", "used_pct": 40, "resets_at": now + 3600}],
+                "observed_at": now - 60, "pools": [pool]}
+        quota.write_snapshot(self.state, "pa", "orca", orca, now - 60)
+        f = status.facts(self.config, self.state, now, run=fake_run(""))
+        pa, pb = {p["name"]: p for p in f["plans"]}["pa"], {p["name"]: p for p in f["plans"]}["pb"]
+        self.assertEqual((pa["source"], round(pa["age_s"]), pa["pools"], pa["notice"]), ("statusline", 120, [pool], None))
+        self.assertEqual(pa["cross_check"]["windows"][0]["used_pct"], 40)
+        self.assertEqual((pb["source"], pb["age_s"], pb["cross_check"], pb["pools"]), (None, None, None, []))
+        self.assertEqual(pb["notice"], "no quota reading yet; rotation is using observed caps only")
+        lines = status.render(f)
+        self.assertIn("  pa (plan): 5h 75% · statusline 2m", lines)
+        self.assertIn("    no quota reading yet; rotation is using observed caps only", lines)
+
+    def test_bw_status_prints_source_and_age(self):
+        from lead import quota
+        now = time.time()
+        cfg_obj = {k: v for k, v in self.config.items() if k != "rotation"}
+        cfg_obj["plans"] = {"pa": {"billing": "plan", "quota": "orca", "orca_provider": "codex"}}
+        cfg = self.root / "config.json"
+        cfg.write_text(json.dumps(cfg_obj))
+        quota.write_snapshot(self.state, "pa", "orca", {"windows": [{"name": "session", "used_pct": 10,
+                                                                     "resets_at": now + 3600}],
+                                                        "observed_at": now - 180}, now - 180)
+        env = {**os.environ, "BALANCEWHEEL_CONFIG": str(cfg)}
+        r = subprocess.run([sys.executable, BW, "status"], env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("  pa (plan): session 90% · orca 3m", r.stdout)
 
 
 if __name__ == "__main__":

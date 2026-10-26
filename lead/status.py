@@ -10,18 +10,20 @@ from lead import ccswitch, orca, proc, quota, runner
 from lead.checks import Check
 from lead.guard import review as guard_review
 from lead.paths import read_json
-from lead.rotation import effective_quota
 from lead.runtimes import ADAPTERS
 
 
 def _plans(config, state, now):
-    caps = quota.read_caps(state, now, config["rotation"]["cap_expiry_hours"])
-    snaps = quota.read_quota(state)
+    rot = config["rotation"]
+    every = rot.get("probe_every_min", 15)
+    caps = quota.read_caps(state, now, rot["cap_expiry_hours"])
+    arbitrated = quota.read_quota(state, config, now)
     out = []
     for name, plan in sorted(config["plans"].items()):
-        q = effective_quota(snaps.get(name), now)
-        out.append({"name": name, "billing": plan["billing"],
-                    "quota": quota.summary(q) if q else "quota unknown",
+        a = arbitrated[name]
+        out.append({"name": name, "billing": plan["billing"], "quota": quota.summary(a),
+                    "source": a.get("source"), "age_s": a.get("age_s"), "cross_check": a.get("cross_check"),
+                    "pools": a.get("pools", []), "notice": quota.notice(a, plan, now, every),
                     "capped_until": caps[name]["resets_at"] if name in caps else None})
     return out
 
@@ -84,6 +86,8 @@ def render(f):
     for p in f["plans"]:
         cs = f" · capped until {time.ctime(p['capped_until'])}" if p["capped_until"] is not None else ""
         lines.append(f"  {p['name']} ({p['billing']}): {p['quota']}{cs}")
+        if p.get("notice"):
+            lines.append(f"    {p['notice']}")
     lines.append("worktrees:")
     for w in f["worktrees"]:
         since = time.ctime(w["since"]) if w["since"] else "-"
