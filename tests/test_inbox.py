@@ -184,14 +184,14 @@ class Records(InboxCase):
         inbox.answer(self.state, r["id"], "use \x1b[2J postgres")
         inbox.write_view(self.state, KEY)
         view = Path(inbox.view_path(self.state, KEY))
-        self.assertEqual(view.parent, Path(self.state) / "inbox-view")
+        self.assertEqual(view.parent, Path(self.state) / "inbox-view" / KEY)
         body = view.read_text()
         self.assertIn(f"@lead answer [id:{r['id']}]", body)
         self.assertIn("use \\x1b[2J postgres", body)
         self.assertNotIn("\x1b", body)
         self.assertNotIn("ASK-TEXT", body)
         self.assertNotIn("unanswered", body)
-        self.assertEqual([p.name for p in view.parent.iterdir()], [f"{KEY}.md"])  # no temp left behind
+        self.assertEqual([p.name for p in view.parent.iterdir()], ["answers.md"])  # no temp left behind
 
     def test_handoff_items_are_bounded(self):
         for i in range(200):

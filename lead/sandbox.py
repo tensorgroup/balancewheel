@@ -9,7 +9,8 @@ processes to act (LaunchServices opens, Apple Events, preference writes, launchc
 written to scratch could otherwise run unsandboxed. For the same reason they hide a canvas's
 control token and refuse its socket (CANVAS_CONTROL_DIRS), and refuse connections to the
 canvas and cockpit ports on any host (denied_ports). bw's sealed copies of third-party databases are
-unreadable; the lead's answers view is readable, and no write rule covers it.
+unreadable, and so are the inbox record (every project's asks and answers) and every other
+worktree's answers view; the lead's own view dir is readable, and no write rule covers it.
 
     python3 -m lead.sandbox run --worktree DIR --state-dir DIR [--read P]... [--write P]...
         [--env K=V]... [--private-home] [--deny-port N]... [--backend nono|sandbox-exec] -- argv...
@@ -22,8 +23,10 @@ import sys
 import tempfile
 from collections import namedtuple
 
-Grants = namedtuple("Grants", "rules read deny_read")    # rules: [(allow|deny, subpath|literal, path)]
-Grants.__new__.__defaults__ = ((),)  # deny_read: paths no read grant reaches (bw's sealed copies)
+Grants = namedtuple("Grants", "rules read deny_read reread")    # rules: [(allow|deny, subpath|literal, path)]
+# deny_read: paths no read grant reaches (bw's sealed copies, the inbox record, the answers views);
+# reread: paths inside a deny_read that are readable again (the lead's own answers view), emitted after it
+Grants.__new__.__defaults__ = ((), ())
 RuntimeGrants = namedtuple("RuntimeGrants", "read write env private_home deny_write")
 RuntimeGrants.__new__.__defaults__ = ((),)  # deny_write: paths inside `write` that stay read-only
 
@@ -94,9 +97,10 @@ def lead_grants(project, runtime, state_dir):
             refuse_overlap(rp, [state])
     handoffs = os.path.join(state, "handoffs", project.worktree_key)
     os.makedirs(handoffs, exist_ok=True)
-    # The answers view is bw's: readable by the lead, inside no write grant.
-    inbox_view = os.path.join(state, "inbox-view")
-    os.makedirs(inbox_view, exist_ok=True)
+    # The answers views are bw's: the lead reads only its own worktree's, inside no write grant.
+    views = os.path.join(state, "inbox-view")
+    own_view = os.path.join(views, project.worktree_key)
+    os.makedirs(own_view, mode=0o700, exist_ok=True)
     rules = [("allow", "subpath", wt), ("allow", "subpath", common), ("allow", "subpath", handoffs)]
     rules += [("allow", "subpath", _real(p)) for p in runtime.write]
     rules += [("deny", "subpath", _real(p)) for p in runtime.deny_write]
@@ -125,9 +129,11 @@ def lead_grants(project, runtime, state_dir):
     # A symlinked path (dotfiles) is read through its link: grant the link node as well.
     reads += [check_path(os.path.abspath(os.path.expanduser(p))) for p in list(runtime.read) + git_cfg
               if os.path.islink(os.path.expanduser(p))]
-    reads.append(check_path(inbox_view))
-    # Copies of third-party databases (cc-switch, Orca) bw reads: never readable by a lead.
-    return Grants(rules, reads, [check_path(os.path.join(state, "sealed"))])
+    reads.append(check_path(own_view))
+    # Copies of third-party databases (cc-switch, Orca) bw reads, the inbox record, and the answers
+    # views: never readable by a lead, except its own view.
+    denied = [os.path.join(state, "sealed"), os.path.join(state, "inbox.jsonl"), views]
+    return Grants(rules, reads, [check_path(p) for p in denied], [check_path(own_view)])
 
 
 def _rule(action, kind, path):
@@ -148,7 +154,8 @@ def canvas_denies(ports):
 
 
 def _read_denies(grants):
-    return [f'(deny file-read* (subpath "{check_path(p)}"))' for p in grants.deny_read]
+    return ([f'(deny file-read* (subpath "{check_path(p)}"))' for p in grants.deny_read]
+            + [f'(allow file-read* (subpath "{check_path(p)}"))' for p in grants.reread])
 
 
 def seatbelt_profile(grants, scratch, ports=None):

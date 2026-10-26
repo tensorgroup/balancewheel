@@ -238,6 +238,16 @@ class StartCase(unittest.TestCase):
             self.assertEqual({a[0] for a in run.argvs()}, {"git"})
         self.assertFalse(os.path.exists(os.path.join(self.state, "start.json")))
 
+    def test_config_inside_target_worktree_refused(self):
+        for cfg in (str(self.repo / "bw.json"), str(self.repo / ".git" / "bw.json")):
+            run = FakeRun(orca="running")
+            self.config["path"] = cfg
+            code, out = self.start(run)
+            self.assertEqual(code, 2, cfg)
+            self.assertIn(f"refusing: the config ({cfg}) lies inside", out)
+            self.assertEqual({a[0] for a in run.argvs()}, {"git"})  # no tool update or version read ran from it
+        self.assertFalse(os.path.exists(os.path.join(self.state, "start.json")))
+
     def test_unresolvable_path_exits_2(self):
         plain = self.root / "plain"; plain.mkdir()
         run = FakeRun()
@@ -458,7 +468,8 @@ lock = Lock(sys.argv[2], sys.argv[3])
 assert lock.acquire()
 import os
 if len(sys.argv) > 4:
-    os.ftruncate(lock.fd, 0); os.write(lock.fd, sys.argv[4].encode())
+    with open(lock.path, "w") as f:  # lock.fd is read-only: raw content goes through its own open
+        f.write(sys.argv[4])
 else:
     lock.write({"lead": "lx", "pid": os.getpid(), "child": 99, "started": 1000})
 print("ready", flush=True)

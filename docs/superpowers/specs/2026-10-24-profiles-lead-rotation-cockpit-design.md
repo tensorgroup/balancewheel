@@ -867,9 +867,10 @@ built.
   its own file (write `.tmp-<random>`, rename to `<random>.ask`) in `BW_ASKS`, a directory it
   can write; bw ingests complete `*.ask` regular files (no links, no blocking, bounded size
   and count), records them in `state_dir/inbox.jsonl` (`ts` in epoch seconds), and drains
-  once more after the lead exits, before the handoff. Answers go back in `state_dir/inbox-view/`
+  once more after the lead exits, before the handoff. Answers go back in `state_dir/inbox-view/<worktree-key>/answers.md`
   (`BW_INBOX`), a bw-owned file outside every write grant holding only answers, never ask
-  text. `bw inbox [--project] [--all]` and `bw answer <id> "<text>"` are the user's side;
+  text; a lead may read only its own worktree's view dir (the rest of `inbox-view/` and
+  `inbox.jsonl` are read-denied — plan 4 final review). `bw inbox [--project] [--all]` and `bw answer <id> "<text>"` are the user's side;
   `ask`/`answer` metrics events carry no text; a `bw lead --use` that changes the order's pick
   logs a `lead` event with reason `override`. Notices and handoff text built from lead-written
   text are bounded and escaped.

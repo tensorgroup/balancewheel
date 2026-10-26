@@ -23,6 +23,7 @@ without blocking and, while an update holds it, stays on the current lead until 
 """
 import fcntl
 import json
+import math
 import os
 import secrets
 import shutil
@@ -35,28 +36,32 @@ import time
 import uuid
 
 from . import containment, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox
-from .handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text
+from .handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text, write_first_prompt
 from .guard import broker as brk, install as guard_install, launch
 from .guard.launch import GuardUnavailable
+from .guard.review import safe
 from .locks import RuntimeLock
-from .paths import locked_dir, read_json, write_json_atomic
-from .projects import resolve_project
+from .paths import ROOT, locked_dir, read_json, write_json_atomic
+from .projects import refuse_inside, resolve_project
 from .runtimes import ADAPTERS
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "metrics"))
 import store  # noqa: E402
 
-LOCKED, UNVERIFIED, NO_LEADS, ALL_CAPPED, GUARD_UNAVAILABLE = 3, 4, 5, 6, 7
+REFUSED, LOCKED, UNVERIFIED, NO_LEADS, ALL_CAPPED, GUARD_UNAVAILABLE = 2, 3, 4, 5, 6, 7
 INGEST_EVERY_S = 1.0
 V0_SCOPE = ("v0: automatic switching for leads that report usage through the Claude Code statusline; "
             "for other leads record a cap with `bw cap <plan>`")
 
 
 class Lock:
+    """The worktree lock. The descriptor the lead inherits is read-only (flock needs no write
+    access), so the lead cannot rewrite the metadata; bw writes it through its own descriptor."""
+
     def __init__(self, state, key):
         os.makedirs(os.path.join(state, "locks"), exist_ok=True)
         self.path = os.path.join(state, "locks", f"{key}.lock")
-        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        self.fd = os.open(self.path, os.O_RDONLY | os.O_CREAT, 0o600)
 
     def acquire(self):
         try:
@@ -68,37 +73,50 @@ class Lock:
     def read(self):
         os.lseek(self.fd, 0, os.SEEK_SET)
         try:
-            return json.loads(os.read(self.fd, 65536).decode() or "{}")
+            meta = json.loads(os.read(self.fd, 65536).decode() or "{}")
         except ValueError:
             return {}
+        return meta if isinstance(meta, dict) else {}
 
     def write(self, meta):
-        data = json.dumps(meta).encode()
-        os.ftruncate(self.fd, 0)
-        os.lseek(self.fd, 0, os.SEEK_SET)
-        os.write(self.fd, data)
+        fd = os.open(self.path, os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC)  # never passed to a lead
+        try:
+            os.ftruncate(fd, 0)
+            os.write(fd, json.dumps(meta).encode())
+        finally:
+            os.close(fd)
 
 
 def _holder(path):
     try:
         with open(path) as f:
-            return json.load(f)
+            h = json.load(f)
     except (OSError, ValueError):
         return {}
+    return h if isinstance(h, dict) else {}
+
+
+def lock_started(meta):
+    """A lock's `started` when it is a time ctime can print; None otherwise (holder_line's rule).
+    Every reader of lock metadata goes through this and escapes the text fields with `safe`."""
+    started = meta.get("started") if isinstance(meta, dict) else None
+    if not isinstance(started, (int, float)) or isinstance(started, bool) or not math.isfinite(started):
+        return None
+    try:
+        time.ctime(started)
+    except (ValueError, OverflowError, OSError):
+        return None
+    return float(started)
 
 
 def holder_line(worktree, path):
-    """Who holds a worktree lock, from its file; any malformed content says only that it is held."""
+    """Who holds a worktree lock, from its file, escaped; any malformed content says only that it is held."""
     h = _holder(path)
-    started = h.get("started") if isinstance(h, dict) else None
-    try:
-        if not isinstance(started, (int, float)) or isinstance(started, bool):
-            raise ValueError
-        since = time.ctime(started)
-        return (f"{worktree} already has a lead: {h.get('lead')} (bw pid {h.get('pid')}, "
-                f"lead pid {h.get('child')}, since {since})")
-    except (ValueError, OverflowError, OSError):
+    since = lock_started(h)
+    if since is None:
         return f"{worktree} is held by another bw lead"
+    return (f"{worktree} already has a lead: {safe(h.get('lead'))} (bw pid {safe(h.get('pid'))}, "
+            f"lead pid {safe(h.get('child'))}, since {time.ctime(since)})")
 
 
 JOB_SIGNALS = (signal.SIGTTOU, signal.SIGTTIN, signal.SIGINT, signal.SIGQUIT, signal.SIGTSTP)
@@ -144,9 +162,7 @@ class Session:
         prompt = first_prompt(handoff, protocol_text())
         argv_prompt = prompt
         if self.adapter.prompt_mode == "file":
-            path = os.path.join(cp_dir, "first-prompt.md")
-            with open(path, "w") as f:
-                f.write(prompt)
+            path = write_first_prompt(ctx.state, ctx.project.worktree_key, prompt)
             ctx.say(f"bw: paste the first prompt from {path} into the lead")
             argv_prompt = None
         # pi/Kimi get the checkpoint dir through bw sandbox grants; self-contained runtimes whose
@@ -341,6 +357,7 @@ class Context:
         self.tty = sys.stdin.fileno() if sys.stdin.isatty() else None
         self.runtime_lock = None
         self.notice_failed = False
+        self.cap_signal_failed = False
 
     def pass_fds(self):
         return (self.lock.fd,) + ((self.runtime_lock.fd,) if self.runtime_lock is not None else ())
@@ -463,6 +480,28 @@ def _guard_ready(ctx, lead_name):
     return None
 
 
+def _take_cap_signal(ctx, state, key):
+    """True when the lead dropped `cap-signal` and bw removed it. The checkpoint dir is the lead's:
+    anything there (a directory, a non-empty one) that cannot be removed is one notice, not a crash,
+    and not a cap."""
+    sig = os.path.join(checkpoint_dir(state, key), "cap-signal")
+    if not os.path.lexists(sig):
+        return False
+    try:
+        if os.path.isdir(sig) and not os.path.islink(sig):
+            os.rmdir(sig)
+        else:
+            os.remove(sig)
+        return True
+    except OSError as e:
+        if not ctx.cap_signal_failed:
+            ctx.cap_signal_failed = True
+            text = f"cap-signal could not be removed ({type(e).__name__}); it is ignored"
+            ctx.say(f"bw: {text}")
+            ctx.notice("inbox", text)
+        return False
+
+
 def _verified(ctx, lead_name):
     lead = ctx.config["leads"][lead_name]
     ad = ctx.adapters[lead["runtime"]]
@@ -503,10 +542,14 @@ def _logged_quota(q):
 
 
 def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, backend=None, out=None,
-        run=proc.run):
+        run=proc.run, bw_path=None):
     out = out or sys.stdout
     adapters = adapters or ADAPTERS
     project = resolve_project(cwd, config)
+    refusal = refuse_inside(project, bw_path or os.path.join(ROOT, "bin", "bw"), config.get("path"))
+    if refusal:
+        print(f"bw: {refusal}", file=out)
+        return REFUSED
     profile = config["profiles"][project.profile]
     if not profile["lead_order"] and not use:
         print(f"bw: no leads configured for profile {project.profile}", file=out)
@@ -517,7 +560,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         return LOCKED
     ctx = Context(config, state, project, lock, adapters, backend or sandbox.backend(), out)
     stale = lock.read()
-    if stale.get("session_id"):
+    if stale.get("session_id") and isinstance(stale["session_id"], str):
         ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
                  "session_id": stale["session_id"], "reason": "lost"})
         lock.write({})  # recorded once; an early exit below must not leave it to be logged again
@@ -610,9 +653,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                 session.poll_guard(ctx)
                 # A contained lead cannot write bw's caps; its hook drops cap-signal in its own
                 # checkpoint dir instead, and bw records the cap for the current plan.
-                sig = os.path.join(checkpoint_dir(state, project.worktree_key), "cap-signal")
-                if os.path.lexists(sig):
-                    os.remove(sig)
+                if _take_cap_signal(ctx, state, project.worktree_key):
                     quotamod.record_cap(state, session.lead["plan"], time.time(),
                                         expiry_hours=rot["cap_expiry_hours"], source="lead-hook")
                 # Orca's local cache, re-read for display and freshness only (no network, no cap):

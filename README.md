@@ -467,8 +467,9 @@ First time? See "Start leading" at the end of this section.
   capped, a guard that could not be reached, an ingest problem); `--project` limits it to
   this worktree and `--all` adds answered ones. `bw answer <id> "<text>"` answers an ask or
   closes a notice, and `bw status` shows open items. Answers reach the lead through a file
-  bw rewrites (`BW_INBOX`, in `inbox-view/`) that holds **only your answers**, never ask text,
-  and that the lead can read but not write, so everything in it is your words. Whatever a lead
+  bw rewrites (`BW_INBOX`, `inbox-view/<worktree-key>/answers.md`) that holds **only your answers**,
+  never ask text, and that the lead can read but not write, so everything in it is your words; a
+  lead cannot read another worktree's answers or the inbox record itself. Whatever a lead
   wrote is shown escaped and shortened wherever bw prints it. A `bw lead --use` that changes
   the lead the profile order would have picked is logged as an `override`.
 - **Settings checks (`bw status`, `bw start`).** `orca:` warns when Orca's agent permission

@@ -110,7 +110,8 @@ class Grants(unittest.TestCase):
 
     def test_sealed_dir_denied_and_inbox_view_readable(self):
         g = self.grants(self.wt)
-        sealed, view = str(self.state / "sealed"), str(self.state / "inbox-view")
+        key = resolve_project(str(self.wt), {"projects": {}, "default_profile": "d"}).worktree_key
+        sealed, view = str(self.state / "sealed"), str(self.state / "inbox-view" / key)
         prof = sandbox.seatbelt_profile(g, str(self.root / "scratch"))
         self.assertIn(f'(deny file-read* (subpath "{sealed}"))', prof)
         p = sandbox.nono_profile(g, str(self.root / "scratch"))
@@ -122,6 +123,20 @@ class Grants(unittest.TestCase):
         self.assertIn(view, fs["read"])
         for _, _, path in g.rules:
             self.assertFalse(view == path or view.startswith(path.rstrip("/") + "/"), path)
+
+    def test_only_the_own_view_is_granted_and_the_inbox_record_is_denied(self):
+        g = self.grants(self.wt)
+        key = resolve_project(str(self.wt), {"projects": {}, "default_profile": "d"}).worktree_key
+        views, record = str(self.state / "inbox-view"), str(self.state / "inbox.jsonl")
+        own = os.path.join(views, key)
+        self.assertNotIn(views, g.read)
+        self.assertIn(own, g.read)
+        for prof in (sandbox.seatbelt_profile(g, str(self.root / "scratch")),
+                     "".join(sandbox.nono_profile(g, str(self.root / "scratch"))["unsafe_macos_seatbelt_rules"])):
+            deny_views, allow_own = f'(deny file-read* (subpath "{views}"))', f'(allow file-read* (subpath "{own}"))'
+            self.assertIn(f'(deny file-read* (subpath "{record}"))', prof)
+            self.assertIn(deny_views, prof)
+            self.assertGreater(prof.index(allow_own), prof.index(deny_views))  # the later rule wins
 
     def test_nono_profile_shape(self):
         p = sandbox.nono_profile(self.grants(self.wt), str(self.root / "scratch"))
@@ -309,15 +324,36 @@ class EscapesUnderSeatbelt(unittest.TestCase):
         self.assertIn("SEALED-c4n4ry", subprocess.run(["/bin/sh", "-c", probe], capture_output=True, text=True).stdout)
         self.assertNotIn("SEALED-c4n4ry", self.sh(self.wt, probe).stdout)
 
+    def own_key(self):
+        return resolve_project(str(self.wt), {"projects": {}, "default_profile": "d"}).worktree_key
+
     def test_inbox_view_readable_not_writable(self):
-        view = self.state / "inbox-view"; view.mkdir(exist_ok=True)
-        f = view / "k.md"; f.write_text("ANSWER-c4n4ry\n")
+        view = self.state / "inbox-view" / self.own_key(); view.mkdir(parents=True, exist_ok=True)
+        f = view / "answers.md"; f.write_text("ANSWER-c4n4ry\n")
         before = f.read_bytes()
         r = self.sh(self.wt, f'cat "{f}"')
         self.assertIn("ANSWER-c4n4ry", r.stdout, r.stderr)
         r = self.sh(self.wt, f'echo x > "{f}"')
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(f.read_bytes(), before)
+
+    def test_other_worktrees_views_and_the_inbox_record_unreadable(self):
+        own = self.state / "inbox-view" / self.own_key(); own.mkdir(parents=True, exist_ok=True)
+        (own / "answers.md").write_text("OWN-c4n4ry\n")
+        other = self.state / "inbox-view" / "0123456789ab"; other.mkdir(parents=True)
+        (other / "answers.md").write_text("OTHER-c4n4ry\n")
+        legacy = self.state / "inbox-view" / "0123456789ab.md"; legacy.write_text("LEGACY-c4n4ry\n")
+        (self.state / "inbox.jsonl").write_text('{"type": "ask", "text": "RECORD-c4n4ry"}\n')
+        probe = (f'cat "{own}/answers.md" "{other}/answers.md" "{legacy}" "{self.state}/inbox.jsonl"; '
+                 f'ls "{self.state}/inbox-view"')
+        outside = subprocess.run(["/bin/sh", "-c", probe], capture_output=True, text=True).stdout
+        for c in ("OWN", "OTHER", "LEGACY", "RECORD"):
+            self.assertIn(f"{c}-c4n4ry", outside)  # the probe works outside
+        r = self.sh(self.wt, probe)
+        self.assertIn("OWN-c4n4ry", r.stdout, r.stderr)
+        for c in ("OTHER", "LEGACY", "RECORD"):
+            self.assertNotIn(f"{c}-c4n4ry", r.stdout, c)
+        self.assertNotIn("0123456789ab", r.stdout)  # other worktrees' keys are not even listed
 
     PORT_PROBE = ('/usr/bin/python3 -c "import socket\n'
                   'try:\n socket.create_connection((\'127.0.0.1\', {port}), 2); print(\'CONNECTED\')\n'

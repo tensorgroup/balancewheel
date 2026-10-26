@@ -165,6 +165,16 @@ class ViewsCase(unittest.TestCase):
         self.assertEqual(w, [{"worktree": "/w", "lead": "lead-a", "since": NOW - 60, "pinned": "lead-b",
                               "asks": 1, "notices": 1}])
 
+    def test_now_survives_malformed_lock_metadata_and_escapes_it(self):
+        locks = Path(self.state) / "locks"
+        locks.mkdir()
+        (locks / "k1.lock").write_text("[1, 2]")
+        (locks / "k2.lock").write_text(json.dumps({"lead": "l\x1b[2J", "worktree": "/w", "started": "soon"}))
+        (locks / "k3.lock").write_text('{"lead": "lc", "started": NaN}')
+        w = self.built()["now"]()["worktrees"]
+        self.assertEqual([(r["lead"], r["since"]) for r in w], [("l\\x1b[2J", None), ("lc", None)])
+        json.dumps(w, allow_nan=False)
+
     def test_models_survives_an_unreadable_inbox(self):
         self.synthetic()
         (Path(self.state) / "inbox.jsonl").mkdir()  # reading it raises IsADirectoryError

@@ -1,8 +1,9 @@
 """start.py — `bw start [path]`: update the tools, re-verify, read quota, pick the lead, open it.
 
 One `bw start:` line per event. Steps:
-  1. resolve the project; refuse when bw's own real path lies inside the target worktree or its
-     common git dir (a lead could edit the next `bw lead`);
+  1. resolve the project; refuse when bw's own real path or its config file lies inside the
+     target worktree or its common git dir (`projects.refuse_inside`, shared with `bw lead`: a
+     lead could edit the next `bw lead`, or the update/version commands bw runs unsandboxed);
   2. update every tool in parallel (`lead.updates`), unless --no-update;
   3. re-verify every lead runtime's keys on a pool, one worker per runtime: a runtime is
      submitted when its tool's update finishes, or at once when no tool updates it (all of
@@ -29,16 +30,12 @@ from . import ccswitch, checks, orca, probes, proc, quota, registry, rotation, r
 from .status import orca_checks
 from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
-from .projects import resolve_project
+from .projects import refuse_inside, resolve_project
 from .rotation import decide
 
 PASSED_ENV = ("BALANCEWHEEL_CONFIG", "BW_STATE_DIR")
 ORCA_CREATE_TIMEOUT_S = 30
 OPEN_TIMEOUT_S = 30
-
-
-def _inside(path, root):
-    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 
 
 def _lead_command(bw, env):
@@ -112,11 +109,10 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
         say(str(e))
         return 2
     bw = os.path.realpath(bw_path or os.path.join(ROOT, "bin", "bw"))
-    for root in (project.worktree, project.common_dir):
-        if _inside(bw, root):
-            say(f"refusing: bw ({bw}) lies inside {root}; a lead there could edit the next `bw lead` — "
-                "run bw from a checkout outside the target repository")
-            return 2
+    refusal = refuse_inside(project, bw, config.get("path"))
+    if refusal:
+        say(refusal)
+        return 2
     profile = (config.get("profiles") or {}).get(project.profile) or {}
     runtimes = verifymod.lead_runtimes(config)
     rt_tool = runtime_tools(config)

@@ -157,5 +157,33 @@ class StatusCase(unittest.TestCase):
         self.assertIn("  pa (plan): session 90% · orca 3m", r.stdout)
 
 
+class HostileLockMetadata(StatusCase):
+    def write_lock(self, name, content):
+        locks = Path(self.state) / "locks"
+        locks.mkdir(parents=True, exist_ok=True)
+        (locks / name).write_text(content)
+
+    def test_malformed_lock_content_renders_without_raising(self):
+        (Path(self.state) / "locks").mkdir(parents=True)
+        bad = ["[1, 2]", '"text"', '{"lead": "lx", "started": "soon"}', '{"lead": "lx", "started": 1e300}',
+               '{"lead": "lx", "started": NaN}', '{"lead": "lx", "started": true}', '{"lead": ["x"], "worktree": 5}']
+        for i, content in enumerate(bad):
+            self.write_lock(f"k{i}.lock", content)
+        f = status.facts(self.config, self.state, time.time(), run=fake_run(""))
+        lines = status.render(f)  # no raise
+        for w in f["worktrees"]:
+            self.assertTrue(w["since"] is None or isinstance(w["since"], float), w)
+            self.assertIsInstance(w["lead"], str)
+            self.assertIsInstance(w["worktree"], str)
+        json.dumps(f["worktrees"], allow_nan=False)
+        self.assertTrue(any("lx since -" in ln for ln in lines), lines)
+
+    def test_lead_and_worktree_from_the_lock_are_shown_escaped(self):
+        self.write_lock("k.lock", json.dumps({"lead": "l\x1b[2Jx", "worktree": "/w\x07", "started": 1000}))
+        lines = status.render(status.facts(self.config, self.state, time.time(), run=fake_run("")))
+        self.assertIn(f"  /w\\x07: l\\x1b[2Jx since {time.ctime(1000)}", lines)
+        self.assertFalse(any("\x1b" in ln or "\x07" in ln for ln in lines))
+
+
 if __name__ == "__main__":
     unittest.main()

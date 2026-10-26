@@ -6,6 +6,7 @@ handoff directory belong to the worktree (two worktrees are two independent task
 import hashlib
 import os
 from collections import namedtuple
+from typing import Optional
 
 from . import proc
 
@@ -54,3 +55,24 @@ def resolve_project(cwd, config, run=proc.run):
         raise ValueError(f"unsupported repository layout (no main worktree) for {cwd}")
     profile = _match_profile(main_worktree, config.get("projects", {}), config.get("default_profile"))
     return Project(worktree, worktree_key(worktree), common_dir, main_worktree, profile)
+
+
+def _inside(path, root):
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def refuse_inside(project, bw_path, config_path=None) -> Optional[str]:
+    """Why bw must not run against `project`, or None. bw's own code and its config (whose
+    `tools.*.update`/`version` argv bw runs unsandboxed) must lie outside the target worktree and
+    its common git dir: a lead there could edit the next `bw lead` or what it runs."""
+    for what, p, why in (("bw", bw_path, "a lead there could edit the next `bw lead` — run bw from a "
+                                          "checkout outside the target repository"),
+                         ("the config", config_path, "a lead there could edit what bw runs — keep the "
+                                                     "config outside the target repository")):
+        if not p:
+            continue
+        real = os.path.realpath(p)
+        for root in (project.worktree, project.common_dir):
+            if _inside(real, root):
+                return f"refusing: {what} ({real}) lies inside {root}; {why}"
+    return None

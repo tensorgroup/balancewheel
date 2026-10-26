@@ -6,8 +6,9 @@ Two directions, two owners (Design decision 10):
            `<random>.ask`. bw ingests and unlinks them. Everything there is hostile input: only
            `*.ask` names that lstat as regular files are opened, without following links and
            without blocking, at most READ_LIMIT bytes; ingest never raises.
-  answers  `state_dir/inbox-view/<worktree-key>.md`, written only by bw, read-only to the lead,
-           holding only answers (ask id + the user's words), never ask text.
+  answers  `state_dir/inbox-view/<worktree-key>/answers.md`, written only by bw, holding only
+           answers (ask id + the user's words), never ask text. A lead may read its own worktree's
+           view dir and no other; every sandbox denies the rest of `inbox-view/` and this record.
 `state_dir/inbox.jsonl` (0600) holds every ask, notice, and answer; this module is its only
 writer. Metrics get `ask`/`answer` events without text (the runner and `bw answer` log them).
 """
@@ -47,7 +48,7 @@ def asks_dir(state, worktree_key):
 
 
 def view_path(state, worktree_key):
-    return os.path.join(state, VIEW_DIR, f"{worktree_key}.md")
+    return os.path.join(state, VIEW_DIR, worktree_key, "answers.md")
 
 
 def _append(state, event):
@@ -164,7 +165,7 @@ def write_view(state, worktree_key):
               if i["type"] == "ask" and i.get("project") == worktree_key and i["status"] == "answered"]
     dest = view_path(state, worktree_key)
     os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
-    tmp = os.path.join(os.path.dirname(dest), f".{worktree_key}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    tmp = os.path.join(os.path.dirname(dest), f".answers.{os.getpid()}.{secrets.token_hex(4)}.tmp")
     try:
         with open(tmp, "w") as f:
             f.write("\n".join(blocks))

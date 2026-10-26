@@ -242,7 +242,7 @@ not against the prose.
   from: "bw", text, status}` with `kind` one of `all-capped`, `pinned-capped`, `router-shadow`
   (no emitter yet), `guard-unreachable`, `inbox` (one open notice per kind and worktree), and
   `answer` `{type, id, ask_id, ts, from: "user", text}`; `ts` is epoch seconds. Answers reach
-  the lead in `BW_INBOX` (`state_dir/inbox-view/<worktree-key>.md`), which only bw writes and
+  the lead in `BW_INBOX` (`state_dir/inbox-view/<worktree-key>/answers.md`), which only bw writes and
   which holds answers only (`@lead answer [id:<ask id>]` and the escaped answer), never ask text.
 - **`bw inbox [--project] [--all]`** and **`bw answer <id> "<text>"`** (`bin/bw`): new commands.
   `bw inbox` lists open asks and notices (all worktrees; `--project`: this one; `--all`:
@@ -260,6 +260,23 @@ not against the prose.
 
 ### Fixed
 
+- **Final review of plan 4: a contained lead is hostile** (`lead/runner.py`, `lead/handoff.py`,
+  `lead/sandbox.py`, `lead/inbox.py`, `lead/status.py`, `lead/projects.py`, `lead/start.py`).
+  A file-mode runtime's first prompt (Kimi) is written to `state_dir/prompts/<worktree-key>/first-prompt.md`
+  (bw-owned; temp name with `O_EXCL | O_NOFOLLOW`, then renamed), never into the lead-writable
+  checkpoint dir where a planted link aimed bw's write. The checkpoint is opened `O_NONBLOCK` (a
+  FIFO no longer hangs a switch), and each git section of a handoff is bounded to 200 lines and
+  16 KiB with `… K more` (no E2BIG on the next lead's argv). The worktree lock's descriptor a lead
+  inherits is read-only; bw writes the metadata through its own descriptor, and `bw status`,
+  `bw start`, the cockpit's Now tab and the registry validate it and escape its text. The answers
+  view moves to `inbox-view/<worktree-key>/answers.md` (`BW_INBOX`): each lead reads only its own
+  worktree's view dir, and both backends deny reading the rest of `inbox-view/` and
+  `inbox.jsonl` (every project's asks and answers). A `cap-signal` bw cannot remove (a
+  directory) is one notice and no cap, never a crash. `bw lead` now refuses, like `bw start`, when
+  bw or its config file lies inside the target worktree or its common git dir (exit 2): the
+  config's `tools.*.update`/`version` commands run unsandboxed. The containment rules changed:
+  pi and Kimi need `bw sandbox verify` again, and pi guard `bw guard verify pi`.
+
 - **Runtime locks and verification output** (`lead/locks.py`, `lead/verify.py`): `bw lead`
   takes its shared runtime lock before the verification check, and bw keeps a second
   non-inherited shared lock so a lead cannot unlock or upgrade the inherited one; mid-session
@@ -269,8 +286,9 @@ not against the prose.
   ports; leads read their answers view** (`lead/sandbox.py`, `lead/runner.py`). Both backends
   deny reading `~/.cc-switch` (added to `SECRET_READS`) and `state_dir/sealed/`, and refuse
   connections, on any host, to 6768 (Orca's orcad), 15721 (cc-switch's proxy), 8765 (the cockpit's
-  default) and `cockpit.port` when configured; `state_dir/inbox-view/` is read-granted and in
-  no write grant. `python3 -m lead.sandbox run` takes `--deny-port N` (repeatable; default
+  default) and `cockpit.port` when configured; a lead's own `state_dir/inbox-view/<worktree-key>/`
+  is read-granted and in no write grant, while `state_dir/inbox.jsonl` and every other worktree's
+  view are read-denied. `python3 -m lead.sandbox run` takes `--deny-port N` (repeatable; default
   those ports). `setup/paths.txt` gains `~/.pi/agent/extensions` (Orca writes pi extensions
   there). The containment rules changed: pi and Kimi leads need `bw sandbox verify` again,
   and pi guard `bw guard verify pi` — run each once, after the next guard change lands.

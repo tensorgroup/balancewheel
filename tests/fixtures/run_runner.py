@@ -3,7 +3,7 @@
 argv: run_runner.py <config.json> <worktree> [--use LEAD] [--auto] [--contained-by-bw RUNTIME]
                     [--guard RUNTIME [--no-hook] [--no-spike]] [--fail-after-launch] [--no-client] [--fail-in-poll]
                     [--verified] [--fail-in-caps] [--probe-lock-in-verify] [--orca-payload FILE] [--orca-raise]
-                    [--count-refresh]
+                    [--count-refresh] [--prompt-file]
 Every runtime maps to tests/fixtures/fake_lead.py; --contained-by-bw marks one as bw-contained
 (without a containment record), to test the refusal path. --guard RUNTIME makes every lead of that
 runtime guarded (autonomy "guard", source "config"), points BW_AGY_HOOKS at a temp hooks file with
@@ -18,6 +18,7 @@ process, append {"runtime", "exclusive"} to FAKE_OUT/verify-lock.jsonl, and coun
 --orca-payload FILE answers every `orca ...` shell-out with FILE's content (each argv appended to
 FAKE_OUT/orca-calls.jsonl) and reports Orca's version as 9.9.9-test; without it any `orca` call fails.
 --orca-raise makes every `orca ...` shell-out (still appended to orca-calls.jsonl) raise OSError.
+--prompt-file gives every fake adapter prompt_mode "file" (bw writes the first prompt for the user to paste).
 --count-refresh appends one line to FAKE_OUT/refresh-calls.jsonl per probes.refresh call (which still runs).
 """
 import atexit, os, shutil, sys, tempfile
@@ -46,7 +47,7 @@ def fake(rt):
         argv=lambda lead, prompt, writable=(), client_dir=None: [sys.executable, str(HERE / "fake_lead.py"), lead["model"]] + ([prompt] if prompt else []),
         contained_by="bw" if rt == bw_rt else "self",
         grants=lambda lead, client_dir=None: RuntimeGrants([], [os.environ["FAKE_OUT"]] if rt == bw_rt else [], {}, False),
-        prompt_mode="arg",
+        prompt_mode="file" if "--prompt-file" in args else "arg",
         version_argv=[sys.executable, "--version"], verify_argv=None, verify_flags=lambda lead: [])
 
 

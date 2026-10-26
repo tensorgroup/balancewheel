@@ -126,6 +126,23 @@ class Runner(RunnerCase):
         self.assertEqual(p.wait(20), 0, p.stdout.read())
         self.assertEqual([e["reason"] for e in self.events("leads")], ["capped"])
 
+    def test_cap_signal_directory_does_not_kill_the_session(self):
+        import hashlib
+        key = hashlib.sha1(os.path.realpath(str(self.repo)).encode()).hexdigest()[:12]
+        p = self.start(env={"FAKE_MODE_a": "sleep"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        sig = self.state / "handoffs" / key / "cap-signal"
+        sig.mkdir()
+        (sig / "x").write_text("")  # not empty: rmdir cannot clear it either
+        time.sleep(1.5)  # several polls
+        self.assertIsNone(p.poll(), "bw died on a cap-signal directory")
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        out = p.communicate(timeout=15)[0]
+        self.assertEqual(p.returncode, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(out.count("cap-signal could not be removed"), 1, out)
+        self.assertEqual(self.events("leads"), [])  # no cap recorded from it
+
     def test_all_capped_keeps_session(self):
         p = self.start(env={"FAKE_MODE_a": "sleep"})
         self.assertTrue(wait_for(lambda: self.fake("a")))
@@ -357,6 +374,27 @@ class RuntimeLocks(RunnerCase):
         ino = os.stat(self.state / "locks" / "runtime-codex.lock").st_ino
         modes = [m for i, m in self.fake("a")["fds"] if i == ino]
         self.assertEqual(modes, [os.O_RDONLY])
+
+    def test_inherited_worktree_lock_fd_is_read_only(self):
+        import hashlib
+        key = hashlib.sha1(os.path.realpath(str(self.repo)).encode()).hexdigest()[:12]
+        p = self.start(env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        ino = os.stat(self.state / "locks" / f"{key}.lock").st_ino
+        modes = [m for i, m in self.fake("a")["fds"] if i == ino]
+        self.assertEqual(modes, [os.O_RDONLY])  # the lead cannot rewrite the lock's metadata
+
+    def test_malformed_lock_content_left_behind_does_not_stop_bw_lead(self):
+        import hashlib
+        key = hashlib.sha1(os.path.realpath(str(self.repo)).encode()).hexdigest()[:12]
+        (self.state / "locks").mkdir(parents=True)
+        for content in ("[1, 2]", '{"session_id": ["x"]}'):
+            (self.state / "locks" / f"{key}.lock").write_text(content)
+            for f in self.out.glob("*.json"):
+                f.unlink()
+            p = self.start(env={"FAKE_MODE_a": "exit"})
+            self.assertEqual(p.wait(15), 0, p.stdout.read())
+        self.assertEqual([s for s in self.events("sessions") if s["end_reason"] == "lost"], [])
 
     def test_lead_unlocking_its_inherited_fd_does_not_free_the_runtime(self):
         p = self.start(env={"FAKE_MODE_a": "sleep", "FAKE_UNLOCK_a": "1"})
@@ -598,7 +636,7 @@ class InboxRunner(RunnerCase):
         self.assertEqual(p.wait(15), 0, p.stdout.read())
         env = self.fake("a")["inbox_env"]
         self.assertEqual(env["BW_ASKS"], str(self.state / "handoffs" / self.key() / "asks"))
-        self.assertEqual(env["BW_INBOX"], str(self.state / "inbox-view" / f"{self.key()}.md"))
+        self.assertEqual(env["BW_INBOX"], str(self.state / "inbox-view" / self.key() / "answers.md"))
         self.assertTrue(os.path.isdir(env["BW_ASKS"]))
         self.assertTrue(os.path.isfile(env["BW_INBOX"]))
 
@@ -785,6 +823,68 @@ class HolderLine(unittest.TestCase):
                     f.write(content)
                 self.assertEqual(runner.holder_line("/w", p), "/w is held by another bw lead", content)
             with open(p, "w") as f:
+                json.dump({"lead": "l\x1b[2Jx", "pid": 1, "child": 2, "started": 1000}, f)
+            self.assertEqual(runner.holder_line("/w", p),
+                             f"/w already has a lead: l\\x1b[2Jx (bw pid 1, lead pid 2, since {time.ctime(1000)})")
+            with open(p, "w") as f:
                 json.dump({"lead": "lx", "pid": 1, "child": 2, "started": 1000}, f)
             self.assertEqual(runner.holder_line("/w", p),
                              f"/w already has a lead: lx (bw pid 1, lead pid 2, since {time.ctime(1000)})")
+
+
+class InsideRefusal(RunnerCase):
+    def test_bw_lead_refuses_a_config_inside_the_worktree(self):
+        inside = self.repo / "bw.json"
+        inside.write_text(self.cfg.read_text())
+        self.cfg = inside  # the driver loads the config from this path
+        p = self.start(env={"BALANCEWHEEL_CONFIG": str(inside), "FAKE_MODE_a": "exit"})
+        out = p.communicate(timeout=15)[0]
+        self.assertEqual(p.returncode, 2, out)
+        self.assertIn(f"refusing: the config ({inside}) lies inside {self.repo}", out)
+        self.assertIsNone(self.fake("a"), "a lead started")
+
+    def test_bw_lead_refuses_bw_inside_the_worktree(self):
+        import io
+        from lead import runner
+        from lead.paths import load_config
+        out = io.StringIO()
+        bw = str(self.repo / ".git" / "x" / "bin" / "bw")
+        code = runner.run(load_config(str(self.cfg)), str(self.state), str(self.repo), rating=False, out=out,
+                          bw_path=bw)
+        self.assertEqual(code, 2, out.getvalue())
+        self.assertIn(f"refusing: bw ({bw}) lies inside", out.getvalue())
+        self.assertFalse((self.state / "locks").exists())
+
+
+class PromptFile(RunnerCase):
+    def key(self):
+        import hashlib
+        return hashlib.sha1(os.path.realpath(str(self.repo)).encode()).hexdigest()[:12]
+
+    def test_first_prompt_never_follows_a_link_planted_in_the_checkpoint_dir(self):
+        import re
+        cp = self.state / "handoffs" / self.key()
+        cp.mkdir(parents=True)
+        canary = Path(os.path.realpath(self.tmp.name)) / "canary.rc"
+        canary.write_text("untouched")
+        (cp / "first-prompt.md").symlink_to(canary)
+        p = self.start("--prompt-file", env={"FAKE_MODE_a": "exit"})
+        out = p.communicate(timeout=15)[0]
+        self.assertEqual(p.returncode, 0, out)
+        self.assertEqual(canary.read_text(), "untouched")
+        path = re.search(r"paste the first prompt from (\S+) into the lead", out).group(1)
+        self.assertEqual(path, str(self.state / "prompts" / self.key() / "first-prompt.md"))
+        self.assertFalse(os.path.islink(path))
+        self.assertIn("checkpoint", Path(path).read_text().lower())
+
+    def test_first_prompt_replaces_a_link_at_its_own_path(self):
+        canary = Path(os.path.realpath(self.tmp.name)) / "canary.rc"
+        canary.write_text("untouched")
+        d = self.state / "prompts" / self.key()
+        d.mkdir(parents=True)
+        (d / "first-prompt.md").symlink_to(canary)
+        p = self.start("--prompt-file", env={"FAKE_MODE_a": "exit"})
+        out = p.communicate(timeout=15)[0]
+        self.assertEqual(p.returncode, 0, out)
+        self.assertEqual(canary.read_text(), "untouched")
+        self.assertFalse(os.path.islink(d / "first-prompt.md"))

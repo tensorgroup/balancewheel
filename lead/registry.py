@@ -21,6 +21,7 @@ import shutil
 import time
 
 from . import ccswitch, containment, proc, quota, sandbox
+from .guard.review import safe
 from .locks import DEFAULT_TOOL_RUNTIME, RuntimeLock, runtime_tools, tool_runtime
 from .paths import read_json, write_json_atomic
 from .projects import worktree_key
@@ -96,7 +97,7 @@ def _holder(state, key):
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
         except BlockingIOError:
             lead = _dict(read_json(path, {})).get("lead")
-            return lead if isinstance(lead, str) and lead else None
+            return safe(lead) if isinstance(lead, str) and lead else None
         fcntl.flock(fd, fcntl.LOCK_UN)
         return None
     except OSError:

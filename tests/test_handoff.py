@@ -77,3 +77,40 @@ class Handoff(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HostileHandoffInput(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = Path(os.path.realpath(self.tmp.name)) / "state"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_fifo_checkpoint_returns_at_once(self):
+        cp = Path(checkpoint_dir(str(self.state), "k"))
+        cp.mkdir(parents=True)
+        os.mkfifo(cp / "checkpoint.md")
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); from lead.handoff import read_checkpoint; "
+                "print(repr(read_checkpoint(sys.argv[2], 'k')))")
+        try:
+            r = subprocess.run([sys.executable, "-c", code, str(HERE.parent), str(self.state)],
+                               capture_output=True, text=True, timeout=1)
+        except subprocess.TimeoutExpired:
+            self.fail("read_checkpoint blocked on a FIFO")
+        self.assertEqual(r.stdout.strip(), "None", r.stderr)
+
+    def test_huge_git_output_is_bounded_per_section(self):
+        from unittest import mock
+        from lead import handoff
+        huge = "\n".join(f"?? file-{i:06d}-{'x' * 60}" for i in range(200000))
+        with mock.patch.object(handoff, "_git", side_effect=lambda wt, *a: "main" if a[0] == "branch" else huge):
+            text = build_handoff("/nowhere", "abc123", str(self.state), "k", [])
+        self.assertLess(len(text.encode()), 64 * 1024)  # was 15 MB: E2BIG on the next lead's argv
+        self.assertEqual(text.count(" more"), 3, text[-400:])
+        self.assertIn(f"… {200000 - handoff.SECTION_LINES} more", text)
+
+    def test_one_overlong_line_is_counted_not_kept(self):
+        from lead import handoff
+        self.assertEqual(handoff._bounded("y" * (handoff.SECTION_BYTES + 1)), "… 1 more")
+        self.assertEqual(handoff._bounded("a\nb"), "a\nb")

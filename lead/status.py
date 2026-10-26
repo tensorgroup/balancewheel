@@ -63,11 +63,16 @@ def _worktrees(state):
     locks = os.path.join(state, "locks")
     out = []
     for f in sorted(os.listdir(locks)) if os.path.isdir(locks) else []:
-        meta = read_json(os.path.join(locks, f), {}) or {}
+        # bw writes lock metadata, but a malformed file (an older bw, a crash) must not break
+        # status or the cockpit: validated and escaped like runner.holder_line
+        meta = read_json(os.path.join(locks, f), {})
+        meta = meta if isinstance(meta, dict) else {}
         key = f[:-5]
         if meta.get("lead") or key in pins:
-            out.append({"key": key, "worktree": meta.get("worktree", key), "lead": meta.get("lead", "idle"),
-                        "since": meta.get("started"), "pinned": pins.get(key)})
+            wt = meta.get("worktree")
+            out.append({"key": key, "worktree": safe(wt if wt is not None else key),
+                        "lead": safe(meta["lead"]) if meta.get("lead") else "idle",
+                        "since": runner.lock_started(meta), "pinned": pins.get(key)})
     return out
 
 
