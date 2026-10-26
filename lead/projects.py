@@ -5,17 +5,18 @@ handoff directory belong to the worktree (two worktrees are two independent task
 """
 import hashlib
 import os
-import subprocess
 from collections import namedtuple
+
+from . import proc
 
 Project = namedtuple("Project", "worktree worktree_key common_dir main_worktree profile")
 
 
-def _git(cwd, *args):
-    r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
-    if r.returncode != 0:
-        raise ValueError(f"not a git repository: {cwd} ({r.stderr.strip() or 'git failed'})")
-    return r.stdout
+def _git(run, cwd, *args):
+    r = run(["git", "-C", cwd, *args], 30)
+    if r.rc != 0:
+        raise ValueError(f"not a git repository: {cwd} ({r.err.strip() or 'git failed'})")
+    return r.out
 
 
 def worktree_key(worktree):
@@ -36,16 +37,16 @@ def _match_profile(main_worktree, projects, default_profile):
     return best
 
 
-def resolve_project(cwd, config):
+def resolve_project(cwd, config, run=proc.run):
     cwd = os.path.realpath(cwd)
-    if _git(cwd, "rev-parse", "--is-bare-repository").strip() == "true":
+    if _git(run, cwd, "rev-parse", "--is-bare-repository").strip() == "true":
         raise ValueError(f"bare repository not supported as a lead workspace: {cwd}")
-    out = _git(cwd, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir").splitlines()
+    out = _git(run, cwd, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir").splitlines()
     if len(out) < 2:
         raise ValueError(f"not a git repository: {cwd}")
     worktree, common_dir = os.path.realpath(out[0]), os.path.realpath(out[1])
     main_worktree = None
-    for line in _git(cwd, "worktree", "list", "--porcelain").splitlines():
+    for line in _git(run, cwd, "worktree", "list", "--porcelain").splitlines():
         if line.startswith("worktree "):
             main_worktree = os.path.realpath(line[len("worktree "):])
             break

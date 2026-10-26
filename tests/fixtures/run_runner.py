@@ -2,12 +2,16 @@
 
 argv: run_runner.py <config.json> <worktree> [--use LEAD] [--auto] [--contained-by-bw RUNTIME]
                     [--guard RUNTIME [--no-hook] [--no-spike]] [--fail-after-launch] [--no-client] [--fail-in-poll]
+                    [--verified] [--fail-in-caps]
 Every runtime maps to tests/fixtures/fake_lead.py; --contained-by-bw marks one as bw-contained
 (without a containment record), to test the refusal path. --guard RUNTIME makes every lead of that
 runtime guarded (autonomy "guard", source "config"), points BW_AGY_HOOKS at a temp hooks file with
 the entry installed (--no-hook: an empty one) and marks agy's hook spike as passed (--no-spike: not).
 --no-client points the session at an empty client source dir; --fail-in-poll makes the first poll_guard raise.
 --fail-after-launch makes the first give_terminal (called right after the lead is forked) raise.
+--verified counts every runtime's containment as verified (the bw-contained one gets FAKE_OUT as a write
+grant, so the fake can leave its evidence); each per-session scratch dir is printed as `SCRATCH <path>`.
+--fail-in-caps makes every read_caps after the lead started wait for the lead to exit, then raise.
 """
 import atexit, os, shutil, sys, tempfile
 from pathlib import Path
@@ -15,7 +19,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path.insert(0, str(ROOT))
-from lead import runner  # noqa: E402
+from lead import quota, runner  # noqa: E402
 import lead.guard  # noqa: E402
 from lead.guard import install  # noqa: E402
 from lead.paths import load_config  # noqa: E402
@@ -34,7 +38,8 @@ def fake(rt):
     return Adapter(
         argv=lambda lead, prompt, writable=(), client_dir=None: [sys.executable, str(HERE / "fake_lead.py"), lead["model"]] + ([prompt] if prompt else []),
         contained_by="bw" if rt == bw_rt else "self",
-        grants=lambda lead, client_dir=None: RuntimeGrants([], [], {}, False), prompt_mode="arg",
+        grants=lambda lead, client_dir=None: RuntimeGrants([], [os.environ["FAKE_OUT"]] if rt == bw_rt else [], {}, False),
+        prompt_mode="arg",
         version_argv=[sys.executable, "--version"], verify_argv=None, verify_flags=lambda lead: [])
 
 
@@ -64,5 +69,31 @@ if "--fail-in-poll" in args:
     def _poll(self, ctx):
         raise RuntimeError("injected failure in the poll loop")
     runner.Session.poll_guard = _poll
+if "--verified" in args:
+    runner._verified = lambda ctx, lead_name: True
+    tempfile.tempdir = None  # honour TMPDIR from the environment
+    _mkdtemp = tempfile.mkdtemp
+
+    def _logged_mkdtemp(*a, **k):
+        d = _mkdtemp(*a, **k)
+        if k.get("prefix") == "bw-lead-":
+            print(f"SCRATCH {d}", flush=True)
+        return d
+    tempfile.mkdtemp = _logged_mkdtemp
+if "--fail-in-caps" in args:
+    sessions = []
+    _init, _read_caps = runner.Session.__init__, quota.read_caps
+
+    def _session_init(self, *a, **k):
+        sessions.append(self)
+        _init(self, *a, **k)
+
+    def _caps(*a, **k):
+        if not sessions:
+            return _read_caps(*a, **k)
+        sessions[-1].proc.wait()  # the lead has exited and its group is gone
+        raise RuntimeError("injected failure after the lead exited")
+    runner.Session.__init__ = _session_init
+    quota.read_caps = _caps
 sys.exit(runner.run(config, config["state_dir"], worktree, use=use, auto=auto, rating=False,
                     adapters=adapters, backend="sandbox-exec"))

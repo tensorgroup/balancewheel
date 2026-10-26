@@ -11,9 +11,9 @@ import json
 import platform
 import re
 import shutil
-import subprocess
 import time
 
+from . import proc
 from .guard import guard_version
 from .paths import read_json, write_json_atomic
 
@@ -28,20 +28,19 @@ def _sha(path):
         return "absent"
 
 
-def _first_line(argv):
-    try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=30)
-        return ((r.stdout or r.stderr).strip().splitlines() or ["unknown"])[0]
-    except (OSError, subprocess.SubprocessError):
+def _first_line(argv, run=proc.run):
+    r = run(argv, 30)
+    if r.rc == 127 or r.timed_out:
         return "unreadable"
+    return ((r.out or r.err).strip().splitlines() or ["unknown"])[0]
 
 
-def verification_key(runtime, version_argv, backend):
+def verification_key(runtime, version_argv, backend, run=proc.run):
     if backend == "nono" and shutil.which("nono"):
-        backend_version = _first_line(["nono", "--version"])
+        backend_version = _first_line(["nono", "--version"], run)
     else:
         backend_version = "macos-" + (platform.mac_ver()[0] or "unknown")
-    return {"runtime": runtime, "runtime_version": _first_line(version_argv), "backend": backend,
+    return {"runtime": runtime, "runtime_version": _first_line(version_argv, run), "backend": backend,
             "backend_version": backend_version, "sandbox_sha": _sha(os.path.join(HERE, "sandbox.py")),
             "adapter_sha": _sha(os.path.join(HERE, "runtimes.py"))}
 
@@ -96,8 +95,8 @@ def _named_scripts(path):
     return out
 
 
-def guard_key(runtime, version_argv, backend, hook_files):
-    key = verification_key(runtime, version_argv, backend)
+def guard_key(runtime, version_argv, backend, hook_files, run=proc.run):
+    key = verification_key(runtime, version_argv, backend, run)
     key["guard_version"] = guard_version()
     key["hook_files"] = {p: _manifest(p) for p in sorted(hook_files)}
     return key

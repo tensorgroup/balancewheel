@@ -14,15 +14,13 @@
 """
 import argparse
 import os
-import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from lead import ccswitch, containment, quota, runner, sandbox  # noqa: E402
-from lead.guard import verify as guard_verify  # noqa: E402
+from lead import ccswitch, quota, runner, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
-from lead.paths import ConfigError, ROOT, load_config, read_json, state_dir  # noqa: E402
+from lead.paths import ConfigError, load_config, read_json, state_dir  # noqa: E402
 from lead.projects import resolve_project  # noqa: E402
 from lead.rotation import effective_quota  # noqa: E402
 from lead.runtimes import ADAPTERS  # noqa: E402
@@ -79,50 +77,17 @@ def cmd_cap(a, config, state):
     return 0
 
 
+def _report(ok, msg):
+    print(msg, file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 1
+
+
 def cmd_verify(a, config, state):
-    ad = ADAPTERS.get(a.runtime)
-    if not ad or ad.contained_by != "bw":
-        sys.exit(f"bw: {a.runtime} is not contained by bw (contained_by={ad.contained_by if ad else 'unknown'})")
-    lead = next((l for n, l in config["leads"].items() if l["runtime"] == a.runtime and (not a.lead or n == a.lead)), None)
-    if not lead:
-        sys.exit(f"bw: no lead in the config uses runtime {a.runtime}")
-    which = sandbox.backend()
-    script = os.path.join(ROOT, "tests", "attack", "lead_containment.sh")
-    r = subprocess.run([script, "--backend", which, *ad.verify_flags(lead), "--", *ad.verify_argv(lead)],
-                       capture_output=True, text=True)
-    print(r.stdout.strip())
-    if r.returncode == 0 and r.stdout.startswith("PASS"):
-        key = containment.verification_key(a.runtime, ad.version_argv, which)
-        containment.record_pass(state, a.runtime, key, r.stdout.split("evidence in ")[-1].strip())
-        print(f"bw: recorded a containment pass for {a.runtime} on {which}")
-        return 0
-    print("bw: " + guard_verify.failure_message(r.stdout), file=sys.stderr)
-    return 1
+    return _report(*verify.sandbox_verify(config, state, a.runtime, a.lead))
 
 
 def cmd_guard_verify(a, config, state):
-    ad = ADAPTERS.get(a.runtime)
-    if ad is None or ad.guard_argv is None:
-        print(f"bw: no guard attack for {a.runtime}", file=sys.stderr)
-        return 1
-    if a.runtime == "agy" and not AGY_SPIKE_PASSED:
-        print(f"bw: {AGY_AWAITS}", file=sys.stderr)
-        return 1
-    lead = next((l for n, l in config["leads"].items() if l["runtime"] == a.runtime and (not a.lead or n == a.lead)), None)
-    if not lead:
-        print(f"bw: no lead in the config uses runtime {a.runtime}", file=sys.stderr)
-        return 1
-    which = sandbox.backend()
-    argv = guard_verify.script_argv(ROOT, a.runtime, lead, which, "{client}")
-    r = subprocess.run(argv, capture_output=True, text=True, errors="replace")
-    print(r.stdout.strip())
-    if r.returncode == 0 and r.stdout.startswith("PASS"):
-        key = containment.guard_key(a.runtime, ad.version_argv, which, ad.guard_hook_files())
-        containment.record_pass(state, a.runtime, key, r.stdout.split("evidence in ")[-1].strip(), store="guard-verify.json")
-        print(f"bw: recorded a guard pass for {a.runtime} on {which}")
-        return 0
-    print("bw: not recorded — a refusal by the model is inconclusive; re-run", file=sys.stderr)
-    return 1
+    return _report(*verify.guard_verify(config, state, a.runtime, a.lead))
 
 
 def cmd_guard(a, config, state):

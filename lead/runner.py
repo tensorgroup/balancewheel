@@ -138,8 +138,13 @@ class Session:
                 rg = rg._replace(write=list(rg.write) + [home])
             scratch = os.path.realpath(tempfile.mkdtemp(prefix="bw-lead-"))
             grants = sandbox.lead_grants(ctx.project, rg, ctx.state)
-            argv, self.cleanup = sandbox.wrap(argv, grants, ctx.backend, home, scratch, rg.env,
+            argv, drop_profile = sandbox.wrap(argv, grants, ctx.backend, home, scratch, rg.env,
                                               sandbox.denied_ports(ctx.config))
+
+            def cleanup():  # idempotent: the nono profile, then the session's scratch dir
+                drop_profile()
+                shutil.rmtree(scratch, ignore_errors=True)
+            self.cleanup = cleanup
         self.argv = argv
         self.proc = subprocess.Popen(argv, cwd=ctx.project.worktree, env=env, pass_fds=(ctx.lock.fd,),
                                      preexec_fn=_child_setup)
@@ -507,6 +512,8 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
             try:
                 if session.group_alive():
                     session.stop(grace)
+                else:
+                    session.cleanup()
             finally:
                 ctx.take_terminal()
                 session.finish_guard(ctx)

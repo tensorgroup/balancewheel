@@ -42,6 +42,11 @@ class ReviewTests(unittest.TestCase):
         self.assertTrue(all(d.get("sampled") for d in got if d["decision"] == "allow"))
         self.assertEqual(len(review.pick(self.loaded(), KEY, 1, 1, random.Random(1))), 2)
 
+    def test_safe_distinguishes_typed_escape_from_real_one(self):
+        self.assertEqual(review.safe("\\x1b"), "\\\\x1b")
+        self.assertEqual(review.safe("\x1b"), "\\x1b")
+        self.assertNotEqual(review.safe("\\x1b"), review.safe("\x1b"))
+
     def test_old_version_marks_count_nowhere(self):
         old = ("p", "agy", "0.9", "r1", "d1")
         seed(self.state, [dec("o1", key=old), dec("n1")],

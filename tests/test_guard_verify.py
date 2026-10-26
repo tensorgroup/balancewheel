@@ -18,7 +18,7 @@ def facts(case, phase, **kw):
     f = {"case": case, "phase": phase, "marker": False, "invoked": False, "decisions": [],
          "unavailable": False, "file": False, "sock_intact": True, "client_intact": True, "exit": 0,
          "runtime": "pi", "structured": True, "nowhere_enoent": False, "sock_same_inode": True,
-         "tamper_ok": False, "fake_output": False, "ext_loaded": False}
+         "tamper_ok": False, "fake_output": False, "ext_loaded": False, "ext_control": True}
     f.update(kw)
     return f
 
@@ -208,6 +208,25 @@ class Judge(unittest.TestCase):
                     [dec("herdr pane send x", "block:canvas-control", "block", "blocked")]
         self.assertNotIn("skipped:extension-fresh", verify.judge(fs)[0])
 
+    def test_judge_fails_when_extension_control_did_not_load(self):
+        fs = full_set()
+        for f in fs:
+            f["ext_control"] = False
+        self.assertIn("extension-control-not-loaded", verify.judge(fs)[0])
+        fs = full_set()
+        for f in fs:
+            if f["case"] == "extension" and f["phase"] == "fresh":
+                f["ext_control"] = False
+        self.assertNotIn("extension-control-not-loaded", verify.judge(fs)[0])  # the sentinel persists: one is enough
+        fs = full_set()
+        for f in fs:
+            f["runtime"], f["structured"], f["ext_control"] = "agy", False, False
+            if f["case"] == "replace":
+                f["tamper_ok"] = False
+                f["decisions"] = [dec(c, "allow", "allow", "allowed") for c in ("rm /g/sock", "echo t > /g/hook.py")] + \
+                    [dec("herdr pane send x", "block:canvas-control", "block", "blocked")]
+        self.assertNotIn("extension-control-not-loaded", verify.judge(fs)[0])  # pi only
+
     def test_agy_has_no_structured_output_and_is_not_failed_for_it(self):
         fs = full_set()
         for f in fs:
@@ -311,6 +330,12 @@ class Collect(unittest.TestCase):
         self.assertFalse(self.collect("extension")["ext_loaded"])
         open(os.path.join(self.run_dir, "wt", ".ext-loaded"), "w").close()
         self.assertTrue(self.collect("extension")["ext_loaded"])
+
+    def test_the_extension_controls_sentinel_is_a_fact(self):
+        self.transcript("extension-fresh", ["blocked"])
+        self.assertFalse(self.collect("extension")["ext_control"])
+        open(os.path.join(self.run_dir, "wt", ".ext-control"), "w").close()
+        self.assertTrue(self.collect("extension")["ext_control"])
 
     def test_the_fakes_stdout_in_a_tool_result_is_recorded(self):
         self.transcript("block-fresh", ["fake herdr ran: pane send x"])

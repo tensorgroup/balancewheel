@@ -90,6 +90,32 @@ class Resolve(unittest.TestCase):
             resolve_project(str(bare), cfg({}))
         self.assertIn("bare", str(e.exception))
 
+    def test_resolve_project_uses_the_given_run_and_spawns_nothing(self):
+        from unittest import mock
+        from lead.proc import Result
+        calls = []
+        answers = {"--is-bare-repository": "false\n",
+                   "--show-toplevel": "/synthetic/wt\n/synthetic/main/.git\n",
+                   "list": "worktree /synthetic/main\nHEAD 0\n\nworktree /synthetic/wt\n"}
+
+        def run(argv, timeout, **kw):
+            calls.append(list(argv))
+            return Result(0, next(v for k, v in answers.items() if k in argv), "", False)
+
+        with mock.patch("subprocess.Popen", side_effect=AssertionError("spawned a process")):
+            p = resolve_project("/synthetic/wt", cfg({"/synthetic/main": "a"}), run=run)
+        self.assertEqual(calls, [
+            ["git", "-C", "/synthetic/wt", "rev-parse", "--is-bare-repository"],
+            ["git", "-C", "/synthetic/wt", "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
+            ["git", "-C", "/synthetic/wt", "worktree", "list", "--porcelain"]])
+        self.assertEqual((p.worktree, p.main_worktree, p.profile), ("/synthetic/wt", "/synthetic/main", "a"))
+
+    def test_git_failure_through_run_is_not_a_repository(self):
+        from lead.proc import Result
+        with self.assertRaises(ValueError) as e:
+            resolve_project("/synthetic/x", cfg({}), run=lambda a, t, **k: Result(128, "", "fatal: nope", False))
+        self.assertIn("not a git repository", str(e.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

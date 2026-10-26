@@ -123,6 +123,11 @@ def judge(all_facts):
             name = f"{case}-{phase}"
             f = by.get((case, phase))
             failures += _judge_one(name, SPECS[case], f) if f else [f"skipped:{name}"]
+    ext = [by[("extension", p)] for p in PHASES["extension"] if ("extension", p) in by]
+    if runtime == "pi" and ext and not any(f.get("ext_control") for f in ext):
+        # the positive control ran pi with discovery on and the planted extension never loaded: pi
+        # looks elsewhere, so the live case passing proves nothing
+        failures.append("extension-control-not-loaded")
     hm = by.get(("hook-missing", "fresh"))
     if hm is not None:
         ran = hm.get("marker") or hm.get("invoked")
@@ -230,6 +235,7 @@ def collect(run, case, phase, runtime, exit_code):
              "invoked": invoked, "structured": structured, "fake_output": fake_output,
              "marker": os.path.lexists(os.path.join(wt, f".marker-{name}")),
              "ext_loaded": os.path.lexists(os.path.join(wt, ".ext-loaded")),
+             "ext_control": os.path.lexists(os.path.join(wt, ".ext-control")),
              "unavailable": unavailable, "nowhere_enoent": nowhere_enoent,
              "file": os.path.isfile(os.path.join(wt, "inside.txt")) and not os.path.islink(os.path.join(wt, "inside.txt")),
              "sock_intact": ino is not None,

@@ -5,6 +5,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lead import containment  # noqa: E402
 import lead.guard as guard  # noqa: E402
+from lead.proc import Result  # noqa: E402
 
 
 class GuardKey(unittest.TestCase):
@@ -77,6 +78,40 @@ class GuardKey(unittest.TestCase):
         containment.record_pass(s, "pi", {"k": 1}, "/ev")
         self.assertTrue(containment.is_verified(s, "pi", key, store="guard-verify.json"))
         self.assertTrue(containment.is_verified(s, "pi", {"k": 1}))
+
+
+class InjectableKeys(unittest.TestCase):
+    def test_verification_key_uses_the_given_run(self):
+        calls = []
+
+        def run(argv, timeout, **kw):
+            calls.append(list(argv))
+            return Result(0, "pi 9.9\nmore\n", "", False)
+
+        with mock.patch("subprocess.Popen", side_effect=AssertionError("spawned a process")):
+            key = containment.verification_key("pi", ["pi", "--version"], "sandbox-exec", run=run)
+        self.assertEqual(calls, [["pi", "--version"]])
+        self.assertEqual(key["runtime_version"], "pi 9.9")
+
+    def test_first_line_unreadable_on_missing_binary_or_timeout(self):
+        self.assertEqual(containment._first_line(["x"], run=lambda a, t, **k: Result(127, "", "x: not found", False)),
+                         "unreadable")
+        self.assertEqual(containment._first_line(["x"], run=lambda a, t, **k: Result(124, "", "", True)), "unreadable")
+        self.assertEqual(containment._first_line(["x"], run=lambda a, t, **k: Result(1, "", "v from stderr\n", False)),
+                         "v from stderr")
+        self.assertEqual(containment._first_line(["x"], run=lambda a, t, **k: Result(0, "", "", False)), "unknown")
+
+    def test_guard_key_passes_run_through(self):
+        calls = []
+
+        def run(argv, timeout, **kw):
+            calls.append(list(argv))
+            return Result(0, "v\n", "", False)
+
+        with mock.patch("subprocess.Popen", side_effect=AssertionError("spawned a process")):
+            key = containment.guard_key("pi", ["pi", "--version"], "sandbox-exec", [], run=run)
+        self.assertEqual(calls, [["pi", "--version"]])
+        self.assertIn("guard_version", key)
 
 
 if __name__ == "__main__":

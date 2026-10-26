@@ -20,12 +20,13 @@ VERDICTS = {"r": "r", "right": "r", "w": "w", "wrong": "w", "s": "s", "skip": "s
 
 def safe(value):
     """A lead-originated string with every control character shown as an escape (a lead must not
-    be able to repaint the terminal the user marks decisions on). Printable text is unchanged."""
+    be able to repaint the terminal the user marks decisions on). A backslash is doubled, so an escape
+    the lead typed never prints like a real control character. Other printable text is unchanged."""
     out = []
     for ch in str(value):
         o = ord(ch)
         if ch == "\\":
-            out.append(ch)
+            out.append("\\\\")  # a typed backslash-x-1-b must never print like a real ESC
         elif o < 0x20 or o == 0x7f or 0x80 <= o < 0xa0 or ch in "\u2028\u2029":
             out.append({9: "\\t", 13: "\\r"}.get(o) or (f"\\x{o:02x}" if o < 0x100 else f"\\u{o:04x}"))
         else:

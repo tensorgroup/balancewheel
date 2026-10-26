@@ -189,6 +189,19 @@ class Runner(RunnerCase):
         self.assertIn("bw sandbox verify codex", p.stdout.read())
         self.assertIsNone(self.fake("a"))
 
+    def test_scratch_removed_after_bw_error_post_exit(self):
+        tmpdir = self.out.parent / "tmpdir"; tmpdir.mkdir()
+        p = self.start("--contained-by-bw", "codex", "--verified", "--fail-in-caps",
+                       env={"TMPDIR": str(tmpdir), "BW_PROBE_SECONDS": "0", "FAKE_MODE_a": "exit"})
+        out = p.communicate(timeout=30)[0]
+        self.assertNotEqual(p.returncode, 0, out)
+        self.assertIn("injected failure after the lead exited", out)
+        self.assertIsNotNone(self.fake("a"), out)
+        scratch = [l.split(" ", 1)[1] for l in out.splitlines() if l.startswith("SCRATCH ")]
+        self.assertEqual(len(scratch), 1, out)
+        self.assertEqual(os.path.dirname(os.path.realpath(scratch[0])), os.path.realpath(tmpdir))
+        self.assertEqual([n for n in os.listdir(tmpdir) if n.startswith("bw-lead-")], [])
+
     def test_child_gets_foreground_and_runner_survives_ctrl_c(self):
         pid, fd = pty.fork()
         if pid == 0:
