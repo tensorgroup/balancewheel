@@ -121,11 +121,23 @@ def _cost(text):
     return v if v.is_finite() else None
 
 
-def _int(v):
-    return v if isinstance(v, int) else 0
+def _count(v):
+    """An int from a stored count (int, integral float, numeric string); None when unreadable."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, (float, str)):
+        d = _cost(v)
+        if d is not None and d == d.to_integral_value():
+            return int(d)
+    return None
 
 
 class _Group:
+    FIELDS = (("requests", None), ("errors", None), ("tokens_in", 1), ("tokens_out", 2),
+              ("cache_read", 3), ("cache_write", 4))
+
     def __init__(self, day, tool, model, origin, unmapped):
         self.row = {"day": day, "tool": tool, "model": model, "requests": 0, "errors": 0,
                     "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0,
@@ -134,12 +146,10 @@ class _Group:
 
     def add(self, requests, errors, tin, tout, cr, cw, cost):
         r = self.row
-        r["requests"] += requests
-        r["errors"] += errors
-        r["tokens_in"] += _int(tin)
-        r["tokens_out"] += _int(tout)
-        r["cache_read"] += _int(cr)
-        r["cache_write"] += _int(cw)
+        for name, v in zip(("requests", "errors", "tokens_in", "tokens_out", "cache_read", "cache_write"),
+                           (requests, errors, tin, tout, cr, cw)):
+            v = _count(v)
+            r[name] = None if (v is None or r[name] is None) else r[name] + v
         c = _cost(cost)
         self.cost = None if (c is None or self.cost is None) else self.cost + c
 
@@ -149,36 +159,52 @@ class _Group:
 
 
 def _local_day(epoch):
-    return datetime.datetime.fromtimestamp(epoch).strftime("%Y-%m-%d")
+    """YYYY-MM-DD in local time, None when `epoch` is not a representable timestamp."""
+    if isinstance(epoch, bool) or not isinstance(epoch, (int, float)):
+        return None
+    try:
+        return datetime.datetime.fromtimestamp(epoch).strftime("%Y-%m-%d")
+    except (ValueError, OSError, OverflowError):
+        return None
+
+
+def _is_local_midnight(epoch):
+    t = datetime.datetime.fromtimestamp(epoch)
+    return t.time() == datetime.time(0)
 
 
 def _read_usage(conn, since, until):
     _require(conn, "proxy_request_logs", LOG_COLUMNS)
     _require(conn, "usage_daily_rollups", ROLLUP_COLUMNS)
     groups = {}
+    skipped = 0
     sql = f"SELECT {', '.join(LOG_COLUMNS)} FROM proxy_request_logs WHERE data_source != 'proxy' AND created_at >= ?"
     args = [since]
     if until is not None:
         sql += " AND created_at < ?"
         args.append(until)
     for src, _app, model, tin, tout, cr, cw, cost, at, status in conn.execute(sql, args):
-        if not isinstance(at, (int, float)):
+        day = _local_day(at)
+        if day is None:
+            skipped += 1
             continue
         tool = DATA_SOURCE_TOOL.get(src)
-        key = (_local_day(at), tool or src, model, "log")
-        g = groups.setdefault(key, _Group(key[0], key[1], model, "log", tool is None))
-        err = 1 if isinstance(status, int) and not 200 <= status <= 299 else 0
+        key = (day, tool or src, model, "log")
+        g = groups.setdefault(key, _Group(day, key[1], model, "log", tool is None))
+        err = 1 if isinstance(status, int) and not isinstance(status, bool) and not 200 <= status <= 299 else 0
         g.add(1, err, tin, tout, cr, cw, cost)
     sql = f"SELECT {', '.join(ROLLUP_COLUMNS)} FROM usage_daily_rollups WHERE date >= ?"
     args = [_local_day(since)]
     if until is not None:
-        sql += " AND date <= ?"
+        # Consistent with `created_at < until`: at local midnight the until day holds nothing before it.
+        sql += " AND date < ?" if _is_local_midnight(until) else " AND date <= ?"
         args.append(_local_day(until))
     for day, app, model, n, ok, tin, tout, cr, cw, cost in conn.execute(sql, args):
         key = (day, app, model, "rollup")
         g = groups.setdefault(key, _Group(day, app, model, "rollup", False))
-        g.add(_int(n), max(_int(n) - _int(ok), 0), tin, tout, cr, cw, cost)
-    return [g.done() for _k, g in sorted(groups.items())]
+        n, ok = _count(n), _count(ok)
+        g.add(n, None if n is None or ok is None else max(n - ok, 0), tin, tout, cr, cw, cost)
+    return [g.done() for _k, g in sorted(groups.items())], skipped
 
 
 def usage(state, since, until=None, d=None):
@@ -187,9 +213,13 @@ def usage(state, since, until=None, d=None):
     Session-log rows (every `data_source` but `proxy`) by local day, tool and model, plus the
     daily rollups cc-switch keeps after it prunes the rows. Unknown on any schema change.
     """
+    for name, bound in (("since", since), ("until", until)):
+        if (bound is not None or name == "since") and _local_day(bound) is None:
+            return {"available": False, "reason": f"invalid {name} bound ({bound!r})", "groups": [],
+                    "skipped_rows": 0}
     path = _db(d)
     if not os.path.exists(path):
-        return {"available": False, "reason": f"cc-switch not installed ({path} absent)", "groups": []}
+        return {"available": False, "reason": f"cc-switch not installed ({path} absent)", "groups": [], "skipped_rows": 0}
 
     def fn(conn):
         try:
@@ -199,10 +229,10 @@ def usage(state, since, until=None, d=None):
 
     out, why = sqlite_ro.query(path, fn, state)
     if why is not None:
-        return {"available": False, "reason": why, "groups": []}
+        return {"available": False, "reason": why, "groups": [], "skipped_rows": 0}
     if isinstance(out, _Schema):
-        return {"available": False, "reason": f"cc-switch schema changed ({out})", "groups": []}
-    return {"available": True, "reason": "", "groups": out}
+        return {"available": False, "reason": f"cc-switch schema changed ({out})", "groups": [], "skipped_rows": 0}
+    return {"available": True, "reason": "", "groups": out[0], "skipped_rows": out[1]}
 
 
 def prices(state, d=None):

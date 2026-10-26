@@ -189,7 +189,7 @@ def fingerprint(path):
     return hashlib.sha256(slurp(path, "rb")).hexdigest(), os.stat(path).st_mtime_ns
 
 
-class UsageTest(unittest.TestCase):
+class UsageBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = os.path.realpath(self.tmp.name)
@@ -229,6 +229,8 @@ class UsageTest(unittest.TestCase):
     def usage(self, **kw):
         return ccswitch.usage(self.state, self.since, d=self.d, **kw)
 
+
+class UsageTest(UsageBase):
     def test_proxy_rows_excluded_and_sources_map_to_tools(self):
         self.log(source="proxy", model="px")
         for src, tool in [("session_log", "claude"), ("codex_session", "codex"), ("gemini_session", "gemini"),
@@ -371,3 +373,62 @@ class UsageTest(unittest.TestCase):
         self.writer.execute("DROP TABLE model_pricing")
         self.writer.commit()
         self.assertEqual(ccswitch.prices(self.state, d=self.d), {})
+
+
+class UsageRobustnessTest(UsageBase):
+    def raw_log(self, at, **kw):
+        self.log(**kw)
+        self.writer.execute("UPDATE proxy_request_logs SET created_at = ? WHERE request_id = ?", (at, f"r{self.n}"))
+        self.writer.commit()
+
+    def test_out_of_range_timestamps_are_skipped_and_counted(self):
+        self.log()
+        for bad in (1.7e12, 1e18, float("inf")):
+            self.raw_log(bad)
+        out = self.usage()
+        self.assertTrue(out["available"], out["reason"])
+        self.assertEqual(out["skipped_rows"], 3)
+        self.assertEqual([g["requests"] for g in out["groups"]], [1])
+
+    def test_no_skips_reports_zero(self):
+        self.log()
+        self.assertEqual(self.usage()["skipped_rows"], 0)
+
+    def test_bad_bounds_are_unavailable_with_a_reason(self):
+        for bad in (1.7e12, float("nan"), float("inf"), "x", None, True):
+            out = ccswitch.usage(self.state, bad, d=self.d)
+            self.assertFalse(out["available"], bad)
+            self.assertIn("since", out["reason"])
+        out = ccswitch.usage(self.state, self.since, until=1.7e12, d=self.d)
+        self.assertFalse(out["available"])
+        self.assertIn("until", out["reason"])
+
+    def test_rollup_for_the_until_day_excluded_at_local_midnight(self):
+        self.rollup(day="2026-10-14")
+        self.rollup(day="2026-10-15")
+        self.assertEqual([g["day"] for g in self.usage(until=epoch("2026-10-15", 0))["groups"]], ["2026-10-14"])
+        self.assertEqual([g["day"] for g in self.usage(until=epoch("2026-10-15", 1))["groups"]],
+                         ["2026-10-14", "2026-10-15"])
+
+    def set_tokens(self, value):
+        self.writer.execute("UPDATE proxy_request_logs SET input_tokens = ?, output_tokens = 5", (value,))
+        self.writer.commit()
+
+    def test_tokens_coerce_integral_floats_and_numeric_strings(self):
+        self.log()
+        self.log()
+        self.writer.execute("UPDATE proxy_request_logs SET input_tokens = 7.0 WHERE request_id = 'r1'")
+        self.writer.execute("UPDATE proxy_request_logs SET input_tokens = ' 8 ' WHERE request_id = 'r2'")
+        self.writer.commit()
+        self.assertEqual(self.usage()["groups"][0]["tokens_in"], 15)
+
+    def test_unreadable_tokens_make_that_field_none_never_zero(self):
+        for bad in ("lots", 1.5, "2.5", b"x", float("inf")):
+            self.writer.execute("DELETE FROM proxy_request_logs")
+            self.log()
+            self.log()
+            self.writer.execute("UPDATE proxy_request_logs SET input_tokens = ? WHERE request_id = 'r%d'" % self.n, (bad,))
+            self.writer.commit()
+            g = self.usage()["groups"][0]
+            self.assertIsNone(g["tokens_in"], bad)
+            self.assertEqual(g["tokens_out"], 10)
