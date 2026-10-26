@@ -146,17 +146,40 @@ def _validate_plans(obj):
     return out
 
 
-def _validate_tools(obj):
+TOOL_KEYS = {"update", "version", "app", "self_updating", "runtime", "timeout_s"}
+DEFAULT_TOOL_TIMEOUT_S = 600
+
+
+def _argv(kp, v):
+    _expect(isinstance(v, list) and v and all(isinstance(a, str) and a for a in v),
+            f"{kp}: must be a non-empty argv list of strings")
+
+
+def _validate_tools(obj, warnings):
+    """Known keys are checked; an unknown key is dropped with a warning (a later bw may know it)."""
     tools = obj.get("tools", {})
     _expect(isinstance(tools, dict), "tools: must be an object")
+    out = {}
     for name, t in tools.items():
         kp = f"tools.{name}"
         _expect(isinstance(t, dict), f"{kp}: must be an object")
-        if "update" in t:
-            u = t["update"]
-            _expect(isinstance(u, list) and u and all(isinstance(a, str) for a in u),
-                    f"{kp}.update: must be a non-empty argv list of strings")
-    return tools
+        for k in sorted(set(t) - TOOL_KEYS):
+            warnings.append(f"{kp}.{k}: unknown key (ignored)")
+        for k in ("update", "version"):
+            if k in t:
+                _argv(f"{kp}.{k}", t[k])
+        if "app" in t:
+            _expect(isinstance(t["app"], str) and t["app"].strip(), f"{kp}.app: must be a non-empty path string")
+        if "self_updating" in t:
+            _expect(isinstance(t["self_updating"], bool), f"{kp}.self_updating: must be true or false")
+        if "runtime" in t:
+            _expect(t["runtime"] in RUNTIMES, f"{kp}.runtime: must be one of {sorted(RUNTIMES)}, got {t['runtime']!r}")
+        timeout = t.get("timeout_s", DEFAULT_TOOL_TIMEOUT_S)
+        _expect(_is_int(timeout) and timeout >= 1, f"{kp}.timeout_s: must be an integer of at least 1")
+        tool = {k: v for k, v in t.items() if k in TOOL_KEYS}
+        tool["timeout_s"] = timeout
+        out[name] = tool
+    return out
 
 
 def _has_permission_arg(runtime, args):
@@ -322,7 +345,8 @@ def load_config(path=None):
             _expect(s["plan"] in plans, f"seats.{name}.plan: must name a plan, got {s['plan']!r}")
         if s["fallback"] is not None:
             _expect(s["fallback"] in seats and s["fallback"] != name, f"seats.{name}.fallback: must name another seat")
-    tools = _validate_tools(obj)
+    warnings = []
+    tools = _validate_tools(obj, warnings)
     leads = _validate_leads(obj, plans, version)
     profiles = _validate_profiles(obj, leads, seats, version)
     if not profiles:
@@ -371,6 +395,7 @@ def load_config(path=None):
         "commands_dir": _abs(obj.get("commands_dir", "~/.claude/commands")),
         "bin_dir": _abs(obj.get("bin_dir", "~/.local/bin")),
         "watches": watches,
+        "warnings": warnings,
     }
 
 

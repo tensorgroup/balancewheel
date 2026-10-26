@@ -106,6 +106,40 @@ class SchemaV2(unittest.TestCase):
         o = v2(); o["tools"]["claude"]["update"] = "claude update"
         self.rejects(o, "tools.claude.update")
 
+    def test_unknown_tool_key_warns_and_loads(self):
+        o = v2(); o["tools"]["x"] = {"update": ["x", "up"], "runtime": "pi", "foo": 1}
+        c = load_obj(o)
+        self.assertEqual(c["warnings"], ["tools.x.foo: unknown key (ignored)"])
+        self.assertNotIn("foo", c["tools"]["x"])
+
+    def test_tool_defaults_and_no_warnings(self):
+        c = cfg.load_config(str(V2))
+        self.assertEqual(c["warnings"], [])
+        self.assertEqual(c["tools"]["claude"]["timeout_s"], 600)
+
+    def test_tool_timeout_zero_rejected(self):
+        o = v2(); o["tools"]["claude"]["timeout_s"] = 0
+        self.rejects(o, "tools.claude.timeout_s")
+
+    def test_tool_timeout_bool_rejected(self):
+        o = v2(); o["tools"]["claude"]["timeout_s"] = True
+        self.rejects(o, "tools.claude.timeout_s")
+
+    def test_tool_runtime_must_be_known(self):
+        o = v2(); o["tools"]["claude"]["runtime"] = "nope"
+        self.rejects(o, "tools.claude.runtime")
+
+    def test_tool_known_keys_bad_types_rejected(self):
+        for key, bad in (("version", "claude --version"), ("version", []), ("app", ""), ("app", 3),
+                         ("self_updating", "yes")):
+            o = v2(); o["tools"]["claude"][key] = bad
+            self.rejects(o, f"tools.claude.{key}")
+
+    def test_example_config_has_no_warnings(self):
+        c = cfg.load_config(str(HERE.parent / "balancewheel.example.json"))
+        self.assertEqual(c["warnings"], [])
+        self.assertTrue(c["tools"])
+
     def test_v2_keys_rejected_in_v1_file(self):
         o = json.loads(V1.read_text()); o["leads"] = {}
         self.rejects(o, "leads")

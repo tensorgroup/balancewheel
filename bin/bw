@@ -148,6 +148,8 @@ def main(argv=None):
         config = load_config()
     except ConfigError as e:
         sys.exit(f"bw: config error: {e}")
+    for w in config.get("warnings", []):
+        print(f"bw: config warning: {w}", file=sys.stderr)
     state = state_dir(config)
     if a.cmd == "guard":
         return cmd_guard(a, config, state)

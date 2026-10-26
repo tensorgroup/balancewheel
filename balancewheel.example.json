@@ -29,6 +29,22 @@
       "budget_usd_month": 20
     }
   },
+  "tools": {
+    "claude": {
+      "update": ["claude", "update"]
+    },
+    "agy": {
+      "update": ["agy", "update"]
+    },
+    "orca": {
+      "app": "/Applications/Orca.app",
+      "self_updating": true
+    },
+    "cc-switch": {
+      "update": ["brew", "upgrade", "--cask", "cc-switch"],
+      "timeout_s": 900
+    }
+  },
   "leads": {
     "claude": {
       "runtime": "claude-code",

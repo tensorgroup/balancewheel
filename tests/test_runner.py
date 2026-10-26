@@ -235,6 +235,15 @@ class Runner(RunnerCase):
         self.assertIn("pa (plan): quota unknown", r.stdout)
         self.assertIn("bw cap <plan>", r.stdout)
 
+    def test_config_warnings_printed_once_on_stderr(self):
+        obj = json.loads(self.cfg.read_text())
+        obj["tools"] = {"x": {"update": ["x", "up"], "runtime": "pi", "foo": 1}}
+        self.cfg.write_text(json.dumps(obj))
+        r = subprocess.run([sys.executable, BW, "status"], env=self.env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr.count("bw: config warning: tools.x.foo: unknown key (ignored)"), 1, r.stderr)
+        self.assertNotIn("config warning", r.stdout)
+
     def test_bw_cap_records_cap(self):
         r = subprocess.run([sys.executable, BW, "cap", "pb"], env=self.env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)

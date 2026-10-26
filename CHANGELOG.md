@@ -15,6 +15,16 @@ not against the prose.
 
 ### Added
 
+- **Config `tools.*` keys, and config warnings** (`metrics/config.py`, `lead/updates.py`,
+  `bin/bw`): a tool takes `update` and `version` (argv lists), `app` (an app bundle path; its
+  `Info.plist` gives the version), `self_updating` (version only, never updated by bw),
+  `runtime` (which runtime lock its update needs; defaults exist for claude, codex, agy, pi
+  and kimi) and `timeout_s` (integer ≥ 1, default 600). A known key with a bad type is an
+  error; an unknown key under `tools.<t>` is ignored and reported in the resolved config's
+  new `warnings` list, which `bw` prints once on stderr. `lead/updates.py` reads versions and
+  updates every installer in parallel, tools sharing one installer in turn, each under its
+  runtime lock taken without blocking (a held lock skips the tool); a tool with an update
+  command and no runtime is not updated. Additive and optional: no schema bump.
 - **`bw setup cc-switch`, the cc-switch settings check, and `lead/proc.py`** (`bin/bw`,
   `lead/ccswitch.py`, `lead/checks.py`, `lead/proc.py`): cc-switch is adopted as the usage
   and cost source for the Usage view (docs/stack.md). `bw setup cc-switch` writes
