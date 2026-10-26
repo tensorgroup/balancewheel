@@ -10,6 +10,8 @@
                                                   shape), one line per plan
   bw registry [--print]                           rebuild state_dir/registry.json (tools, plans, models, seats,
                                                   leads, profiles, projects, edges); --print shows it
+  bw cockpit [--port N] [--no-open]               serve the read-only cockpit on 127.0.0.1 until Ctrl-C; opens
+                                                  it in the browser (--no-open: print the one-time URL)
   bw cap <plan> [--resets-at <epoch>]             record that a plan is capped
   bw inbox [--project] [--all]                    open asks from leads and notices from bw (--project: this
                                                   worktree only; --all: answered ones too)
@@ -24,12 +26,14 @@
                                                   audit stops and sampled allows, one evidence key at a time
 """
 import argparse
+import errno
 import json
 import os
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from cockpit import server as cockpit_server  # noqa: E402
 from lead import ccswitch, inbox, probes, quota, registry, runner, start, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.guard.review import safe  # noqa: E402
@@ -92,6 +96,36 @@ def cmd_registry(a, config, state):
         counts = ", ".join(f"{len(reg[k])} {k}" for k in ("tools", "plans", "models", "seats", "leads", "profiles",
                                                            "projects", "edges"))
         print(f"bw: wrote {registry.path(state)} ({counts})")
+    return 0
+
+
+def _port(s):
+    n = int(s)
+    if not 1024 <= n <= 65535:
+        raise argparse.ArgumentTypeError("must be from 1024 to 65535")
+    return n
+
+
+def cmd_cockpit(a, config, state):
+    port = a.port or config["cockpit"]["port"]
+    views = {}  # the views arrive with the next build step
+    try:
+        srv, token = cockpit_server.make_server(port, views, cockpit_server.load_page())
+    except OSError as e:
+        why = f"port {port} is in use" if e.errno == errno.EADDRINUSE else f"cannot listen on port {port} ({e.strerror or e})"
+        print(f"bw: cockpit: {why}; pass --port or set cockpit.port", file=sys.stderr)
+        return 1
+    url = f"http://127.0.0.1:{port}/?t={token}"
+    if a.no_open or not cockpit_server.open_url(url):
+        print(f"bw: cockpit at {url} (one-time link; Ctrl-C stops)", flush=True)
+    else:
+        print(f"bw: cockpit open at http://127.0.0.1:{port}/ (Ctrl-C stops)", flush=True)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()
     return 0
 
 
@@ -217,6 +251,8 @@ def main(argv=None):
         sa.add_argument(flag, action="store_true")
     ib = sub.add_parser("inbox"); ib.add_argument("--project", action="store_true"); ib.add_argument("--all", action="store_true")
     an = sub.add_parser("answer"); an.add_argument("id"); an.add_argument("text")
+    ck = sub.add_parser("cockpit"); ck.add_argument("--port", type=_port, default=None)
+    ck.add_argument("--no-open", action="store_true")
     c = sub.add_parser("cap"); c.add_argument("plan"); c.add_argument("--resets-at", type=float, default=None)
     sb = sub.add_parser("sandbox"); sbs = sb.add_subparsers(dest="sub", required=True)
     v = sbs.add_parser("verify"); v.add_argument("runtime"); v.add_argument("--lead", default=None)
@@ -245,6 +281,7 @@ def main(argv=None):
     if a.cmd == "lead" and a.use and a.use not in config["leads"]:
         sys.exit(f"bw: unknown lead {a.use!r}")
     return {"lead": cmd_lead, "start": cmd_start, "status": cmd_status, "cap": cmd_cap, "registry": cmd_registry, "probe": cmd_probe,
+            "cockpit": cmd_cockpit,
             "sandbox": cmd_verify, "inbox": cmd_inbox, "answer": cmd_answer}[a.cmd](a, config, state)
 
 

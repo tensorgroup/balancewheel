@@ -216,6 +216,21 @@ def _validate_tools(obj, warnings):
     return out
 
 
+COCKPIT_KEYS = {"port"}
+DEFAULT_COCKPIT_PORT = 8765  # lead/sandbox.py denies the same default in every sandbox
+
+
+def _validate_cockpit(obj, warnings):
+    """`port` is checked; an unknown key is dropped with a warning, as under tools.*."""
+    given = obj.get("cockpit", {})
+    _expect(isinstance(given, dict), "cockpit: must be an object")
+    for k in sorted(set(given) - COCKPIT_KEYS):
+        warnings.append(f"cockpit.{k}: unknown key (ignored)")
+    port = given.get("port", DEFAULT_COCKPIT_PORT)
+    _expect(_is_int(port) and 1024 <= port <= 65535, "cockpit.port: must be an integer from 1024 to 65535")
+    return {"port": port}
+
+
 def _has_permission_arg(runtime, args):
     for a in args:
         for flag in PERMISSION_ARGS[runtime]:
@@ -400,8 +415,7 @@ def load_config(path=None):
     guard = _validate_guard(obj, profiles, leads, version)
     rotation = _validate_defaults(obj, "rotation", ROTATION_DEFAULTS)
     updates = _validate_defaults(obj, "updates", UPDATES_DEFAULTS)
-    cockpit = obj.get("cockpit", {})
-    _expect(isinstance(cockpit, dict), "cockpit: must be an object")
+    cockpit = _validate_cockpit(obj, warnings)
     for k in ("state_dir", "metrics_log", "commands_dir", "bin_dir"):
         if k in obj:
             _expect(isinstance(obj[k], str) and obj[k].strip(), f"{k}: must be a non-empty string path")

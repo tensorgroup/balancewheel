@@ -15,6 +15,20 @@ not against the prose.
 
 ### Added
 
+- **`bw cockpit [--port N] [--no-open]`** (`cockpit/server.py`, `bin/bw`): a read-only local page
+  served on `127.0.0.1` only, until Ctrl-C. It opens `http://127.0.0.1:<port>/?t=<token>` with
+  `open` (or prints it with `--no-open`); the one-time token is exchanged, under a lock and at
+  most once, for an `HttpOnly; SameSite=Strict` cookie holding a separate secret. Every other
+  request needs that cookie (else 403), a `Host` of `127.0.0.1:<port>` or `localhost:<port>`
+  (else 421), and GET (else 405, `Allow: GET`). Every response carries a per-response nonce CSP,
+  `Referrer-Policy: no-referrer`, `nosniff` and `no-store`, and never an `Access-Control-*`
+  header. A view that raises answers `{"available": false, "reason": "<exception name>"}`. A port
+  in use is a one-line error and exit 1. The page is a stub until the views land.
+- **Config `cockpit.port`** (`metrics/config.py`): an integer from 1024 to 65535, default 8765;
+  anything else is a config error. Unknown `cockpit.*` keys warn and are ignored, as under
+  `tools.*`. The resolved config's `cockpit` is `{"port": N}`. Every lead sandbox already denies
+  the configured port as well as 8765, so changing it changes the containment key: re-run
+  `bw sandbox verify` for the bw-contained runtimes afterwards.
 - **`bw registry`** (`lead/registry.py`, `bin/bw`, `lead/start.py`): a derived snapshot at
   `state_dir/registry.json` of tools, plans, models, seats, leads, profiles, projects and the edges
   between them, each node with an `id` (`<kind>:<name>`) and a `health` of `verified`, `pending`,
