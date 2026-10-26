@@ -45,12 +45,16 @@ def _leads(config):
             for name, ld in sorted(config["leads"].items())]
 
 
+ORCA_APP = "orca app"
+
+
 def orca_checks(state, run=proc.run):
     d = orca.support_dir()
     if not os.path.isdir(d):
         return [Check("orca", "unknown", "not installed (no Orca support dir)")]
     up, why = orca.running(run)
-    presence = Check("orca app", "unknown" if up is None else "ok", why)
+    presence = Check(ORCA_APP, "unknown" if up is None else "ok",
+                     f"{why} (settings checked)" if up is False else why)
     return [presence] + orca.check_settings(*orca.read_settings(state, d))
 
 
@@ -63,11 +67,16 @@ def facts(config, state, now, run=proc.run):
             "last_start": read_json(os.path.join(state, "start.json"), None)}
 
 
+def _shown_ok(c):
+    """An ok check still worth a line: Orca installed but not running."""
+    return c.name == ORCA_APP and c.state == "ok" and c.detail.startswith("not running")
+
+
 def _check_lines(title, checks):
-    bad = [c for c in checks if c.state != "ok"]
-    if not bad:
+    shown = [c for c in checks if c.state != "ok" or _shown_ok(c)]
+    if not shown:
         return [f"{title}: ok"]
-    return [f"{title}: {c.state} — {c.detail}" for c in bad]
+    return [f"{title}: {c.state} — {c.detail}" for c in shown]
 
 
 def render(f):

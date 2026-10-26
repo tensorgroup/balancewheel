@@ -82,8 +82,15 @@ class StatusCase(unittest.TestCase):
         self.make_orca("settings_full_access.json")
         f = status.facts(self.config, self.state, time.time(), run=fake_run((FIX / "status_stopped.json").read_text()))
         orca = [ln for ln in status.render(f) if ln.startswith("orca: ")]
-        self.assertEqual(len(orca), 3, orca)
-        self.assertTrue(all(ln.startswith("orca: warn — ") for ln in orca), orca)
+        self.assertEqual(orca[0], "orca: ok — not running (settings checked)")
+        self.assertEqual(len(orca), 4, orca)
+        self.assertTrue(all(ln.startswith("orca: warn — ") for ln in orca[1:]), orca)
+
+    def test_orca_not_running_shown_when_settings_ok(self):
+        self.make_orca("settings_manual.json")
+        f = status.facts(self.config, self.state, time.time(), run=fake_run((FIX / "status_stopped.json").read_text()))
+        orca = [ln for ln in status.render(f) if ln.startswith("orca: ")]
+        self.assertEqual(orca, ["orca: ok — not running (settings checked)"])
 
     def test_facts_keys_and_todays_lines(self):
         f = status.facts(self.config, self.state, time.time(), run=fake_run(""))

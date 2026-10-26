@@ -162,7 +162,9 @@ class CliTests(unittest.TestCase):
         self.state = os.path.join(self.tmp.name, "state")
         os.makedirs(self.state)
         self.env = {**os.environ, "BW_STATE_DIR": self.state,
-                    "BALANCEWHEEL_CONFIG": os.path.join(ROOT, "balancewheel.example.json")}
+                    "BALANCEWHEEL_CONFIG": os.path.join(ROOT, "balancewheel.example.json"),
+                    "BW_ORCA_SUPPORT": os.path.join(self.tmp.name, "no-orca"),
+                    "BW_CCSWITCH_DIR": os.path.join(self.tmp.name, "no-cc-switch")}
 
     def bw(self, *args, inp=None):
         return subprocess.run([sys.executable, BW, *args], env=self.env, capture_output=True, text=True, input=inp)

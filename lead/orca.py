@@ -132,9 +132,26 @@ def _managed_accounts(settings):
     return Check("orca managed accounts", "ok", "no managed accounts")
 
 
+_AGENT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+def _overrides(settings):
+    """One warn per agent whose own permission override is a full-access value."""
+    ov = settings.get("agentPermissionOverrides", {})
+    if not isinstance(ov, dict):
+        return [Check("orca permission overrides", "unknown", "agentPermissionOverrides is not an object")]
+    out = []
+    for agent, v in sorted(ov.items()):
+        if isinstance(v, str) and v in FULL_ACCESS_VALUES:
+            name = agent if _AGENT_NAME.fullmatch(agent) else _shown(agent)
+            out.append(Check(f"orca override {name}", "warn",
+                             f"Orca starts {name} with full access (override); set it to Manual"))
+    return out
+
+
 def check_settings(settings, reason):
     if settings is None:
         return [Check("orca settings", "unknown", reason)]
     hooks = "on" if settings.get("agentStatusHooksEnabled") is True else "off"
-    return [_permission(settings), _telemetry(settings), _managed_accounts(settings),
+    return [_permission(settings), *_overrides(settings), _telemetry(settings), _managed_accounts(settings),
             Check("orca status hooks", "ok", f"agent status hooks {hooks}")]

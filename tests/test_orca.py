@@ -192,6 +192,21 @@ class CheckSettingsTest(unittest.TestCase):
         del s["agentPermissionDefault"]
         self.assertIn("unknown", by_state(orca.check_settings(s, "")))
 
+    def test_full_access_override_warns_per_agent(self):
+        ov = {"codex": "full-access", "claude": "auto", "pi": "own", "kimi": "ask"}
+        cs = orca.check_settings(self.manual(agentPermissionOverrides=ov), "")
+        warns = sorted(c.detail for c in cs if c.state == "warn")
+        self.assertEqual(warns, ["Orca starts claude with full access (override); set it to Manual",
+                                 "Orca starts codex with full access (override); set it to Manual"])
+
+    def test_manual_overrides_ok(self):
+        cs = orca.check_settings(self.manual(agentPermissionOverrides={"codex": "own", "claude": "ask"}), "")
+        self.assertEqual(by_state(cs), {"ok"})
+
+    def test_overrides_not_object_unknown(self):
+        cs = orca.check_settings(self.manual(agentPermissionOverrides=["full-access"]), "")
+        self.assertIn("unknown", by_state(cs))
+
     def test_telemetry_warns(self):
         cs = orca.check_settings(self.manual(telemetry={"optedIn": True}), "")
         self.assertEqual([c.state for c in cs if "telemetry" in c.name], ["warn"])
