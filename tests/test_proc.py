@@ -54,7 +54,8 @@ class ProcRunTest(unittest.TestCase):
             pidfile = os.path.join(d, "pid")
             r = proc.run(["sh", "-c", f"sleep 30 & echo $! > {pidfile}; wait"], 0.5)
             self.assertTrue(r.timed_out)
-            pid = int(open(pidfile).read())
+            with open(pidfile) as f:
+                pid = int(f.read())
             for _ in range(20):
                 if not alive(pid):
                     break
