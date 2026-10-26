@@ -37,11 +37,14 @@
 ~/.pi/agent/settings.json
 ~/.pi/agent/models.json
 
-# bw (leads and rotation), default state_dir. Only pins and handoffs: locks, quota, caps,
-# resolved models, and containment records are live state that must never be restored stale.
+# bw (leads and rotation), default state_dir. Only pins, handoffs, and the inbox (leads' asks,
+# bw's notices, the user's answers): locks, quota, caps, resolved models, and containment records
+# are live state that must never be restored stale, and the leads' answers files (inbox-view/)
+# are regenerated from inbox.jsonl at every session start.
 # If your state_dir is elsewhere, list these in ~/.config/balancewheel/paths.local.txt.
 ~/.local/state/balancewheel/leads.json
 ~/.local/state/balancewheel/handoffs
+~/.local/state/balancewheel/inbox.jsonl
 
 # Orca, the recommended (optional) canvas, writes status hooks into each vendor's user-level
 # config on its first launch: the Claude Code settings and Codex config.toml above, plus

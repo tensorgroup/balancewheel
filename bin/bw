@@ -9,6 +9,10 @@
   bw probe [plan...]                              read quota now (OpenRouter key, Orca; agy awaits its
                                                   shape), one line per plan
   bw cap <plan> [--resets-at <epoch>]             record that a plan is capped
+  bw inbox [--project] [--all]                    open asks from leads and notices from bw (--project: this
+                                                  worktree only; --all: answered ones too)
+  bw answer <id> "<text>"                         answer an ask (or close a notice); the lead reads it from
+                                                  its inbox file
   bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
   bw setup cc-switch                              pre-write cc-switch's settings (before its first launch)
   bw guard install agy                            add the guard hook entry to agy's hooks file
@@ -23,9 +27,11 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from lead import ccswitch, probes, quota, runner, start, status, verify  # noqa: E402
+from lead import ccswitch, inbox, probes, quota, runner, start, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
-from lead.paths import ConfigError, load_config, state_dir  # noqa: E402
+from lead.guard.review import safe  # noqa: E402
+from lead.paths import ConfigError, load_config, state_dir  # noqa: E402  (also puts metrics/ on sys.path)
+import store  # noqa: E402
 from lead.projects import resolve_project  # noqa: E402
 
 
@@ -80,6 +86,56 @@ def cmd_cap(a, config, state):
     c = quota.record_cap(state, a.plan, time.time(), resets_at=a.resets_at,
                          expiry_hours=config["rotation"]["cap_expiry_hours"])
     print(f"bw: {a.plan} capped until {time.ctime(c['resets_at'])}")
+    return 0
+
+
+def _age(ts, now):
+    if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+        return "age unknown"
+    m = max(now - ts, 0) / 60
+    return f"{m:.0f}m ago" if m < 120 else f"{m / 60:.0f}h ago" if m < 48 * 60 else f"{m / 1440:.0f}d ago"
+
+
+def cmd_inbox(a, config, state):
+    try:
+        project = resolve_project(os.getcwd(), config).worktree_key if a.project else None
+    except ValueError as e:
+        print(f"bw: {e}", file=sys.stderr)
+        return 2
+    loaded = inbox.load(state)
+    for w in loaded["warnings"]:
+        print(f"bw: inbox warning: {w}", file=sys.stderr)
+    items = [i for i in loaded["items"] if (a.all or i["status"] == "open")
+             and (project is None or i.get("project") == project)]
+    if not items:
+        print("bw: inbox empty")
+    now = time.time()
+    for i in items:
+        kind = "ask" if i["type"] == "ask" else i.get("kind")
+        where = i.get("worktree") or i.get("project")
+        print(f"[{safe(i.get('id'))}] {safe(kind)} · {_age(i.get('ts'), now)} · from {safe(i.get('from'))} · {safe(where)}")
+        print(f"  {safe(i.get('text', ''))}")
+        if i["status"] == "answered":
+            print(f"  answered: {safe((i.get('answer') or {}).get('text', ''))}")
+    return 0
+
+
+def cmd_answer(a, config, state):
+    try:
+        rec = inbox.answer(state, a.id, a.text)
+    except KeyError:
+        print(f"bw: no inbox item {safe(a.id)}; `bw inbox` lists them", file=sys.stderr)
+        return 1
+    except ValueError:
+        print(f"bw: {safe(a.id)} is already answered", file=sys.stderr)
+        return 1
+    store.append(store.log_path(config), {"type": "answer", "id": rec["id"], "ask_id": a.id})
+    item = next(i for i in inbox.load(state)["items"] if i.get("id") == a.id)
+    if item["type"] == "ask":
+        inbox.write_view(state, item["project"])
+        print(f"bw: answered {safe(a.id)}; the lead sees it in its inbox file; tell it to look")
+    else:
+        print(f"bw: closed notice {safe(a.id)}")
     return 0
 
 
@@ -138,6 +194,8 @@ def main(argv=None):
     sa = sub.add_parser("start"); sa.add_argument("path", nargs="?", default=None)
     for flag in ("--dry-run", "--no-update", "--no-verify"):
         sa.add_argument(flag, action="store_true")
+    ib = sub.add_parser("inbox"); ib.add_argument("--project", action="store_true"); ib.add_argument("--all", action="store_true")
+    an = sub.add_parser("answer"); an.add_argument("id"); an.add_argument("text")
     c = sub.add_parser("cap"); c.add_argument("plan"); c.add_argument("--resets-at", type=float, default=None)
     sb = sub.add_parser("sandbox"); sbs = sb.add_subparsers(dest="sub", required=True)
     v = sbs.add_parser("verify"); v.add_argument("runtime"); v.add_argument("--lead", default=None)
@@ -166,7 +224,7 @@ def main(argv=None):
     if a.cmd == "lead" and a.use and a.use not in config["leads"]:
         sys.exit(f"bw: unknown lead {a.use!r}")
     return {"lead": cmd_lead, "start": cmd_start, "status": cmd_status, "cap": cmd_cap, "probe": cmd_probe,
-            "sandbox": cmd_verify}[a.cmd](a, config, state)
+            "sandbox": cmd_verify, "inbox": cmd_inbox, "answer": cmd_answer}[a.cmd](a, config, state)
 
 
 if __name__ == "__main__":

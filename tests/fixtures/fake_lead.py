@@ -1,12 +1,14 @@
 """A stand-in lead runtime for runner tests. Synthetic; never talks to a model.
 
 argv: fake_lead.py <name> [first prompt]
-env:  FAKE_OUT (dir for evidence), FAKE_MODE_<name> = sleep | ignore_term | exit | guard_probe
+env:  FAKE_OUT (dir for evidence), FAKE_MODE_<name> = sleep | ignore_term | exit | guard_probe | ask | ask_exit
+      ask: sleeps; on SIGTERM publishes one ask in BW_ASKS (.tmp-<n>, renamed to <n>.ask), then exits.
+      ask_exit: publishes one ask and exits at once. The ask's text is FAKE_ASK_TEXT (default "fake question?").
       guard_probe: sends one allowed pi-shaped call to the guard broker over BW_GUARD_SOCKET and
       records the reply, then exits like `exit`. FAKE_STATE (the bw state dir) makes it replay the
       logged self-test call instead of `ls`. FAKE_GUARD_RUNTIME names the runtime (default pi).
       FAKE_UNLOCK_<name> set: flock(LOCK_UN) every inherited descriptor before writing the evidence.
-Writes <FAKE_OUT>/<name>.json: pid, pgid, argv, the BW_GUARD_* variable names, the probe reply, whether every pid listed in FAKE_OUT/*.json
+Writes <FAKE_OUT>/<name>.json: pid, pgid, argv, the BW_GUARD_* variable names, BW_ASKS and BW_INBOX, the probe reply, whether every pid listed in FAKE_OUT/*.json
 from earlier leads is gone, whether it holds the terminal's foreground, and each inherited descriptor
 above 2 as [inode, access mode].
 """
@@ -78,6 +80,7 @@ if os.environ.get(f"FAKE_UNLOCK_{name}"):  # a lead dropping the locks it inheri
 with open(os.path.join(out, f"{name}.json"), "w") as fh:
     json.dump({"pid": os.getpid(), "pgid": os.getpgrp(), "argv": sys.argv, "foreground": fg, "probe": probe,
                "guard_env": sorted(k for k in os.environ if k.startswith("BW_GUARD_")),
+               "inbox_env": {k: os.environ.get(k) for k in ("BW_ASKS", "BW_INBOX")},
                "earlier_alive": [p for p in earlier if alive(p)], "fds": inherited_fds()}, fh)
 print(f"FAKE {name} started", flush=True)
 if mode == "ignore_term":
@@ -87,6 +90,24 @@ if os.environ.get(f"FAKE_SPAWN_{name}"):
     kid = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     with open(os.path.join(out, f"{name}-child.json"), "w") as fh:
         json.dump({"pid": kid.pid}, fh)
+
+
+def publish_ask():
+    d = os.environ["BW_ASKS"]
+    tmp = os.path.join(d, f".tmp-{os.getpid()}")
+    with open(tmp, "w") as fh:
+        fh.write("@human ask\n" + os.environ.get("FAKE_ASK_TEXT", "fake question?"))
+    os.rename(tmp, os.path.join(d, f"{os.getpid()}.ask"))
+
+
+if mode == "ask":
+    def _on_term(*_):
+        publish_ask()
+        os._exit(0)
+    signal.signal(signal.SIGTERM, _on_term)
+if mode == "ask_exit":
+    publish_ask()
+    sys.exit(0)
 if mode == "exit":
     time.sleep(0.3)
     sys.exit(0)

@@ -9,6 +9,12 @@ Lock: an flock on state_dir/locks/<worktree-key>.lock, opened without truncation
 descriptor the lead inherits — the kernel holds the lock until bw AND the lead are gone, so a
 crashed bw cannot let a second writable lead into the same worktree.
 
+Inbox (lead/inbox.py): the lead publishes asks as files in BW_ASKS and reads answers from BW_INBOX,
+a bw-owned file it cannot write. bw ingests asks at session start, about once a second while the
+lead runs, and once more after the lead's group is gone (before a switch's handoff), always under
+the session that published them. Notices (all leads capped, a pinned lead capped, the guard
+unreachable, an ingest problem) go to the same inbox.
+
 Runtime lock (lead/locks.py): a shared flock on the lead's runtime, taken before that runtime's
 verification is checked and passed to the lead the same way, so no update of the runtime lands
 between the check and the launch it allows, or under the running lead. Released only once the
@@ -28,10 +34,11 @@ import tempfile
 import time
 import uuid
 
-from . import containment, guard as guardpkg, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox
+from . import containment, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox
 from .handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text
 from .guard import broker as brk, install as guard_install, launch
 from .guard.launch import GuardUnavailable
+from .guard.review import safe
 from .locks import RuntimeLock
 from .paths import locked_dir, read_json, write_json_atomic
 from .projects import resolve_project
@@ -41,6 +48,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath
 import store  # noqa: E402
 
 LOCKED, UNVERIFIED, NO_LEADS, ALL_CAPPED, GUARD_UNAVAILABLE = 3, 4, 5, 6, 7
+INGEST_EVERY_S = 1.0
 V0_SCOPE = ("v0: automatic switching for leads that report usage through the Claude Code statusline; "
             "for other leads record a cap with `bw cap <plan>`")
 
@@ -122,6 +130,11 @@ class Session:
         self.markers_path = os.path.join(cp_dir, "guard-unreachable")
         self.marker_notice_sent = False
         try:
+            inboxmod.write_view(ctx.state, ctx.project.worktree_key)
+        except OSError as e:
+            ctx.say(f"bw: the inbox answers file could not be written ({type(e).__name__})")
+        self.drain(ctx)  # asks left by an earlier session that never got drained
+        try:
             client_dir = self._guard_start(ctx) if _guarded(self.lead) else None
             self._launch(ctx, lead_name, handoff, cp_dir, client_dir)
         except BaseException:
@@ -144,7 +157,9 @@ class Session:
         # Every BW_GUARD_* in bw's own environment is stale for this lead; only a guarded session's
         # own values (below) are real.
         env = {k: v for k, v in os.environ.items() if not k.startswith("BW_GUARD_")}
-        env.update(BW_CHECKPOINT=os.path.join(cp_dir, "checkpoint.md"), BW_SESSION=self.id)
+        env.update(BW_CHECKPOINT=os.path.join(cp_dir, "checkpoint.md"), BW_SESSION=self.id,
+                   BW_ASKS=inboxmod.asks_dir(ctx.state, ctx.project.worktree_key),
+                   BW_INBOX=inboxmod.view_path(ctx.state, ctx.project.worktree_key))
         if self.broker is not None:
             env.update(BW_GUARD_SOCKET=self.broker.sock_path, BW_GUARD_TOKEN=self.broker.token,
                        BW_GUARD_MODE=self.broker.mode, BW_GUARD_DIR=client_dir, BW_GUARD_MARKERS=self.markers_path)
@@ -203,7 +218,9 @@ class Session:
             raise GuardUnavailable(f"guard cannot start: the guard clients could not be installed ({e})")
         stale = launch.read_markers(self.markers_path)
         if stale:
-            ctx.say(launch.marker_notice(stale, "in the previous session"))
+            line = launch.marker_notice(stale, "in the previous session")
+            ctx.say(line)
+            ctx.notice("guard-unreachable", line[len("bw: "):])
         if os.path.lexists(self.markers_path):
             launch.clear_markers(self.markers_path)
         rt = self.lead["runtime"]
@@ -254,8 +271,24 @@ class Session:
         if self.broker is not None and not self.marker_notice_sent:
             lines = launch.read_markers(self.markers_path)
             if lines:
-                ctx.say(launch.marker_notice(lines, "this session"))
+                line = launch.marker_notice(lines, "this session")
+                ctx.say(line)
+                ctx.notice("guard-unreachable", line[len("bw: "):])
                 self.marker_notice_sent = True
+
+    def drain(self, ctx):
+        """Ingest the asks this lead published, under this session's identity. Never raises."""
+        key = ctx.project.worktree_key
+        try:
+            recs, problem = inboxmod.ingest(ctx.state, key, ctx.project.worktree, self.lead_name, self.id)
+        except Exception as e:  # ingest does not raise by contract; a bug in it must not stop the lead
+            recs, problem = [], f"inbox: ingest failed ({type(e).__name__})"
+        for r in recs:
+            ctx.say(f"bw: {self.lead_name} asks [{r['id']}]: {inboxmod.first_line(r['text'])} — "
+                    f"answer with bw answer {r['id']} \"…\"")
+            ctx.log({"type": "ask", "id": r["id"], "project": key, "session_id": self.id, "from": self.lead_name})
+        if problem and ctx.notice("inbox", problem):
+            ctx.say(f"bw: {problem}")
 
     def finish_guard(self, ctx):
         """Stop the broker and log the guard event; call before logging `session end`."""
@@ -308,6 +341,7 @@ class Context:
         self.adapters, self.backend, self.out = adapters, backend, out
         self.tty = sys.stdin.fileno() if sys.stdin.isatty() else None
         self.runtime_lock = None
+        self.notice_failed = False
 
     def pass_fds(self):
         return (self.lock.fd,) + ((self.runtime_lock.fd,) if self.runtime_lock is not None else ())
@@ -337,6 +371,23 @@ class Context:
 
     def say(self, msg):
         print(msg, file=self.out, flush=True)
+
+    def notice(self, kind, text):
+        """A bw notice in the inbox; the record, or None when one is already open. Never raises."""
+        try:
+            return inboxmod.notice(self.state, self.project.worktree_key, kind, text)
+        except OSError as e:
+            if not self.notice_failed:
+                self.say(f"bw: the inbox could not be written ({type(e).__name__}); notices go only here")
+                self.notice_failed = True
+            return None
+
+    def open_item_texts(self):
+        """This worktree's open inbox items, escaped, for the handoff."""
+        try:
+            return [safe(i.get("text", "")) for i in inboxmod.open_items(self.state, self.project.worktree_key)]
+        except OSError:
+            return []
 
     def log(self, ev):
         store.append(store.log_path(self.config), ev)
@@ -438,6 +489,14 @@ def _rating(ctx, session_id):
         ctx.log({"type": "rating", "session_id": session_id, "value": "good" if ch == "g" else "bad", "note": ""})
 
 
+def _spec(config, name):
+    """A lead as a `lead` event names it; None for no lead."""
+    if not name:
+        return None
+    ld = config["leads"][name]
+    return {"lead": name, "runtime": ld["runtime"], "model": ld["model"]}
+
+
 def _logged_quota(q):
     """Arbitrated quota for a lead event: Orca's cross-check reading is display only, not logged."""
     return {plan: {k: v for k, v in a.items() if k != "cross_check"} if isinstance(a, dict) else a
@@ -495,9 +554,17 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
 
     refresh()
     q, caps = now_state()
-    d = rotation.decide(profile, config["leads"], rot, None, pinned, q, caps, time.time(), "start")
+    now = time.time()
+    d = rotation.decide(profile, config["leads"], rot, None, pinned, q, caps, now, "start")
     if d.notice:
         ctx.say(f"bw: {d.notice}")
+    if d.reason == "none-eligible":
+        ctx.notice("all-capped", d.notice or "no lead can start")
+    if pinned and d.lead != pinned:
+        ctx.notice("pinned-capped", d.notice or f"pinned lead {pinned} did not start; {d.lead or 'no lead'} did")
+    # `--use` overriding the order's pick is a `lead` event (Design decision 20: overrides per lead)
+    unpinned = rotation.decide(profile, config["leads"], rot, None, None, q, caps, now, "start") if use else None
+    override = unpinned is not None and d.lead and unpinned.lead != d.lead
     if not d.lead:
         ctx.say(f"bw: no lead started — {d.notice or 'no lead available'}")
         lock.write({})
@@ -525,11 +592,19 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
             lock.write({})
             return GUARD_UNAVAILABLE
         ctx.say(f"bw: {current} ({session.lead['runtime']}) leading {project.worktree} — {d.reason}")
+        if override:
+            ctx.log({"type": "lead", "project": project.worktree_key, "from": _spec(config, unpinned.lead),
+                     "to": _spec(config, current), "reason": "override", "quota": _logged_quota(q)})
+            override = False
         switched = False
         next_poll = time.time() + poll_s
+        next_ingest = time.time() + INGEST_EVERY_S
         try:
             while session.proc.poll() is None:
                 time.sleep(0.1)
+                if time.time() >= next_ingest:
+                    next_ingest = time.time() + INGEST_EVERY_S
+                    session.drain(ctx)
                 if time.time() < next_poll:
                     continue
                 next_poll = time.time() + poll_s
@@ -555,6 +630,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                 q, caps = now_state()
                 d = rotation.decide(profile, config["leads"], rot, current, pinned, q, caps, time.time(), "running")
                 if d.reason == "none-eligible":
+                    ctx.notice("all-capped", d.notice)
                     if not warned:
                         ctx.say(f"bw: {d.notice}")
                         warned = True
@@ -594,15 +670,16 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                 ctx.release_runtime_lock()  # the old lead's group is gone
                 ctx.runtime_lock = nxt
                 ctx.take_terminal()
+                session.drain(ctx)  # what it published on its way out, before the handoff lists it
                 session.finish_guard(ctx)
                 ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
                          "session_id": session.id, "reason": "switch"})
-                ctx.log({"type": "lead", "project": project.worktree_key,
-                         "from": {"lead": current, "runtime": session.lead["runtime"], "model": session.lead["model"]},
-                         "to": {"lead": d.lead, "runtime": config["leads"][d.lead]["runtime"],
-                                "model": config["leads"][d.lead]["model"]},
-                         "reason": d.reason, "quota": _logged_quota(q)})
-                handoff = build_handoff(project.worktree, session.head, state, project.worktree_key, [])
+                ctx.log({"type": "lead", "project": project.worktree_key, "from": _spec(config, current),
+                         "to": _spec(config, d.lead), "reason": d.reason, "quota": _logged_quota(q)})
+                if pinned and d.lead != pinned:
+                    ctx.notice("pinned-capped", f"pinned lead {pinned} is capped; {d.lead} took over")
+                handoff = build_handoff(project.worktree, session.head, state, project.worktree_key,
+                                        ctx.open_item_texts())
                 ctx.say(f"bw: {current} is capped; handing off to {d.lead}")
                 current, switched = d.lead, True
                 break
@@ -617,6 +694,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
             finally:
                 ctx.take_terminal()
                 ctx.release_runtime_lock()
+                session.drain(ctx)
                 session.finish_guard(ctx)
             raise
         if switched:
@@ -627,6 +705,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         else:
             session.cleanup()
         ctx.release_runtime_lock()  # the lead's group is gone
+        session.drain(ctx)
         session.finish_guard(ctx)
         ctx.log({"type": "session", "phase": "end", "project": project.worktree_key,
                  "session_id": session.id, "reason": "exit"})
@@ -637,11 +716,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         q, caps = now_state()
         d = rotation.decide(profile, config["leads"], rot, current, pinned, q, caps, time.time(), "boundary")
         if d.reason == "returned" and d.lead != current:
-            ctx.log({"type": "lead", "project": project.worktree_key,
-                     "from": {"lead": current, "runtime": config["leads"][current]["runtime"],
-                              "model": config["leads"][current]["model"]},
-                     "to": {"lead": d.lead, "runtime": config["leads"][d.lead]["runtime"],
-                            "model": config["leads"][d.lead]["model"]},
-                     "reason": "returned", "quota": _logged_quota(q)})
+            ctx.log({"type": "lead", "project": project.worktree_key, "from": _spec(config, current),
+                     "to": _spec(config, d.lead), "reason": "returned", "quota": _logged_quota(q)})
             ctx.say(f"bw: {d.lead} is available again — the next `bw lead` starts it")
         return 0

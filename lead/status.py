@@ -6,9 +6,10 @@ external surface it touches (Orca, cc-switch) reads as `unknown` with a reason w
 import os
 import time
 
-from lead import ccswitch, orca, proc, quota, runner
+from lead import ccswitch, inbox, orca, proc, quota, runner
 from lead.checks import Check
 from lead.guard import review as guard_review
+from lead.guard.review import safe
 from lead.paths import read_json
 from lead.runtimes import ADAPTERS
 
@@ -47,6 +48,24 @@ def _leads(config):
             for name, ld in sorted(config["leads"].items())]
 
 
+def _inbox(state):
+    """Open asks and notices per worktree (keyed by worktree key; an ask names its worktree);
+    None when the inbox cannot be read."""
+    out = {}
+    try:
+        items = inbox.open_items(state)
+    except OSError:
+        return None
+    for i in items:
+        w = out.setdefault(i.get("project"), {"worktree": None, "asks": [], "notices": []})
+        if i["type"] == "ask":
+            w["worktree"] = w["worktree"] or i.get("worktree")
+            w["asks"].append(i)
+        else:
+            w["notices"].append(i)
+    return out
+
+
 ORCA_APP = "orca app"
 
 
@@ -66,7 +85,8 @@ def facts(config, state, now, run=proc.run):
             "leads": _leads(config),
             "guard": guard_review.status_lines(state),
             "checks": {"orca": orca_checks(state, run), "cc-switch": ccswitch.check_settings()},
-            "last_start": read_json(os.path.join(state, "start.json"), None)}
+            "last_start": read_json(os.path.join(state, "start.json"), None),
+            "inbox": _inbox(state)}
 
 
 def _shown_ok(c):
@@ -96,6 +116,13 @@ def render(f):
     lines.append("leads:")
     for ld in f["leads"]:
         lines.append(f"  {ld['name']}: {ld['runtime']} {ld['model']} on {ld['plan']} · contained by {ld['contained_by']}")
+    lines.append("inbox: unreadable" if f.get("inbox") is None else "inbox:" if f["inbox"] else "inbox: empty")
+    for key, w in sorted((f.get("inbox") or {}).items(), key=lambda kv: str(kv[0])):
+        lines.append(f"  {safe(w['worktree'] or key)}: {len(w['asks'])} ask(s), {len(w['notices'])} notice(s)")
+        for i in w["asks"]:
+            lines.append(f"    [{safe(i.get('id'))}] ask from {safe(i.get('from'))}: {inbox.first_line(i.get('text', ''))}")
+        for i in w["notices"]:
+            lines.append(f"    [{safe(i.get('id'))}] {safe(i.get('kind'))}: {inbox.first_line(i.get('text', ''))}")
     if f["guard"]:
         lines.append("guard:")
         lines.extend(f["guard"])

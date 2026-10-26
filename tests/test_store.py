@@ -39,6 +39,15 @@ class GuardEvents(unittest.TestCase):
         self.assertIsNone(d["sessions"][0]["guard_version"])
 
 
+    def test_asks_and_answers_load_and_older_logs_have_none(self):
+        d = store.load(str(FX / "modern.jsonl"))
+        self.assertEqual((d["asks"], d["answers"]), ([], []))
+        d = self.log([{"type": "ask", "id": "a1", "project": "k", "session_id": "s1", "from": "l"},
+                      {"type": "answer", "id": "b2", "ask_id": "a1"}])
+        self.assertEqual([a["id"] for a in d["asks"]], ["a1"])
+        self.assertEqual([a["ask_id"] for a in d["answers"]], ["a1"])
+
+
 class ReadAndLoad(unittest.TestCase):
     def test_modern_log_loads_and_folds(self):
         d = store.load(str(FX / "modern.jsonl"))

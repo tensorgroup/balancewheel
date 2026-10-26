@@ -553,6 +553,10 @@ class GuardRunner(RunnerCase):
         self.assertFalse((cp / "guard-unreachable").exists())
         again = self.start("--use", "lb", "--guard", "pi", env={"FAKE_MODE_b": "exit"})
         self.assertNotIn("unreachable", again.communicate(timeout=30)[0])
+        from lead import inbox
+        (n,) = inbox.open_items(str(self.state), self.key())
+        self.assertEqual(n["kind"], "guard-unreachable")
+        self.assertIn("guard was unreachable 2 time(s)", n["text"])
 
     def test_fifo_in_place_of_the_markers_file_does_not_hang(self):
         cp = self.state / "handoffs" / self.key()
@@ -575,6 +579,93 @@ class GuardRunner(RunnerCase):
         out = p.communicate(timeout=30)[0]
         self.assertEqual(out.count("guard was unreachable"), 1, out)
         self.assertEqual(self.events("guards")[0]["unreachable"], 2)
+
+
+class InboxRunner(RunnerCase):
+    def key(self):
+        import hashlib
+        return hashlib.sha1(os.path.realpath(str(self.repo)).encode()).hexdigest()[:12]
+
+    def items(self):
+        from lead import inbox
+        return inbox.load(str(self.state))["items"]
+
+    def session_of(self, lead):
+        return [s for s in self.events("sessions") if s["lead"] == lead][0]["session_id"]
+
+    def test_session_start_exports_asks_and_inbox_and_writes_the_view(self):
+        p = self.start(env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        env = self.fake("a")["inbox_env"]
+        self.assertEqual(env["BW_ASKS"], str(self.state / "handoffs" / self.key() / "asks"))
+        self.assertEqual(env["BW_INBOX"], str(self.state / "inbox-view" / f"{self.key()}.md"))
+        self.assertTrue(os.path.isdir(env["BW_ASKS"]))
+        self.assertTrue(os.path.isfile(env["BW_INBOX"]))
+
+    def test_ask_during_the_session_is_printed_escaped_and_logged_without_text(self):
+        p = self.start(env={"FAKE_MODE_a": "sleep"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        asks = Path(self.fake("a")["inbox_env"]["BW_ASKS"])
+        (asks / ".tmp-q").write_text("@human ask\nwipe \x1b[2J the db?\nsecond line")
+        os.rename(asks / ".tmp-q", asks / "q.ask")
+        self.assertTrue(wait_for(lambda: self.items(), 5))
+        self.assertTrue(wait_for(lambda: not (asks / "q.ask").exists(), 5))
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        out = p.communicate(timeout=15)[0]
+        (item,) = self.items()
+        self.assertIn(f'bw: la asks [{item["id"]}]: wipe \\x1b[2J the db? — answer with bw answer {item["id"]} "…"', out)
+        self.assertNotIn("\x1b", out)
+        (ev,) = self.events("asks")
+        self.assertEqual({k: ev[k] for k in ("id", "project", "session_id", "from")},
+                         {"id": item["id"], "project": self.key(), "session_id": self.session_of("la"), "from": "la"})
+        self.assertNotIn("text", ev)
+
+    def test_final_drain_on_exit(self):
+        p = self.start(env={"FAKE_MODE_a": "ask_exit", "BW_PROBE_SECONDS": "60"})
+        out = p.communicate(timeout=15)[0]
+        self.assertEqual(p.returncode, 0, out)
+        (item,) = self.items()
+        self.assertEqual(item["text"], "fake question?")
+        self.assertEqual(item["session_id"], self.session_of("la"))
+        self.assertIn(f"bw: la asks [{item['id']}]", out)
+
+    def test_final_drain_before_handoff_on_switch(self):
+        p = self.start(env={"FAKE_MODE_a": "ask", "FAKE_MODE_b": "exit", "FAKE_ASK_TEXT": "keep the \x1b[2J cache?"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        out = p.communicate(timeout=20)[0]
+        self.assertEqual(p.returncode, 0, out)
+        (item,) = self.items()
+        self.assertEqual(item["session_id"], self.session_of("la"))
+        handoff = " ".join(self.fake("b")["argv"])
+        self.assertIn("open questions for the user:", handoff)
+        self.assertIn("- keep the \\x1b[2J cache?", handoff)
+        self.assertNotIn("\x1b", handoff)
+
+    def test_all_capped_notices_collapse_to_one(self):
+        for plan in ("pa", "pb"):
+            quota.record_cap(str(self.state), plan, time.time(), resets_at=time.time() + 3600)
+        self.assertEqual(self.start().wait(10), 6)
+        self.assertEqual(self.start().wait(10), 6)
+        notices = [i for i in self.items() if i["type"] == "notice"]
+        self.assertEqual([(n["kind"], n["project"], n["status"]) for n in notices], [("all-capped", self.key(), "open")])
+
+    def test_pinned_capped_on_a_running_cap_switch(self):
+        p = self.start("--use", "la", env={"FAKE_MODE_a": "sleep", "FAKE_MODE_b": "exit"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        self.assertEqual(self.items(), [])
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        self.assertEqual(p.wait(20), 0, p.stdout.read())
+        self.assertEqual([i["kind"] for i in self.items()], ["pinned-capped"])
+
+    def test_override_lead_event(self):
+        p = self.start("--use", "lb", env={"FAKE_MODE_b": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        (ev,) = self.events("leads")
+        self.assertEqual((ev["reason"], ev["from"]["lead"], ev["to"]["lead"]), ("override", "la", "lb"))
+        p = self.start("--use", "la", env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        self.assertEqual(len(self.events("leads")), 1)
 
 
 def _alive_group(pgid):

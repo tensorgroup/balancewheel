@@ -158,6 +158,34 @@ not against the prose.
   appended to the tracked list. A setup predating the config loader, or one keeping state
   somewhere unusual, can now be protected without editing a tracked file. Each backup stores
   the effective list it used, so restores inherit the additions.
+- **The inbox** (`lead/inbox.py`, `lead/runner.py`, `bin/bw`): leads ask the user through
+  files and bw alone owns the record. A lead publishes each question as one file in `BW_ASKS`
+  (`state_dir/handoffs/<worktree-key>/asks/`: write `.tmp-<random>`, rename to `<random>.ask`;
+  `lead/protocol/checkpoint.md` says how); bw ingests only `*.ask` regular files, without
+  following links or blocking, at most 64 KiB each, text cut at 2000 characters, at most 50 asks
+  per session (the rest deleted unread, with one notice), at session start, about once a second,
+  and once more after the lead's group is gone — before a switch's handoff, which lists open
+  items — always under the publishing session. Records go to `state_dir/inbox.jsonl` (0600):
+  `ask` `{type, id, ts, project, worktree, from, session_id, text, status}` (id
+  `sha1(name + content)[:8]`, so a re-ingest dedupes), `notice` `{type, id, ts, project, kind,
+  from: "bw", text, status}` with `kind` one of `all-capped`, `pinned-capped`, `router-shadow`
+  (no emitter yet), `guard-unreachable`, `inbox` (one open notice per kind and worktree), and
+  `answer` `{type, id, ask_id, ts, from: "user", text}`; `ts` is epoch seconds. Answers reach
+  the lead in `BW_INBOX` (`state_dir/inbox-view/<worktree-key>.md`), which only bw writes and
+  which holds answers only (`@lead answer [id:<ask id>]` and the escaped answer), never ask text.
+- **`bw inbox [--project] [--all]`** and **`bw answer <id> "<text>"`** (`bin/bw`): new commands.
+  `bw inbox` lists open asks and notices (all worktrees; `--project`: this one; `--all`:
+  answered too), lead text escaped. `bw answer` answers an ask or closes a notice (exit 1 for an
+  unknown or already answered id) and rewrites that worktree's answers file. `bw status` gains
+  an `inbox:` section with open items per worktree.
+- **Log events `ask` and `answer`, and `lead` reason `override`** (`metrics/store.py`): `ask`
+  `{type, id, project, session_id, from}` per ingested ask and `answer` `{type, id, ask_id}` per
+  `bw answer`, both without text (the text lives only in `inbox.jsonl`); `store.load` returns
+  them as `asks` and `answers` (empty for older logs). A `bw lead --use` that starts a different
+  lead than the profile order would logs a `lead` event with reason `override` (`from` the
+  order's pick, `null` when none could start).
+- **`setup/paths.txt`** lists `~/.local/state/balancewheel/inbox.jsonl` (the user's asks and
+  answers); `inbox-view/` is regenerated and stays out.
 
 ### Fixed
 

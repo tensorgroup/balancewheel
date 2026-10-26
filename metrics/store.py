@@ -218,8 +218,11 @@ def load(path):
     leads = [e for e in events if e.get("type") == "lead"]
     ratings = [e for e in events if e.get("type") == "rating"]
     guards = [e for e in events if e.get("type") == "guard"]
+    asks = [e for e in events if e.get("type") == "ask"]
+    answers = [e for e in events if e.get("type") == "answer"]
     return {"usage": usage, "panels": panels, "watches": watches, "events": events, "warnings": warnings,
-            "sessions": sessions, "leads": leads, "ratings": ratings, "guards": guards}
+            "sessions": sessions, "leads": leads, "ratings": ratings, "guards": guards, "asks": asks,
+            "answers": answers}
 
 
 def append(path, event):

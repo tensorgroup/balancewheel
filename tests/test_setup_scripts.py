@@ -94,7 +94,9 @@ class SetupScriptsTest(unittest.TestCase):
         self.assertIn("~/.local/state/balancewheel/leads.json", listed)
         self.assertIn("~/.local/state/balancewheel/handoffs", listed)
         self.assertIn("~/.pi/agent/extensions", listed)  # Orca writes its pi extensions there
-        for live in ("locks", "quota", "caps", "models", "containment.json", "guard.jsonl", "guard-verify.json", "guard"):
+        self.assertIn("~/.local/state/balancewheel/inbox.jsonl", listed)  # the user's asks and answers
+        for live in ("locks", "quota", "caps", "models", "containment.json", "guard.jsonl", "guard-verify.json", "guard",
+                     "inbox-view"):  # the view is regenerated from inbox.jsonl
             self.assertFalse(any(l.rstrip("/").endswith(live) for l in listed), live)
 
     def test_restore_puts_originals_back_and_takes_a_safety_backup(self):
