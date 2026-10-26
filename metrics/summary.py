@@ -3,6 +3,7 @@
 Pure functions over store.load() output; nothing here reads or writes a file. A token or cost total is
 None when no usage event for that seat reports it: "unavailable" is not zero.
 """
+import math
 from datetime import datetime, timezone
 
 SEVERE = ("critical", "major")
@@ -14,7 +15,7 @@ def _panels(data):
 
 
 def _num(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
 
 
 def seat_names(config, data):
@@ -115,13 +116,23 @@ def watches(data):
             for w in data["watches"] if w["status"] == "open"]
 
 
+def _parse(ts):
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ"):
+        try:
+            return datetime.strptime(ts, fmt).replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
 def _minutes(s):
-    try:
-        a = datetime.strptime(s["start"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-        b = datetime.strptime(s["end"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    except (KeyError, TypeError, ValueError):
-        return 0.0
-    return max(0.0, (b - a).total_seconds() / 60)
+    """Minutes between start and end, or None when either timestamp is missing or unparseable."""
+    a, b = _parse(s.get("start")), _parse(s.get("end"))
+    return None if a is None or b is None else max(0.0, (b - a).total_seconds() / 60)
+
+
+def _spec_key(spec):
+    return (spec.get("runtime"), spec.get("model")) if isinstance(spec, dict) and spec.get("runtime") else None
 
 
 def lead_rows(data, inbox_items):
@@ -133,23 +144,33 @@ def lead_rows(data, inbox_items):
             continue
         key = (s["runtime"], s.get("model"))
         r = rows.setdefault(key, {"runtime": key[0], "model": key[1], "leads": set(), "sessions": 0, "minutes": 0.0,
-                                  "cap_switches": 0, "overrides": 0, "good": 0, "bad": 0, "asks": 0})
+                                  "cap_switches": 0, "overrides": 0, "lost_sessions": 0, "unparsed_sessions": 0, "good": 0, "bad": 0, "asks": 0})
         by_session[s["session_id"]] = r
         r["sessions"] += 1
-        r["minutes"] += _minutes(s)
+        if s.get("end_reason") == "lost":  # stamped when a later run recovers the stale lock, not when the lead stopped
+            r["lost_sessions"] += 1
+        elif s.get("end") is not None:
+            m = _minutes(s)
+            if m is None:
+                r["unparsed_sessions"] += 1
+            else:
+                r["minutes"] += m
         r["cap_switches"] += 1 if s.get("end_reason") == "switch" else 0
         if s.get("lead"):
             r["leads"].add(s["lead"])
-    # an override targets the lead that started: attribute it to that lead's (runtime, model) via its sessions
-    by_lead = {}
+    # an override belongs to the model that ran: the lead's latest session starting at or before the event
+    # (its model may have changed since), else the event's own runtime/model
+    starts = {}
     for s in data["sessions"]:
-        if s.get("lead") and s.get("runtime"):
-            by_lead[s["lead"]] = (s["runtime"], s.get("model"))
+        if s.get("lead") and s.get("runtime") and _parse(s.get("start")):
+            starts.setdefault(s["lead"], []).append((_parse(s["start"]), (s["runtime"], s.get("model"))))
     for e in data["leads"]:
         if e.get("reason") != "override":
             continue
         to = e.get("to") if isinstance(e.get("to"), dict) else {}
-        key = by_lead.get(to.get("lead"))
+        at = _parse(e.get("ts"))
+        prior = [(t, k) for t, k in starts.get(to.get("lead"), []) if at is not None and t <= at]
+        key = max(prior, key=lambda x: x[0])[1] if prior else _spec_key(to)
         if key in rows:
             rows[key]["overrides"] += 1
     for e in data["ratings"]:

@@ -109,6 +109,42 @@ class LeadRows(unittest.TestCase):
                          (1, 30.0, 0, 0, 0, 1, 0))
 
 
+class LeadRowsFixes(unittest.TestCase):
+    def start(self, sid, lead, model, ts, rt="codex"):
+        return {"type": "session", "phase": "start", "session_id": sid, "project": "k", "lead": lead, "runtime": rt, "model": model, "ts": ts}
+
+    def end(self, sid, reason, ts):
+        return {"type": "session", "phase": "end", "session_id": sid, "project": "k", "reason": reason, "ts": ts}
+
+    def test_lost_sessions_add_no_minutes_and_are_counted(self):
+        d = load([self.start("s1", "la", "a", "2026-01-01T00:00:00Z"), self.end("s1", "lost", "2026-01-03T00:00:00Z"),
+                  self.start("s2", "la", "a", "2026-01-04T00:00:00Z"), self.end("s2", "exit", "2026-01-04T00:10:00Z")])
+        (r,) = summary.lead_rows(d, [])
+        self.assertEqual((r["sessions"], r["minutes"], r["lost_sessions"]), (2, 10.0, 1))
+
+    def test_unparseable_timestamps_are_skipped_and_counted(self):
+        d = load([self.start("s1", "la", "a", "not a time"), self.end("s1", "exit", "2026-01-01T00:10:00Z"),
+                  self.start("s2", "la", "a", "2026-01-01T00:00:00Z"), self.end("s2", "exit", "2026-01-01T00:05:00Z")])
+        (r,) = summary.lead_rows(d, [])
+        self.assertEqual((r["minutes"], r["unparsed_sessions"]), (5.0, 1))
+
+    def test_non_finite_numbers_are_not_summed(self):
+        u = {"type": "usage", "seat": "alpha", "mode": "new", "dir": "/w", "duration_s": 1, "ok": True}
+        d = load([dict(u, cost_usd=1.5), dict(u, cost_usd=float("inf")), dict(u, tokens_in=float("nan"))])
+        a = {r["seat"]: r for r in summary.seat_rows(d, CONFIG)}["alpha"]
+        self.assertEqual((a["cost_usd"], a["tokens_in"]), (1.5, None))
+
+    def test_override_is_credited_to_the_model_that_ran_then(self):
+        ov = lambda ts: {"type": "lead", "project": "k", "to": {"lead": "la", "runtime": "codex", "model": "x"}, "reason": "override", "ts": ts}
+        d = load([self.start("s1", "la", "old", "2026-01-01T00:00:00Z"), ov("2026-01-01T00:00:01Z"),
+                  self.start("s2", "la", "new", "2026-01-02T00:00:00Z"), ov("2026-01-02T00:00:01Z"),
+                  # no session of this lead precedes it: falls back to the event's own runtime/model
+                  {"type": "lead", "project": "k", "reason": "override", "ts": "2025-12-01T00:00:00Z",
+                   "to": {"lead": "zz", "runtime": "codex", "model": "old"}}])
+        rows = {r["model"]: r for r in summary.lead_rows(d, [])}
+        self.assertEqual((rows["old"]["overrides"], rows["new"]["overrides"]), (2, 1))
+
+
 class RunnerToSummary(RunnerCase):
     def test_use_override_run_is_counted_by_lead_rows(self):
         p = self.start("--use", "lb", env={"FAKE_MODE_b": "exit"})
