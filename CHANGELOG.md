@@ -15,6 +15,11 @@ not against the prose.
 
 ### Added
 
+- **Plain `bw`** (`bin/bw`): in a git worktree it runs `bw lead` there, and lead flags work on it
+  (`bw --use <lead>`, `bw --auto`, `bw --no-rating`); outside a worktree it runs `bw status` and says
+  so. Before a lead starts, `bw lead` prints one line each when the worktree has open inbox items and
+  when `bw start` last updated tools more than a day ago (never when `bw start` has not run). Every
+  subcommand and `bw --help` are unchanged.
 - **`bw cockpit [--port N] [--no-open]`** (`cockpit/server.py`, `bin/bw`): a read-only local page
   served on `127.0.0.1` only, until Ctrl-C. It opens `http://127.0.0.1:<port>/?t=<token>` with
   `open` (or prints it with `--no-open`); the one-time token is exchanged, under a lock and at

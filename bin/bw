@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""bw — leads and rotation (build-order step 2).
+"""bw — leads and rotation.
 
+  bw                                              in a worktree: lead it here (same as bw lead; lead flags
+                                                  work too, e.g. bw --use <lead>); elsewhere: bw status
   bw start [path] [--dry-run] [--no-update] [--no-verify]
                                                   update tools, re-verify, pick the lead, open it in
                                                   an Orca pane or a Terminal tab
@@ -39,7 +41,48 @@ from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, r
 from lead.guard.review import safe  # noqa: E402
 from lead.paths import ConfigError, load_config, state_dir  # noqa: E402  (also puts metrics/ on sys.path)
 import store  # noqa: E402
-from lead.projects import resolve_project  # noqa: E402
+from lead.projects import resolve_project, worktree_key  # noqa: E402
+from lead import proc  # noqa: E402
+from lead.paths import read_json  # noqa: E402
+
+COMMANDS = ("lead", "status", "registry", "probe", "start", "inbox", "answer", "cockpit", "cap", "sandbox", "guard",
+            "setup")
+START_STALE_S = 86400  # tools not updated by bw start for this long get a one-line nudge
+
+
+def _toplevel(cwd):
+    r = proc.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], 5)
+    return r.out.strip() if r.rc == 0 and r.out.strip() else None
+
+
+def default_argv(argv, cwd):
+    """Bare `bw`, or only lead flags, means `bw lead`; bare `bw` outside a git worktree means `bw status`.
+    Returns (argv, outside) — outside is True when status was chosen because cwd is not in a worktree."""
+    if argv and (argv[0] in COMMANDS or argv[0] in ("-h", "--help")):
+        return list(argv), False
+    if not argv and _toplevel(cwd) is None:
+        return ["status"], True
+    return ["lead", *argv], False
+
+
+def lead_nudges(state, cwd, now):
+    """One-line reminders before a lead starts: open inbox items for this worktree, and tools not updated by
+    `bw start` in over a day (only once bw start has run at all). Never raises."""
+    lines = []
+    try:
+        top = _toplevel(cwd)
+        n = len(inbox.open_items(state, worktree_key(top))) if top else 0
+        if n:
+            lines.append(f"bw: {n} open item{'s' if n != 1 else ''} for this worktree — bw inbox --project")
+    except Exception:  # noqa: BLE001 — a nudge never stops a lead
+        pass
+    try:
+        ts = (read_json(os.path.join(state, "start.json"), None) or {}).get("ts")
+        if isinstance(ts, (int, float)) and not isinstance(ts, bool) and now - ts > START_STALE_S:
+            lines.append(f"bw: tools last updated {int((now - ts) // 86400)} day(s) ago — bw start updates and re-verifies")
+    except Exception:  # noqa: BLE001
+        pass
+    return lines
 
 
 def _count(s):
@@ -50,6 +93,8 @@ def _count(s):
 
 
 def cmd_lead(a, config, state):
+    for line in lead_nudges(state, os.getcwd(), time.time()):
+        print(line, file=sys.stderr)
     return runner.run(config, state, os.getcwd(), use=a.use, auto=a.auto, rating=not a.no_rating)
 
 
@@ -276,7 +321,17 @@ def main(argv=None):
     rv.add_argument("--recent", type=_count, default=20); rv.add_argument("--sample", type=_count, default=5)
     rv.add_argument("--list", action="store_true")
     st = sub.add_parser("setup"); st.add_argument("what", choices=["cc-switch"])
+    argv, outside = default_argv(sys.argv[1:] if argv is None else argv, os.getcwd())
     a = ap.parse_args(argv)
+    if outside:
+        code = _dispatch(a)
+        sys.stdout.flush()  # the hint follows the status, also when stdout is a pipe
+        print("bw: not in a git worktree — cd into a project and run bw to lead it, or see bw --help", file=sys.stderr)
+        return code
+    return _dispatch(a)
+
+
+def _dispatch(a):
     if a.cmd == "setup":  # touches only the tool's own settings file, so it needs no config
         return cmd_setup(a)
     if a.cmd == "guard" and a.sub not in ("review", "verify"):  # touches only the hooks file, so it needs no config

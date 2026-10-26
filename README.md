@@ -301,10 +301,15 @@ a `setup/new-project.sh`; the judgment steps (2, 4, 6) stay with the agent.
 
 The **lead** is the agent you work in for a project; it is also the moderator of every
 panel it convenes. One plan usually runs out first, so a project's **profile** (config
-schema 3; a schema-2 file still loads) names its leads in order, and `bw lead` picks one:
+schema 3; a schema-2 file still loads) names its leads in order, and `bw lead` picks one.
+Plain `bw` is the everyday command: in a project it leads that worktree in this terminal (it
+is `bw lead`, and lead flags work on it: `bw --use <lead>`, `bw --auto`), first saying when the
+worktree has open inbox items or when `bw start` last updated tools more than a day ago;
+outside a git worktree it shows `bw status`.
 
+    bw                       # in a project: lead it here; elsewhere: bw status
     bw start [path]          # update tools, re-verify, pick the lead, open it in Orca or a Terminal tab
-    bw lead                  # start the profile's lead for this worktree
+    bw lead                  # start the profile's lead for this worktree (what plain bw does in one)
     bw lead --use <lead>     # pin a lead for this worktree; bw lead --auto unpins
     bw status                # plans (quota, caps), worktrees, leads, how each is contained, open inbox items
     bw probe [plan...]       # read quota now (OpenRouter key, Orca), one line per plan
