@@ -137,6 +137,13 @@ not against the prose.
 
 ### Fixed
 
+- **Runtime locks and verification output** (`lead/locks.py`, `lead/verify.py`): `bw lead`
+  takes its shared runtime lock before the verification check, and bw keeps a second
+  non-inherited shared lock so a lead cannot unlock or upgrade the inherited one; mid-session
+  takes never block. Verification failure output now goes to stderr. Docs: the README, the
+  Orca guide, and the 2026-10-24 spec (amendments A3–A6) describe `bw start`; the spec's
+  cc-switch version reads 4.0.20.
+
 - **Lead sandboxes deny cc-switch's data, bw's sealed copies, and the canvas and cockpit
   ports; leads read their answers view** (`lead/sandbox.py`, `lead/runner.py`). Both backends
   deny reading `~/.cc-switch` (added to `SECRET_READS`) and `state_dir/sealed/`, and refuse

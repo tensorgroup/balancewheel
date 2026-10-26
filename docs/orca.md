@@ -5,10 +5,11 @@ from its docs, its source (main at `a4e6e1f0`), and a hands-on spike on the auth
 A deep four-seat design review of the adoption followed (43 raw findings, 17 after dedupe,
 none refuted); its conclusions are folded in below. Orca ships near-daily, so re-check the
 version-specific facts here before relying on them. Revised 2026-10-25: how the `bw guard` agy hook composes with Orca's.
-Revised 2026-10-26 (re-checked on 1.4.240): no account auto-switch setting exists;
+Revised 2026-10-25 (re-checked on 1.4.240): no account auto-switch setting exists;
 orchestration is a skill, not an Experimental toggle (install step 3 rewritten); Orca's pi
 extensions join the list of files it edits; orcad's WebSocket port, cc-switch's proxy port
-and the cockpit port are now denied to every sandbox.*
+and the cockpit port are now denied to every sandbox. Revised 2026-10-25 (`bw start`): the
+launch argv and the settings check below are written as built.*
 
 [Orca](https://github.com/stablyai/orca) is an MIT-licensed desktop "agent IDE": it runs
 Claude Code, Codex, agy, pi, Kimi Code and other CLI agents side by side, each in its own
@@ -109,7 +110,7 @@ bw's questions.
    blocks both channels; denying connections to its socket is defense in depth. Both were
    verified. This applies whenever the Orca app is running, whether or not the agent is in
    an Orca pane.
-7. **orcad listens on loopback port 6768** (its WebSocket). Before 2026-10-26 both sandboxes
+7. **orcad listens on loopback port 6768** (its WebSocket). Before 2026-10-25 both sandboxes
    could connect to it; orcad rejects any frame that is not a paired `e2ee_hello`, and the
    pairing keys sit in the already-denied Orca directory, so nothing was reachable through
    it. It is now denied anyway. Orca's agent-hook endpoint takes a token that sits in the
@@ -135,17 +136,28 @@ bw's questions.
 
 ### Rules `bw` and setup enforce
 
-- **One launch path.** Orca hosts `bw lead`; it never starts a lead itself. `bw start` runs
-  `orca terminal create --worktree path:<worktree> --title "<project> lead" --command "bw lead"`.
+- **One launch path.** Orca hosts `bw lead`; it never starts a lead itself. `bw start` runs, once `orca status --json` says the app is running,
+  `orca terminal create --worktree path:<worktree> --title "<worktree basename> lead" --command "<cmd>"`,
+  where `<cmd>` is `env BALANCEWHEEL_CONFIG=… BW_STATE_DIR=… <real path of bin/bw> lead` (the
+  two assignments only when set in bw's own environment). It refuses first when bw lies
+  inside the target worktree or its common git dir, and opens nothing when the worktree's
+  lock is held.
   Orca's `agent launch`, orchestration workers, automations, and session restore are not used
   on a worktree bw manages, because none of them take bw's worktree lock or its containment.
+- **The settings check** (`lead/orca.py`, shown by `bw status` and `bw start`) reads the
+  active profile from a copy in the state dir's `sealed/`. Agent permission default "Manual"
+  is stored as `own` (or `ask`; 1.4.240 stores no literal "Manual"); `full-access` and
+  `auto` warn, and so does any per-agent override set to one of them. Telemetry on warns;
+  so do managed Claude or Codex accounts (there is no automatic-switching setting to read).
+  An unreadable database or an unknown value is `unknown` with the reason, never an error;
+  Orca installed but not running says so.
 - **Every sandbox denies Orca's control channel**: no reads under Orca's runtime directory and
   no connections to its socket, in both the nono and `sandbox-exec` profiles, for leads and
   seats (`lead/sandbox.py`, `CANVAS_CONTROL_DIRS`, since 2026-10-25). The attack script
   tries `orca terminal create` from inside whenever `orca` is installed.
 - **Every sandbox refuses connections to the canvas and cockpit ports, on any host** —
   loopback, `::1`, or the Mac's own interface address for a service bound to 0.0.0.0
-  (`CANVAS_CONTROL_PORTS`, `denied_ports`, since 2026-10-26): 6768 (orcad), 15721 (cc-switch's
+  (`CANVAS_CONTROL_PORTS`, `denied_ports`, since 2026-10-25): 6768 (orcad), 15721 (cc-switch's
   proxy), 8765 (the cockpit's default) and `cockpit.port` when configured — the cockpit too,
   because cookies are not port-isolated. Both backends; each rule checked by a real connect
   in `tests/test_sandbox.py`, and the attack script probes each port. Both also deny reads of
@@ -169,7 +181,8 @@ bw's questions.
 
 ### Without Orca
 
-Nothing changes in behaviour: `bw start` opens a terminal tab with `bw lead`, Codex and Kimi
+Nothing changes in behaviour: `bw start` opens a Terminal tab (a `.command` file in the
+state dir, run with `open -a Terminal`) with `bw lead`, Codex and Kimi
 quota read `unknown`, and rotation runs on observed caps and `bw cap`, as v0 does.
 
 ## Open items

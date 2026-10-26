@@ -22,7 +22,11 @@ Python 3.9+ standard library only; no packages to install. Run the tests from th
 watches, the logger CLI, and the dashboard generator. `lead/` holds leads and rotation:
 project resolution, the pure rotation decision, per-plan quota and caps, `bw sandbox`
 profiles and containment records, handoffs, runtime adapters, and the runner behind
-`bin/bw` (`bin/bw-statusline` records Claude quota). `tests/attack/lead_containment.sh`
+`bin/bw` (`bin/bw-statusline` records Claude quota). The starter is spread over `start.py`
+(`bw start`), `updates.py` (tool versions and parallel updates), `locks.py` (per-runtime
+locks), `verify.py` (re-verification on a pool), `orca.py` and `sqlite_ro.py` (Orca presence
+and sealed-copy settings), `ccswitch.py` (`bw setup cc-switch`), `checks.py`, and `proc.py`
+(the one shell-out helper modules take as `run=`). `tests/attack/lead_containment.sh`
 attack-tests a lead runtime (spends model quota; not part of `unittest discover`).
 `lead/guard/` holds `bw guard`: the broker, the lexer and rules, the thin pi and agy clients,
 the evidence record, review, and verification; `tests/attack/guard_attack.sh` attacks it

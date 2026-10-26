@@ -7,7 +7,7 @@ Builds on `2026-09-03-config-driven-seats-and-metrics-design.md` (seat runtimes,
 it covers except where the "Amendments to earlier documents" section below says
 otherwise. Tool versions were read on the author's machine on this date: Claude Code
 2.1.310, Codex CLI 0.154.0, agy 1.4.7, pi 0.85.1, Kimi Code CLI 2.3.1, nodeterm
-(self-updating), cc-switch 4.0.15 (source read at commit `85ad496`).*
+(self-updating), cc-switch 4.0.20 (source read at commit `85ad496`).*
 
 *Amended 2026-10-25 (second amendment, `bw guard` v0): `autonomy` joins the lead keys, the
 "contained by self" argument is narrowed to the sandbox, and config moves to schema 3; see
@@ -15,6 +15,9 @@ otherwise. Tool versions were read on the author's machine on this date: Claude 
 
 *Amended 2026-10-25 (plan 4): cc-switch is adopted for the Usage view and the
 `data_source` values are corrected; see "Amendments from plan 4".*
+
+*Amended 2026-10-25 (the starter): how `bw start` was built differs in four places; see
+"Amendments from the starter" (A3-A6).*
 
 *Amended 2026-10-25: Orca (1.4.240, MIT) replaces nodeterm as the recommended, optional
 canvas, and the cockpit, inbox, and quota-probe work it duplicates is trimmed. A spike and a
@@ -786,6 +789,37 @@ Named in `docs/superpowers/plans/2026-10-26-plan-4-starter-quota-inbox-cockpit.m
   (observed in a first-launch database). The Non-goals sentence that every scanner writes
   `session_log` is corrected in place, and "Usage and cost data" selects rows with
   `data_source` other than `proxy` and maps the value to a tool.
+
+### Amendments from the starter (2026-10-25)
+
+Named in `docs/superpowers/plans/2026-10-26-plan-4-starter-quota-inbox-cockpit.md`, Design
+decisions 11–16 and 18; they change "Updates and verification" step 6, steps 2–3, and the
+runtime-lock paragraph as built.
+
+- **A3. Workspace opening (decisions 11 and 18).** Without Orca, `bw start` writes
+  `state_dir/start/<worktree-key>.command` (0700) and runs `open -a Terminal <file>`; no
+  `osascript`. The Orca pane title is the worktree's basename, not the project name. `bw
+  start` refuses when bw's own path is inside the target worktree or its common git dir, and
+  does not reopen a worktree whose lock is held. The cockpit is never started by `bw start`
+  (step 7 prints the hint); every sandbox denies its port.
+- **A4. Re-verification (decisions 12 and 14).** Re-verification covers every runtime any
+  configured lead uses and is independent of updates: it runs with `--no-update`, and
+  `--no-verify` defers it. One pool worker per runtime. A pass is recorded only if the key
+  recomputed after the attack equals the one computed before it; recording is serialised by
+  a lock file beside the store. Seat keys wait for `bin/seat`.
+- **A5. Locks, installers, progress, versions (decisions 13, 15, 16).** Runtime locks are
+  keyed by runtime (`tools.<t>.runtime` maps a tool; defaults for claude, codex, agy, pi,
+  kimi); `bw lead` takes its shared lock **before** the verification check, not only for the
+  run, and bw holds a second, non-inherited shared lock so a lead cannot unlock or upgrade
+  the one it inherits. The updater and mid-session takes are non-blocking; a held lock skips
+  the tool. Tools sharing an installer run one after another and installers in parallel, with
+  one printed line per tool as it finishes instead of a live status line. Versions come from
+  `tools.<t>.version`, the runtime adapter, or an app bundle's `Info.plist`, else
+  `unreadable`; "updated" requires two readable, different versions.
+- **A6. Account switching (replaces the sentence in step 6).** Orca 1.4.240 has no automatic
+  account-switching setting. Setup and `bw status` check instead that Orca holds no managed
+  Claude or Codex accounts (an account Orca can switch is one that could change under a
+  running lead), alongside the agent-permission default and telemetry checks.
 
 ## Extraction gate
 

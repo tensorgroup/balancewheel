@@ -302,6 +302,7 @@ The **lead** is the agent you work in for a project; it is also the moderator of
 panel it convenes. One plan usually runs out first, so a project's **profile** (config
 schema 3; a schema-2 file still loads) names its leads in order, and `bw lead` picks one:
 
+    bw start [path]          # update tools, re-verify, pick the lead, open it in Orca or a Terminal tab
     bw lead                  # start the profile's lead for this worktree
     bw lead --use <lead>     # pin a lead for this worktree; bw lead --auto unpins
     bw status                # plans (quota, caps), worktrees, leads and how each is contained
@@ -310,6 +311,7 @@ schema 3; a schema-2 file still loads) names its leads in order, and `bw lead` p
     bw guard review          # audit the guard's stops and sampled allows, one evidence key at a time
     bw guard verify <rt>     # attack-test the guard on a runtime (pi) and record a pass
     bw guard install agy     # add the guard's entry to agy's hooks file (uninstall: bw guard uninstall agy)
+    bw setup cc-switch       # write cc-switch's settings before its first launch (optional usage view)
 
 First time? See "Start leading" at the end of this section.
 
@@ -375,10 +377,44 @@ First time? See "Start leading" at the end of this section.
     Another agent runtime started by the lead (a second `claude`, `codex`, or `pi`) is
     outside the guard: it is gray, so it asks, and what it does inside is not judged.
     Once acting exists (not in v0), a false block is worked around by hand, outside the lead.
+- **`bw start [path] [--dry-run] [--no-update] [--no-verify]` (since 2026-10-25).** One command
+  to begin a session in a project (the path defaults to the current directory). It refuses
+  when `bw` itself lives inside the target worktree or its git directory (a lead could edit
+  the next `bw lead`), then:
+  1. **updates every tool you configured** under `tools` (`update`, `version`, `app`,
+     `runtime`, `self_updating`, `timeout_s`; an unknown key under a tool warns), in parallel
+     across installers and one after another within one (two Homebrew casks, two npm
+     globals), one line per tool as it finishes. A tool counts as updated only when both
+     versions read and differ. A tool whose runtime is in use by a running lead is skipped
+     and tried next start; Orca and other self-updating apps are version-only. `--no-update`
+     skips this step and keeps the tools' last recorded history.
+  2. **re-verifies each lead runtime** whose containment key (pi, Kimi) or guard key (guarded
+     leads) changed, on a pool with one worker per runtime, starting as that tool's update
+     finishes. This runs whether or not anything updated, spends a little model quota, and
+     leaves a runtime `pending` with the reason when the test cannot run (plan capped,
+     version unreadable, agy's hook spike not done) or with `--no-verify`.
+  3. **shows the quota** of every plan the profile touches and the lead it would start.
+  4. **opens the worktree.** With Orca running: an Orca pane titled `<worktree> lead` through
+     `orca terminal create --worktree path:<worktree> --command "<bw> lead"`. Otherwise a
+     Terminal tab, through a small `.command` file under the state dir's `start/` that
+     `open -a Terminal` runs. If neither works, it prints the command and exits 1. A
+     worktree that already has a lead is not opened again. `bw start` never starts the
+     cockpit; it prints the `bw cockpit` hint.
+
+  Runs are recorded in `start.json` in the state dir (`bw status` shows the `last start:`
+  line). `--dry-run` runs only git and `orca status` and changes nothing. **Runtime locks:**
+  every `bw lead` holds a shared lock on its runtime from before the verification check
+  through the session, so an update can land neither between the check and the launch nor
+  under a running lead; a switch mid-session never waits on an update.
+- **Settings checks (`bw status`, `bw start`).** `orca:` warns when Orca's agent permission
+  default (or any per-agent override) is a full-access value, when telemetry is on, or when
+  it holds managed Claude or Codex accounts; it says so when Orca is installed but not running.
+  `cc-switch:` checks the settings `bw setup cc-switch` wrote. bw reads Orca's profile
+  database only through a sealed copy in the state dir, which every sandbox denies.
 - **Where you watch it: Orca (recommended, never required).** [Orca](https://github.com/stablyai/orca)
   is an MIT desktop app that hosts agent panes per worktree, with notifications and a
-  per-plan quota view. Run `bw lead` inside an Orca terminal (`orca terminal create --command
-  "bw lead"`), never through Orca's own agent launch, which bypasses permissions and bw's
+  per-plan quota view. `bw start` opens `bw lead` in an Orca terminal
+  (`orca terminal create --command "bw lead"`); never launch a lead through Orca's own agent launch, which bypasses permissions and bw's
   worktree lock. Orca adds hooks to every vendor's config when it first starts, and a
   sandboxed process can drive Orca's control channel unless the sandbox denies it — read
   [docs/orca.md](docs/orca.md) before installing it. Plain terminal tabs work the same.
@@ -412,7 +448,8 @@ First time? See "Start leading" at the end of this section.
    and `bw guard verify pi` for a guarded pi lead (without it, the lead starts with a note).
    Each run spends a little model quota.
 5. **Lead.** In a project's worktree, `bw status` shows plans, leads and guard lines; `bw
-   lead` starts the profile's lead in your terminal (an Orca pane or a plain tab). Quit the
+   start` updates and re-verifies, then opens the profile's lead (an Orca pane or a Terminal
+   tab), or `bw lead` starts it in the terminal you are in. Quit the
    lead to end the session; `bw guard review` later shows what a guarded lead's guard
    logged.
 
