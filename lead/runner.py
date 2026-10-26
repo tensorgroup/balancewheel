@@ -38,7 +38,6 @@ from . import containment, guard as guardpkg, inbox as inboxmod, orca as orcamod
 from .handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text
 from .guard import broker as brk, install as guard_install, launch
 from .guard.launch import GuardUnavailable
-from .guard.review import safe
 from .locks import RuntimeLock
 from .paths import locked_dir, read_json, write_json_atomic
 from .projects import resolve_project
@@ -383,9 +382,9 @@ class Context:
             return None
 
     def open_item_texts(self):
-        """This worktree's open inbox items, escaped, for the handoff."""
+        """This worktree's open inbox items for the handoff, escaped and bounded."""
         try:
-            return [safe(i.get("text", "")) for i in inboxmod.open_items(self.state, self.project.worktree_key)]
+            return inboxmod.handoff_items(self.state, self.project.worktree_key)
         except OSError:
             return []
 

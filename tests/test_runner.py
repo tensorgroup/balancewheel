@@ -642,6 +642,19 @@ class InboxRunner(RunnerCase):
         self.assertIn("- keep the \\x1b[2J cache?", handoff)
         self.assertNotIn("\x1b", handoff)
 
+    def test_switch_with_hundreds_of_open_asks_launches_with_a_bounded_handoff(self):
+        from lead import inbox
+        for i in range(200):
+            inbox.ask(str(self.state), self.key(), str(self.repo), "la", "old", "\x1b[2J" * 400, f"{i:08x}")
+        p = self.start(env={"FAKE_MODE_a": "sleep", "FAKE_MODE_b": "exit"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        out = p.communicate(timeout=20)[0]
+        self.assertEqual(p.returncode, 0, out)
+        handoff = " ".join(self.fake("b")["argv"])
+        self.assertIn("190 more — run `bw inbox --project`", handoff)
+        self.assertLess(len(handoff), 32 * 1024)
+
     def test_all_capped_notices_collapse_to_one(self):
         for plan in ("pa", "pb"):
             quota.record_cap(str(self.state), plan, time.time(), resets_at=time.time() + 3600)

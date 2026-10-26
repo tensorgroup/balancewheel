@@ -129,13 +129,18 @@ def cmd_answer(a, config, state):
     except ValueError:
         print(f"bw: {safe(a.id)} is already answered", file=sys.stderr)
         return 1
-    store.append(store.log_path(config), {"type": "answer", "id": rec["id"], "ask_id": a.id})
-    item = next(i for i in inbox.load(state)["items"] if i.get("id") == a.id)
-    if item["type"] == "ask":
+    try:
+        store.append(store.log_path(config), {"type": "answer", "id": rec["id"], "ask_id": a.id})
+        item = next(i for i in inbox.load(state)["items"] if i.get("id") == a.id)
+        if item["type"] != "ask":
+            print(f"bw: closed notice {safe(a.id)}")
+            return 0
         inbox.write_view(state, item["project"])
-        print(f"bw: answered {safe(a.id)}; the lead sees it in its inbox file; tell it to look")
-    else:
-        print(f"bw: closed notice {safe(a.id)}")
+    except OSError as e:  # the answer itself is recorded; a retry would only say "already answered"
+        print(f"bw: answer to {safe(a.id)} recorded, but the lead's inbox file was not refreshed "
+              f"({type(e).__name__}); it will refresh at the next session start")
+        return 0
+    print(f"bw: answered {safe(a.id)}; the lead sees it in its inbox file; tell it to look")
     return 0
 
 

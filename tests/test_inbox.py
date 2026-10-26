@@ -96,6 +96,14 @@ class Ingest(InboxCase):
         self.assertIn("y.ask", note)
         self.assertTrue((self.asks / "y.ask").is_dir())
 
+    def test_thousands_of_ask_directories_make_a_bounded_notice(self):
+        for i in range(5000):
+            (self.asks / (f"{i:04d}" + "\x1b" * 200 + "d" * 47 + ".ask")).mkdir()
+        recs, note = self.ingest()
+        self.assertEqual(recs, [])
+        self.assertLess(len(note), 2000)
+        self.assertIn("and 4995 more", note)
+
     def test_big_file_reads_64_kib(self):
         data = b"q" * (10 * 1024 * 1024)
         self.publish("big", data)
@@ -185,6 +193,18 @@ class Records(InboxCase):
         self.assertNotIn("unanswered", body)
         self.assertEqual([p.name for p in view.parent.iterdir()], [f"{KEY}.md"])  # no temp left behind
 
+    def test_handoff_items_are_bounded(self):
+        for i in range(200):
+            inbox.ask(self.state, KEY, "/w", "la", "s1", f"q{i} " + "\x1b" * 1995 + "\nmore", f"{i:08x}")
+        lines = inbox.handoff_items(self.state, KEY)
+        self.assertEqual(len(lines), inbox.HANDOFF_ITEMS + 1)
+        self.assertTrue(all(len(l) <= inbox.HANDOFF_ITEM_CHARS for l in lines))
+        self.assertEqual(lines[-1], "190 more — run `bw inbox --project`")
+        self.assertNotIn("\x1b", "".join(lines))
+        from lead.handoff import build_handoff, INBOX_LIMIT
+        h = build_handoff(str(self.root), None, self.state, KEY, ["x" * 5000] * 10)
+        self.assertLessEqual(len(h.split("open questions for the user:\n", 1)[1]), INBOX_LIMIT)
+
     def test_load_reports_an_answer_to_nothing(self):
         inbox._append(self.state, {"type": "answer", "id": "x", "ask_id": "gone", "from": "user", "text": "t"})
         self.assertTrue(any("gone" in w for w in inbox.load(self.state)["warnings"]))
@@ -263,6 +283,18 @@ class Cli(InboxCase):
         self.assertEqual(len(ans), 1)
         self.assertEqual(ans[0]["ask_id"], r["id"])
         self.assertNotIn("text", ans[0])
+
+    def test_answer_survives_a_failed_view_refresh(self):
+        self.publish("a", "q?")
+        (r,), _ = inbox.ingest(self.state, self.key, str(self.repo), "la", "s1")
+        view_dir = Path(self.state) / "inbox-view"
+        view_dir.write_text("not a dir")  # write_view cannot create its dir
+        res = self.bw("answer", r["id"], "yes")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("Traceback", res.stderr)
+        self.assertIn("recorded", res.stdout + res.stderr)
+        self.assertIn("next session start", res.stdout + res.stderr)
+        self.assertEqual(inbox.load(self.state)["items"][0]["status"], "answered")
 
     def test_answer_unknown_id_exits_1_naming_it(self):
         res = self.bw("answer", "deadbeef", "x")

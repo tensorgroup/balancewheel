@@ -32,6 +32,10 @@ READ_LIMIT = 64 * 1024
 TEXT_LIMIT = 2000
 MAX_ASKS_PER_SESSION = 50
 ASK_HEADER = "@human ask"
+NAMES_SHOWN = 5          # lead-chosen names listed in one notice; the rest are counted
+NAME_CHARS = 80          # each such name, escaped, at most this long
+HANDOFF_ITEMS = 10       # open items listed in a handoff; the rest are counted
+HANDOFF_ITEM_CHARS = 200
 
 
 def path(state):
@@ -84,6 +88,24 @@ def first_line(text, limit=160):
     """An item's first line, escaped and short, for one-line listings."""
     line = safe(str(text).strip().split("\n", 1)[0])
     return line if len(line) <= limit else line[:limit - 1] + "…"
+
+
+def _listed(names):
+    """At most NAMES_SHOWN lead-chosen names, escaped and short, then how many more."""
+    shown = [first_line(n, NAME_CHARS) for n in names[:NAMES_SHOWN]]
+    more = len(names) - len(shown)
+    return ", ".join(shown) + (f" and {more} more" if more else "")
+
+
+def handoff_items(state, worktree_key):
+    """This worktree's open items for a handoff: at most HANDOFF_ITEMS first lines, escaped and
+    at most HANDOFF_ITEM_CHARS each, then a count of the rest. Asks accumulate across sessions and
+    the handoff can travel on argv, so this is bounded whatever the lead wrote."""
+    items = open_items(state, worktree_key)
+    lines = [first_line(i.get("text", ""), HANDOFF_ITEM_CHARS) for i in items[:HANDOFF_ITEMS]]
+    if len(items) > HANDOFF_ITEMS:
+        lines.append(f"{len(items) - HANDOFF_ITEMS} more — run `bw inbox --project`")
+    return lines
 
 
 def _new_id(items):
@@ -205,7 +227,7 @@ def ingest(state, worktree_key, worktree, frm, session_id):
         if not names:
             return [], None
         used = sum(1 for i in load(state)["items"] if i["type"] == "ask" and i.get("session_id") == session_id)
-        dropped, dirs = 0, []
+        dropped, dirs, failed = 0, [], []
         for name in names:
             try:
                 st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
@@ -229,11 +251,13 @@ def ingest(state, worktree_key, worktree, frm, session_id):
                         used += 1
                 os.unlink(name, dir_fd=dfd)
             except OSError as e:
-                problems.append(f"{safe(name)}: {type(e).__name__}")
+                failed.append(f"{name}: {type(e).__name__}")
         if dropped:
             problems.append(f"{dropped} ask(s) over this session's limit of {MAX_ASKS_PER_SESSION} were deleted unread")
+        if failed:
+            problems.append(f"asks not ingested: {_listed(failed)}")
         if dirs:
-            problems.append(f"directories named like asks were left in place: {', '.join(safe(d) for d in dirs)}")
+            problems.append(f"directories named like asks were left in place: {_listed(dirs)}")
     except OSError as e:
         problems.append(f"the asks dir could not be scanned ({type(e).__name__})")
     finally:

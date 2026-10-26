@@ -13,6 +13,8 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
         "-c", "core.attributesFile=/dev/null", "--no-pager"]
 GIT_TIMEOUT = 5  # seconds: a hung git call must not hold a broker worker or bw
+INBOX_LIMIT = 16 * 1024  # characters of open inbox items in one handoff
+INBOX_CUT = "\n[cut — run `bw inbox --project`]"
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # attributes read from here: no filters run
 
 
@@ -67,7 +69,10 @@ def build_handoff(worktree, since_head, state_dir, worktree_key, inbox_items):
     cp = read_checkpoint(state_dir, worktree_key)
     lines += ["checkpoint:", cp] if cp else ["checkpoint: none"]
     if inbox_items:
-        lines += ["open questions for the user:"] + [f"- {i}" for i in inbox_items]
+        section = "\n".join(f"- {i}" for i in inbox_items)
+        if len(section) > INBOX_LIMIT:  # the handoff can travel on argv: never unbounded
+            section = section[:INBOX_LIMIT - len(INBOX_CUT)] + INBOX_CUT
+        lines += ["open questions for the user:", section]
     return "\n".join(lines)
 
 
