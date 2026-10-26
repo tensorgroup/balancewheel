@@ -28,7 +28,7 @@ import tempfile
 import time
 import uuid
 
-from . import containment, guard as guardpkg, orca as orcamod, proc, quota as quotamod, rotation, sandbox
+from . import containment, guard as guardpkg, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox
 from .handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text
 from .guard import broker as brk, install as guard_install, launch
 from .guard.launch import GuardUnavailable
@@ -483,6 +483,17 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         quotamod.clear_expired_caps(state, q, now, rot["cap_expiry_hours"])
         return q, quotamod.read_caps(state, now, rot["cap_expiry_hours"], include_expired=True)
 
+    def refresh():
+        # network probes and one Orca read: before the first decision and at the boundary only
+        try:
+            res = probes.refresh(config, state, time.time(), run=run)
+        except Exception as e:
+            ctx.say(f"bw: quota refresh failed ({type(e).__name__}); deciding on what is on disk")
+            return
+        for line in res["notes"]:
+            ctx.say(f"bw: {line}")
+
+    refresh()
     q, caps = now_state()
     d = rotation.decide(profile, config["leads"], rot, None, pinned, q, caps, time.time(), "start")
     if d.notice:
@@ -622,6 +633,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         lock.write({})
         if rating:
             _rating(ctx, session.id)
+        refresh()
         q, caps = now_state()
         d = rotation.decide(profile, config["leads"], rot, current, pinned, q, caps, time.time(), "boundary")
         if d.reason == "returned" and d.lead != current:

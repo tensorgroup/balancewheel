@@ -608,14 +608,16 @@ class OrcaReRead(RunnerCase):
         doc = json.loads((HERE / "fixtures" / "orca" / "account_list_ok.json").read_text())
         codex = doc["result"]["rateLimits"]["codex"]
         codex["updatedAt"] = int(time.time() * 1000)
-        codex["weekly"].update(usedPercent=100, resetsAt=int((time.time() + 3 * 86400) * 1000))
         payload = self.out.parent / "orca-payload.json"  # not in FAKE_OUT: the fake reads every *.json there
         payload.write_text(json.dumps(doc))
         p = self.start("--orca-payload", str(payload), env={"FAKE_MODE_a": "sleep", "BW_PROBE_SECONDS": "0"})
         self.assertTrue(wait_for(lambda: self.fake("a")))
+        # the plan fills up only once the lead runs: the start's refresh may act on a reading, a poll must not
+        codex["weekly"].update(usedPercent=100, resetsAt=int((time.time() + 3 * 86400) * 1000))
+        tmp = payload.with_suffix(".tmp"); tmp.write_text(json.dumps(doc)); os.replace(tmp, payload)
+        n = len(self.orca_calls())
         snap_path = self.state / "quota" / "chatgpt.orca.json"
-        self.assertTrue(wait_for(lambda: snap_path.exists()))
-        self.assertTrue(wait_for(lambda: len(self.orca_calls()) >= 4))  # several more polls with the plan at 100 %
+        self.assertTrue(wait_for(lambda: len(self.orca_calls()) >= n + 4))  # several more polls with the plan at 100 %
         snap = json.loads(snap_path.read_text())
         self.assertEqual(snap["windows"][0]["used_pct"], 100.0)
         self.assertEqual(snap["source_version"], "9.9.9-test")
@@ -628,6 +630,27 @@ class OrcaReRead(RunnerCase):
         os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
         self.assertEqual(p.wait(10), 0)
         self.assertEqual(self.events("leads"), [])
+
+    def test_refresh_before_the_first_decision_and_at_the_boundary_never_in_the_poll_loop(self):
+        refreshes = self.out / "refresh-calls.jsonl"
+        count = lambda: len(refreshes.read_text().splitlines()) if refreshes.exists() else 0  # noqa: E731
+        p = self.start("--count-refresh", "--orca-payload", str(self.orca_payload()),
+                       env={"FAKE_MODE_a": "sleep", "BW_PROBE_SECONDS": "0"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        self.assertEqual(count(), 1)
+        n = len(self.orca_calls())
+        self.assertTrue(wait_for(lambda: len(self.orca_calls()) >= n + 4))  # several polls
+        self.assertEqual(count(), 1)
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        self.assertEqual(p.wait(10), 0)
+        self.assertEqual(count(), 2)
+
+    def orca_payload(self):
+        doc = json.loads((HERE / "fixtures" / "orca" / "account_list_ok.json").read_text())
+        doc["result"]["rateLimits"]["codex"]["updatedAt"] = int(time.time() * 1000)
+        payload = self.out.parent / "orca-payload.json"
+        payload.write_text(json.dumps(doc))
+        return payload
 
     def orca_calls(self):
         f = self.out / "orca-calls.jsonl"

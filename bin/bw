@@ -6,6 +6,8 @@
                                                   an Orca pane or a Terminal tab
   bw lead [--use <lead> | --auto] [--no-rating]   start the right lead for this worktree
   bw status                                       leads, quota, caps, pins, Orca and cc-switch checks
+  bw probe [plan...]                              read quota now (OpenRouter key, Orca; agy awaits its
+                                                  shape), one line per plan
   bw cap <plan> [--resets-at <epoch>]             record that a plan is capped
   bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
   bw setup cc-switch                              pre-write cc-switch's settings (before its first launch)
@@ -21,7 +23,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from lead import ccswitch, quota, runner, start, status, verify  # noqa: E402
+from lead import ccswitch, probes, quota, runner, start, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.paths import ConfigError, load_config, state_dir  # noqa: E402
 from lead.projects import resolve_project  # noqa: E402
@@ -45,6 +47,30 @@ def cmd_start(a, config, state):
 
 def cmd_status(a, config, state):
     print("\n".join(status.render(status.facts(config, state, time.time()))))
+    return 0
+
+
+def cmd_probe(a, config, state):
+    unknown = [p for p in a.plans if p not in config["plans"]]
+    if unknown:
+        sys.exit(f"bw: unknown plan {unknown[0]!r}; plans: {sorted(config['plans'])}")
+    now = time.time()
+    names = a.plans or sorted(config["plans"])
+    res = probes.refresh(config, state, now, plans=names, fetch=probes._fetch)
+    every = config["rotation"]["probe_every_min"]
+    arbitrated = quota.read_quota(state, config, now)
+    for name in names:
+        a_q = arbitrated.get(name)
+        parts = [quota.summary(a_q)]
+        note = (res["snapshots"].get(name) or {}).get("note")
+        if note:
+            parts.append(note)
+        n = quota.notice(a_q, config["plans"][name], now, every)
+        if n:
+            parts.append(n)
+        print(f"{name}: {' — '.join(parts)}")
+    for line in res["notes"]:
+        print(f"bw: {line}")
     return 0
 
 
@@ -108,6 +134,7 @@ def main(argv=None):
     g.add_argument("--use"); g.add_argument("--auto", action="store_true")
     ld.add_argument("--no-rating", action="store_true")
     sub.add_parser("status")
+    sub.add_parser("probe").add_argument("plans", nargs="*")
     sa = sub.add_parser("start"); sa.add_argument("path", nargs="?", default=None)
     for flag in ("--dry-run", "--no-update", "--no-verify"):
         sa.add_argument(flag, action="store_true")
@@ -138,7 +165,7 @@ def main(argv=None):
         return cmd_guard(a, config, state)
     if a.cmd == "lead" and a.use and a.use not in config["leads"]:
         sys.exit(f"bw: unknown lead {a.use!r}")
-    return {"lead": cmd_lead, "start": cmd_start, "status": cmd_status, "cap": cmd_cap,
+    return {"lead": cmd_lead, "start": cmd_start, "status": cmd_status, "cap": cmd_cap, "probe": cmd_probe,
             "sandbox": cmd_verify}[a.cmd](a, config, state)
 
 

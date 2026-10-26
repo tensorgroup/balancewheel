@@ -3,6 +3,7 @@
 argv: run_runner.py <config.json> <worktree> [--use LEAD] [--auto] [--contained-by-bw RUNTIME]
                     [--guard RUNTIME [--no-hook] [--no-spike]] [--fail-after-launch] [--no-client] [--fail-in-poll]
                     [--verified] [--fail-in-caps] [--probe-lock-in-verify] [--orca-payload FILE] [--orca-raise]
+                    [--count-refresh]
 Every runtime maps to tests/fixtures/fake_lead.py; --contained-by-bw marks one as bw-contained
 (without a containment record), to test the refusal path. --guard RUNTIME makes every lead of that
 runtime guarded (autonomy "guard", source "config"), points BW_AGY_HOOKS at a temp hooks file with
@@ -17,6 +18,7 @@ process, append {"runtime", "exclusive"} to FAKE_OUT/verify-lock.jsonl, and coun
 --orca-payload FILE answers every `orca ...` shell-out with FILE's content (each argv appended to
 FAKE_OUT/orca-calls.jsonl) and reports Orca's version as 9.9.9-test; without it any `orca` call fails.
 --orca-raise makes every `orca ...` shell-out (still appended to orca-calls.jsonl) raise OSError.
+--count-refresh appends one line to FAKE_OUT/refresh-calls.jsonl per probes.refresh call (which still runs).
 """
 import atexit, os, shutil, sys, tempfile
 from pathlib import Path
@@ -118,6 +120,17 @@ from lead.proc import Result, run as real_run  # noqa: E402
 orca.app_version = lambda *a, **k: "9.9.9-test"  # never the real app bundle
 orca_payload = args[args.index("--orca-payload") + 1] if "--orca-payload" in args else None
 orca_raise = "--orca-raise" in args
+
+if "--count-refresh" in args:
+    import json
+    from lead import probes
+    _refresh = probes.refresh
+
+    def _counted(*a, **k):
+        with open(os.path.join(os.environ["FAKE_OUT"], "refresh-calls.jsonl"), "a") as f:
+            f.write(json.dumps({"plans": k.get("plans")}) + "\n")
+        return _refresh(*a, **k)
+    probes.refresh = _counted
 
 
 def fake_run(argv, timeout, **kw):

@@ -344,6 +344,36 @@ class StartCase(unittest.TestCase):
         self.assertIn("bw start: lead: lp (order)", out)
         self.assertIn("bw start: cockpit: run bw cockpit", out)
 
+    def openrouter_plan(self):
+        self.config["plans"]["po"] = {"billing": "metered", "quota": "probe", "probe": "openrouter",
+                                      "budget_usd_month": 20}
+        self.config["seats"]["s2"] = {"runtime": "pi", "model": "y", "roles": ["review"], "plan": "po"}
+        self.config["profiles"]["p"]["checkpoints"]["review"]["seats"].append("s2")
+        body = (ROOT / "tests" / "fixtures" / "openrouter" / "key_ok.json").read_bytes()
+        calls = []
+
+        def fetch(url, key, timeout):
+            calls.append(url)
+            return 200, body, ""
+        return fetch, calls
+
+    def test_probes_refreshed_and_lines_show_source_and_age(self):
+        fetch, calls = self.openrouter_plan()
+        code, out = self.start(FakeRun(), verify=False, update=False, fetch=fetch,
+                               env=dict(self.env, OPENROUTER_API_KEY="sk-or-SYNTHETIC-CANARY"))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("bw start: quota po: budget 75% · probe 0m", out)
+        self.assertIn("bw start: quota pp: quota unknown — probe: no probe for this plan", out)
+        self.assertNotIn("SYNTHETIC-CANARY", out)
+
+    def test_dry_run_probes_nothing(self):
+        fetch, calls = self.openrouter_plan()
+        code, out = self.start(FakeRun(), verify=False, update=False, fetch=fetch, dry_run=True,
+                               env=dict(self.env, OPENROUTER_API_KEY="k"))
+        self.assertEqual(calls, [])
+        self.assertFalse(os.path.exists(os.path.join(self.state, "quota")))
+
     def test_start_clears_an_expired_cap_and_a_dry_run_does_not(self):
         from lead import quota
         quota.record_cap(self.state, "pp", NOW - 7 * 3600, resets_at=NOW - 6 * 3600)  # past its 5 h expiry window

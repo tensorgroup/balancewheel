@@ -38,6 +38,21 @@ not against the prose.
   reads for its `last start:` line. `--dry-run` runs only git and `orca status` and writes
   nothing. Containment and guard passes are now recorded under an flock on `<store>.lock`, so
   concurrent re-verifies never drop one.
+- **`bw probe [plan...]`** (`bin/bw`, `lead/probes.py`): a new command. It reads quota now for
+  the named plans (all plans without one) and prints one line per plan: the arbitrated summary
+  with its source and age, plus any notice. One `orca account list` is shared by every
+  Orca-mapped plan; `quota: "probe"` plans are read by their probe in parallel, each written to
+  `state_dir/quota/<plan>.probe.json`, then expired caps are cleared. Probe `openrouter` reads
+  `GET https://openrouter.ai/api/v1/key` with the key from the plan's `key_env` (unset → unknown
+  `key env <NAME> unset`; non-200 → `HTTP <n>`; a redirect is refused, not followed; any other
+  failure is named by its exception type, never described), and with `budget_usd_month > 0`
+  gives a `budget` window: this UTC month's spend (`usage_monthly`) against the budget, reset on
+  the 1st. Without `usage_monthly` it falls back to `usage` less the month's first reading
+  (`state_dir/probes/openrouter-<plan>-<YYYY-MM>.json`), and only when that baseline was taken
+  by 00:00 UTC on the 1st; otherwise no budget window and the note `monthly spend unknown before
+  <time>`. A key credit limit is shown under `limits`, never a window. Probe `agy` is unknown
+  (`agy /usage: awaiting Task G`) and runs nothing. `bw start` (step 4) and `bw lead` (before its
+  first decision and at the session boundary, never in the poll loop) run the same refresh.
 - **Orca and cc-switch checks in `bw status`** (`bin/bw`, `lead/status.py`, `lead/orca.py`,
   `lead/sqlite_ro.py`): `bw status` adds `orca:` and `cc-switch:` lines. Orca's are whether
   it runs (`orca status --json`; installed but not running gets its own line) and its

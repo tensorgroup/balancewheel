@@ -7,7 +7,9 @@ One `bw start:` line per event. Steps:
   3. re-verify every lead runtime's keys on a pool, one worker per runtime: a runtime is
      submitted when its tool's update finishes, or at once when no tool updates it (all of
      them with --no-update); the pool is joined before the workspace opens;
-  4. quota per plan the profile touches, then the lead decision at the "start" moment;
+  4. refresh quota for every plan the profile touches (`lead.probes`: OpenRouter's key, one Orca
+     read; agy awaits its shape), one line per plan with its source and age, then the lead
+     decision at the "start" moment;
   6. open the worktree: an Orca pane when Orca runs, else a Terminal tab through a `.command`
      file in the state dir; neither → print the command and exit 1. A worktree whose lock is
      held already has a lead and is not opened again;
@@ -22,7 +24,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import ccswitch, checks, orca, proc, quota, runner, updates, verify as verifymod
+from . import ccswitch, checks, orca, probes, proc, quota, runner, updates, verify as verifymod
 from .status import orca_checks
 from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
@@ -109,7 +111,7 @@ def _item_line(item):
 
 
 def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=False, verify=True, update=True,
-          bw_path=None, env=os.environ) -> int:
+          bw_path=None, env=os.environ, fetch=probes._fetch) -> int:
     now = time.time() if now is None else now
     print_lock = threading.Lock()
 
@@ -181,10 +183,14 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
                 submit(rt, True)
     verify_items = [i for rt in runtimes for i in items_by_rt.get(rt, [])]
 
-    # 4. quota and the lead
-    _quota_and_lead(config, state, project, profile, plans, now, say, clear_caps=True)
+    # 4. quota (probes, one Orca read; expired caps cleared) and the lead
     orca_entry = results.get("orca")
     orca_version = (orca_entry.get("after") if isinstance(orca_entry, dict) else None) or orca.app_version()
+    refreshed = probes.refresh(config, state, now, plans=plans, run=run, fetch=fetch, env=env,
+                               orca_version=orca_version)
+    for line in refreshed["notes"]:
+        say(line)
+    _quota_and_lead(config, state, project, profile, plans, now, say)
     write_json_atomic(os.path.join(state, "start.json"),
                       {"ts": now, "project": project.worktree, "tools": results,
                        "verify": [i._asdict() for i in verify_items], "orca_version": orca_version})
@@ -201,13 +207,12 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     return code
 
 
-def _quota_and_lead(config, state, project, profile, plans, now, say, clear_caps=False):
+def _quota_and_lead(config, state, project, profile, plans, now, say):
     snaps = quota.read_quota(state, config, now)
-    for p in plans:
-        say(f"quota {p}: {quota.summary(snaps.get(p))}")
     rot = config.get("rotation") or {}
-    if clear_caps:  # never on a dry run, which writes nothing
-        quota.clear_expired_caps(state, snaps, now, rot.get("cap_expiry_hours", 5))
+    for p in plans:
+        n = quota.notice(snaps.get(p), config["plans"].get(p) or {}, now, rot.get("probe_every_min", 15))
+        say(f"quota {p}: {quota.summary(snaps.get(p))}" + (f" — {n}" if n else ""))
     caps = quota.read_caps(state, now, rot.get("cap_expiry_hours", 5), include_expired=True)
     pinned = runner.read_pin(state, project.worktree_key)
     d = decide(profile, config["leads"], rot, None, pinned, snaps, caps, now, "start")

@@ -1,0 +1,3 @@
+{"data": {"label": "sk-or-v1-abc...xyz", "usage": 42.5, "usage_daily": 0.5, "usage_weekly": 2.0, "usage_monthly": 5.0,
+          "limit": 100.0, "limit_remaining": 57.5, "limit_reset": null, "is_free_tier": false,
+          "rate_limit": {"requests": 20, "interval": "10s"}}}
