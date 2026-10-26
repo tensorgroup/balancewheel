@@ -2,7 +2,8 @@
 
 stdout and stderr go to temp files, not pipes, so a grandchild that keeps a pipe open
 after the child exits (or after the kill) cannot hang the read. The child leads its own
-session, so a timeout kills its whole process group. Never a shell.
+session, so a timeout, or any exception while waiting (Ctrl-C included), kills its whole
+process group. Never a shell.
 """
 import os
 import signal
@@ -29,10 +30,19 @@ def run(argv, timeout, cwd=None, env=None, stdin=subprocess.DEVNULL):
             rc = p.wait(timeout)
             timed_out = False
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                p.kill()
-            p.wait()
+            _kill_group(p)
             rc, timed_out = 124, True
+        except BaseException:
+            # Interrupted while waiting (Ctrl-C in bw, a signal): the child leads its own session,
+            # so nothing else would stop it — kill its group before the error surfaces.
+            _kill_group(p)
+            raise
         return Result(rc, _slurp(out), _slurp(err), timed_out)
+
+
+def _kill_group(p):
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        p.kill()
+    p.wait()

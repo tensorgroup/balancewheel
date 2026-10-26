@@ -1,8 +1,10 @@
 import os
 import signal
+import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from lead import proc
 
@@ -63,6 +65,36 @@ class ProcRunTest(unittest.TestCase):
             if alive(pid):
                 os.kill(pid, signal.SIGKILL)
             self.assertFalse(alive(pid), "grandchild survived the timeout")
+
+    def test_interrupt_while_waiting_kills_the_group_and_propagates(self):
+        real_wait = subprocess.Popen.wait
+        seen = {}
+
+        def wait(self, timeout=None):
+            if "pgid" not in seen:
+                seen["pgid"] = self.pid
+                time.sleep(0.3)  # the backgrounded sleep exists by now
+                raise KeyboardInterrupt
+            return real_wait(self, timeout)
+
+        with mock.patch.object(subprocess.Popen, "wait", wait):
+            with self.assertRaises(KeyboardInterrupt):
+                proc.run(["sh", "-c", "sleep 30 & wait"], 60)
+        pgid = seen["pgid"]
+
+        def group_gone():
+            try:
+                os.killpg(pgid, 0)
+            except ProcessLookupError:
+                return True
+            return False
+        end = time.time() + 2
+        while not group_gone() and time.time() < end:
+            time.sleep(0.05)
+        gone = group_gone()
+        if not gone:
+            os.killpg(pgid, signal.SIGKILL)
+        self.assertTrue(gone, "the child's process group outlived the interrupt")
 
     def test_cwd_env_and_stdin(self):
         with tempfile.TemporaryDirectory() as d:
