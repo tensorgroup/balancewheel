@@ -503,7 +503,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         ctx.say(f"bw: {d.lead} cannot start: {why}")
         lock.write({})
         return GUARD_UNAVAILABLE
-    session, handoff, warned = None, None, False
+    session, handoff, warned, orca_failed = None, None, False, False
     current = d.lead
     while True:
         try:
@@ -531,8 +531,14 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                     quotamod.record_cap(state, session.lead["plan"], time.time(),
                                         expiry_hours=rot["cap_expiry_hours"], source="lead-hook")
                 # Orca's local cache, re-read for display and freshness only (no network, no cap):
-                # the running decision below acts on caps alone.
-                shape_note = orcamod.refresh(state, config, time.time(), run=run)
+                # the running decision below acts on caps alone. A failing read never stops the lead.
+                try:
+                    shape_note = orcamod.refresh(state, config, time.time(), run=run)
+                except Exception as e:
+                    shape_note = None
+                    if not orca_failed:
+                        ctx.say(f"bw: orca re-read failed ({type(e).__name__}); the lead keeps running")
+                        orca_failed = True
                 if shape_note:
                     ctx.say(f"bw: {shape_note}")
                 q, caps = now_state()

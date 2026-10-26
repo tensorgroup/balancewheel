@@ -377,12 +377,27 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual(s["pools"], [{"name": "bucket:model-b", "used_pct": 10.0, "resets_at": 1793250000.0,
                                        "applies_to": ["agy-b"]}])
 
-    def test_malformed_mapped_pool_is_unknown_naming_it(self):
+    def test_malformed_mapped_pool_is_dropped_with_a_note_and_windows_survive(self):
         p = payload()
         p["result"]["rateLimits"]["claude"]["fableWeekly"]["resetsAt"] = "soon"
         s = snap(p, "claude", windows={"fableWeekly": ["fable-lead"]})
-        self.assertTrue(s["unknown"])
-        self.assertIn("rateLimits.claude.fableWeekly.resetsAt", s["reason"])
+        self.assertNotIn("unknown", s)
+        self.assertEqual([w["name"] for w in s["windows"]], ["session", "weekly"])
+        self.assertEqual(s["pools"], [])
+        self.assertEqual(len(s["notes"]), 1)
+        self.assertTrue(s["notes"][0].startswith("pool fableWeekly malformed: "), s["notes"])
+        self.assertIn("rateLimits.claude.fableWeekly.resetsAt", s["notes"][0])
+
+    def test_out_of_range_mapped_pool_is_dropped_with_a_note(self):
+        p = payload()
+        p["result"]["rateLimits"]["claude"]["fableWeekly"]["usedPercent"] = 250
+        s = snap(p, "claude", windows={"fableWeekly": ["fable-lead"]})
+        self.assertNotIn("unknown", s)
+        self.assertEqual(s["pools"], [])
+        self.assertIn("pool fableWeekly malformed: ", s["notes"][0])
+
+    def test_no_notes_key_when_every_pool_is_fine(self):
+        self.assertNotIn("notes", snap(payload(), "claude", windows={"fableWeekly": ["fable-lead"]}))
 
     def test_shape_changed_codex_unknown_kimi_ok(self):
         p = payload("account_list_shape_changed.json")
@@ -483,6 +498,25 @@ class CheckVersionTest(unittest.TestCase):
         self.assertEqual(msg, "Orca 1.0.0 → 1.1.0: shape re-checked: codex failed "
                               "(rateLimits.codex.weekly.resetsAt: expected int, got str), kimi ok")
         self.assertIsNone(orca.check_version(self.state, "1.1.0", results))
+
+    def test_record_written_only_when_version_or_shape_changes(self):
+        from unittest import mock
+        writes = []
+        real = orca.write_json_atomic
+
+        def counting(path, obj):
+            writes.append(obj)
+            return real(path, obj)
+        with mock.patch.object(orca, "write_json_atomic", counting):
+            orca.check_version(self.state, "1.0.0", {"codex": (True, "")})
+            orca.check_version(self.state, "1.0.0", {"codex": (True, "")})
+            self.assertEqual(len(writes), 1)
+            orca.check_version(self.state, "1.0.0", {"codex": (False, "rateLimits.codex: missing")})
+            self.assertEqual(len(writes), 2)
+            orca.check_version(self.state, "1.0.0", {"codex": (False, "rateLimits.codex: missing")})
+            self.assertEqual(len(writes), 2)
+            orca.check_version(self.state, "1.0.1", {"codex": (False, "rateLimits.codex: missing")})
+            self.assertEqual(len(writes), 3)
 
     def test_unreadable_version_not_recorded(self):
         orca.check_version(self.state, "1.0.0", {"codex": (True, "")})

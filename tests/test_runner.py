@@ -615,19 +615,35 @@ class OrcaReRead(RunnerCase):
         self.assertTrue(wait_for(lambda: self.fake("a")))
         snap_path = self.state / "quota" / "chatgpt.orca.json"
         self.assertTrue(wait_for(lambda: snap_path.exists()))
-        time.sleep(0.5)  # several more polls with the plan at 100 %
+        self.assertTrue(wait_for(lambda: len(self.orca_calls()) >= 4))  # several more polls with the plan at 100 %
         snap = json.loads(snap_path.read_text())
         self.assertEqual(snap["windows"][0]["used_pct"], 100.0)
         self.assertEqual(snap["source_version"], "9.9.9-test")
         self.assertIsNone(p.poll(), "the runner exited")
         self.assertIsNone(self.fake("b"), "a reading switched the lead")
         self.assertFalse((self.state / "caps").exists() and list((self.state / "caps").glob("*.json")))
-        calls = (self.out / "orca-calls.jsonl").read_text().splitlines()
+        calls = self.orca_calls()
         self.assertGreaterEqual(len(calls), 2)
-        self.assertEqual({tuple(json.loads(c)["argv"]) for c in calls}, {("orca", "account", "list", "--json")})
+        self.assertEqual({tuple(c["argv"]) for c in calls}, {("orca", "account", "list", "--json")})
         os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
         self.assertEqual(p.wait(10), 0)
         self.assertEqual(self.events("leads"), [])
+
+    def orca_calls(self):
+        f = self.out / "orca-calls.jsonl"
+        return [json.loads(c) for c in f.read_text().splitlines()] if f.exists() else []
+
+    def test_an_orca_read_that_raises_is_one_notice_and_the_lead_keeps_running(self):
+        p = self.start("--orca-raise", env={"FAKE_MODE_a": "sleep", "BW_PROBE_SECONDS": "0"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        self.assertTrue(wait_for(lambda: len(self.orca_calls()) >= 4))
+        self.assertIsNone(p.poll(), "the runner exited")
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        self.assertEqual(p.wait(10), 0)
+        out = p.stdout.read()
+        self.assertEqual(out.count("orca re-read failed"), 1, out)
+        self.assertIn("bw: orca re-read failed (OSError)", out)
+        self.assertNotIn("injected failure", out)
 
 
 class HolderLine(unittest.TestCase):

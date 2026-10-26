@@ -320,19 +320,22 @@ def snapshot(payload, plan_cfg, now, probe_every_min, version):
             windows.append(w)
     if not windows:
         return unknown("no account-wide window")
-    pools = []
+    pools, notes = [], []
     for wid, names in sorted((plan_cfg.get("orca_windows") or {}).items()):
         src, where = _pool_source(entry, wid)
         if src is None:
             continue
+        # A malformed pool is dropped with a note; the plan's account-wide windows still stand.
         bad = _window_shape(src, f"{path}.{where}")
-        if bad:
-            return unknown(f"Orca {version} changed shape: {bad}")
-        w, why = _window(src, wid, f"{path}.{where}", now)
+        w, why = (None, bad) if bad else _window(src, wid, f"{path}.{where}", now)
         if why:
-            return unknown(why)
+            notes.append(f"pool {_printable(wid, 80)} malformed: {why}")
+            continue
         pools.append(dict(w, applies_to=list(names)))
-    return dict(base, windows=windows, pools=pools, observed_at=observed)
+    snap = dict(base, windows=windows, pools=pools, observed_at=observed)
+    if notes:
+        snap["notes"] = notes
+    return snap
 
 
 def _shape_file(state):
@@ -347,8 +350,10 @@ def check_version(state, version, shape_results):
     path = _shape_file(state)
     prev = read_json(path)
     old = prev.get("version") if isinstance(prev, dict) else None
-    write_json_atomic(path, {"version": version,
-                             "shape": {p: {"ok": ok, "reason": why} for p, (ok, why) in sorted(shape_results.items())}})
+    record = {"version": version,
+              "shape": {p: {"ok": ok, "reason": why} for p, (ok, why) in sorted(shape_results.items())}}
+    if record != prev:  # rewritten only when the version or a shape result changed
+        write_json_atomic(path, record)
     if not isinstance(old, str) or old == version:
         return None
     parts = [f"{p} ok" if ok else f"{p} failed ({why})" for p, (ok, why) in sorted(shape_results.items())]

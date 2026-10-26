@@ -2,7 +2,7 @@
 
 argv: run_runner.py <config.json> <worktree> [--use LEAD] [--auto] [--contained-by-bw RUNTIME]
                     [--guard RUNTIME [--no-hook] [--no-spike]] [--fail-after-launch] [--no-client] [--fail-in-poll]
-                    [--verified] [--fail-in-caps] [--probe-lock-in-verify] [--orca-payload FILE]
+                    [--verified] [--fail-in-caps] [--probe-lock-in-verify] [--orca-payload FILE] [--orca-raise]
 Every runtime maps to tests/fixtures/fake_lead.py; --contained-by-bw marks one as bw-contained
 (without a containment record), to test the refusal path. --guard RUNTIME makes every lead of that
 runtime guarded (autonomy "guard", source "config"), points BW_AGY_HOOKS at a temp hooks file with
@@ -16,6 +16,7 @@ grant, so the fake can leave its evidence); each per-session scratch dir is prin
 process, append {"runtime", "exclusive"} to FAKE_OUT/verify-lock.jsonl, and count the lead as verified.
 --orca-payload FILE answers every `orca ...` shell-out with FILE's content (each argv appended to
 FAKE_OUT/orca-calls.jsonl) and reports Orca's version as 9.9.9-test; without it any `orca` call fails.
+--orca-raise makes every `orca ...` shell-out (still appended to orca-calls.jsonl) raise OSError.
 """
 import atexit, os, shutil, sys, tempfile
 from pathlib import Path
@@ -116,16 +117,19 @@ from lead.proc import Result, run as real_run  # noqa: E402
 
 orca.app_version = lambda *a, **k: "9.9.9-test"  # never the real app bundle
 orca_payload = args[args.index("--orca-payload") + 1] if "--orca-payload" in args else None
+orca_raise = "--orca-raise" in args
 
 
 def fake_run(argv, timeout, **kw):
     if argv[:1] != ["orca"]:
         return real_run(argv, timeout, **kw)
-    if orca_payload is None:
+    if orca_payload is None and not orca_raise:
         return Result(127, "", "orca: not found", False)
     import json
     with open(os.path.join(os.environ["FAKE_OUT"], "orca-calls.jsonl"), "a") as f:
         f.write(json.dumps({"argv": argv, "timeout": timeout}) + "\n")
+    if orca_raise:
+        raise OSError("injected failure reading Orca")
     with open(orca_payload) as f:
         return Result(0, f.read(), "", False)
 
