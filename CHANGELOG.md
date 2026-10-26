@@ -15,6 +15,15 @@ not against the prose.
 
 ### Added
 
+- **Plan keys for Orca and probes** (`metrics/config.py`, `balancewheel.example.json`): config
+  only, no schema bump. `quota` gains `"orca"` (read the plan's usage from Orca; requires
+  `orca_provider`). Plans gain `orca_provider` (an Orca provider name, refused with `quota:
+  "none"`), `orca_windows` (window id `fableWeekly` or `bucket:<name>` mapped to lead or seat
+  names, checked once both have loaded), `probe` (`agy` or `openrouter`; derived from `vendor`
+  `google`/`openrouter` when `quota` is `"probe"`, else `null`), and `key_env` (default
+  `OPENROUTER_API_KEY`, only with probe `openrouter`). They are optional additions to an
+  existing object, so schema 2 and 3 files read them and files without them resolve as before.
+  A probe plan with no derivable probe still loads and is reported `unknown` later.
 - **`bw start [path] [--dry-run] [--no-update] [--no-verify]`** (`bin/bw`, `lead/start.py`): a
   new command. It resolves the project and refuses (exit 2) when bw itself lies inside the
   target worktree or its common git dir; updates every configured tool in parallel; re-verifies

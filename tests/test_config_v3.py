@@ -171,5 +171,82 @@ class SchemaV3(unittest.TestCase):
         self.assertEqual(c["leads"]["astra"]["autonomy_source"], "default")
 
 
+class PlanOrcaAndProbeKeys(unittest.TestCase):
+    def rejects(self, obj, *needles):
+        with self.assertRaises(cfg.ConfigError) as e:
+            load_obj(obj)
+        for n in needles:
+            self.assertIn(n, str(e.exception))
+
+    def plan(self, **kw):
+        o = v3()
+        o["plans"]["plan-b"].update(kw)
+        return o
+
+    def test_defaults(self):
+        p = cfg.load_config(str(V3))["plans"]["plan-a"]
+        self.assertEqual((p["orca_provider"], p["orca_windows"], p["probe"], p["key_env"]),
+                         (None, {}, None, "OPENROUTER_API_KEY"))
+
+    def test_orca_quota_requires_provider(self):
+        self.rejects(self.plan(quota="orca"), "plans.plan-b.orca_provider")
+        c = load_obj(self.plan(quota="orca", orca_provider="codex"))
+        self.assertEqual(c["plans"]["plan-b"]["orca_provider"], "codex")
+        self.assertEqual(c["plans"]["plan-b"]["quota"], "orca")
+
+    def test_orca_provider_shape_and_none(self):
+        for bad in ("", "1x", "a-b", "a b", 3):
+            self.rejects(self.plan(orca_provider=bad), "plans.plan-b.orca_provider")
+        self.assertEqual(load_obj(self.plan(orca_provider="opencodeGo"))["plans"]["plan-b"]["orca_provider"], "opencodeGo")
+        self.rejects(self.plan(quota="none", orca_provider="codex"), "plans.plan-b.orca_provider")
+
+    def test_orca_windows(self):
+        o = self.plan(orca_provider="claude", orca_windows={"fableWeekly": ["alpha"], "bucket:Opus 5.5": ["lead-cc", "beta"]})
+        w = load_obj(o)["plans"]["plan-b"]["orca_windows"]
+        self.assertEqual(w, {"fableWeekly": ["alpha"], "bucket:Opus 5.5": ["lead-cc", "beta"]})
+        self.rejects(self.plan(orca_windows={"fableWeekly": ["alpha"]}), "plans.plan-b.orca_windows")
+        for bad in ("weekly", "bucket:", "bucket:a/b"):
+            self.rejects(self.plan(orca_provider="claude", orca_windows={bad: ["alpha"]}), "plans.plan-b.orca_windows")
+        self.rejects(self.plan(orca_provider="claude", orca_windows={"fableWeekly": ["nobody"]}),
+                     "plans.plan-b.orca_windows.fableWeekly", "nobody")
+        self.rejects(self.plan(orca_provider="claude", orca_windows={"fableWeekly": "alpha"}), "plans.plan-b.orca_windows.fableWeekly")
+        self.rejects(self.plan(orca_provider="claude", orca_windows=[]), "plans.plan-b.orca_windows")
+
+    def test_probe_explicit_derived_and_unknown(self):
+        self.assertEqual(load_obj(self.plan(vendor="google"))["plans"]["plan-b"]["probe"], "agy")
+        self.assertEqual(load_obj(self.plan(vendor="openrouter"))["plans"]["plan-b"]["probe"], "openrouter")
+        self.assertEqual(load_obj(self.plan(vendor="other", probe="agy"))["plans"]["plan-b"]["probe"], "agy")
+        self.assertIsNone(load_obj(self.plan(vendor="other"))["plans"]["plan-b"]["probe"])  # still loads
+        self.assertIsNone(load_obj(self.plan(vendor="google", quota="statusline"))["plans"]["plan-b"]["probe"])
+        self.rejects(self.plan(probe="nope"), "plans.plan-b.probe")
+
+    def test_key_env(self):
+        p = self.plan(vendor="other", probe="openrouter", key_env="MY_KEY_2")
+        self.assertEqual(load_obj(p)["plans"]["plan-b"]["key_env"], "MY_KEY_2")
+        for bad in ("my_key", "1KEY", "A-B", ""):
+            self.rejects(self.plan(probe="openrouter", key_env=bad), "plans.plan-b.key_env")
+        self.rejects(self.plan(vendor="google", key_env="MY_KEY"), "plans.plan-b.key_env")
+
+    def test_example_has_orca_plans_without_warnings(self):
+        c = cfg.load_config(str(HERE.parent / "balancewheel.example.json"))
+        self.assertEqual(c["warnings"], [])
+        pl = c["plans"]
+        self.assertEqual((pl["chatgpt-plan"]["quota"], pl["chatgpt-plan"]["orca_provider"]), ("orca", "codex"))
+        self.assertEqual((pl["kimi-plan"]["quota"], pl["kimi-plan"]["orca_provider"]), ("orca", "kimi"))
+        self.assertEqual((pl["claude-plan"]["quota"], pl["claude-plan"]["orca_provider"]), ("statusline", "claude"))
+        self.assertEqual(pl["claude-plan"]["orca_windows"], {"fableWeekly": ["fable"]})
+        self.assertEqual((pl["google-plan"]["quota"], pl["google-plan"]["orca_provider"], pl["google-plan"]["probe"]),
+                         ("probe", "antigravity", "agy"))
+        self.assertEqual(pl["openrouter"]["probe"], "openrouter")
+
+    def test_schema_2_accepts_the_same_plan_keys(self):
+        o = v2()
+        o["plans"]["plan-b"].update(quota="orca", orca_provider="codex", orca_windows={"fableWeekly": ["alpha"]})
+        o["plans"]["metered"].update(probe="openrouter", key_env="OR_KEY")
+        c = load_obj(o)
+        self.assertEqual(c["plans"]["plan-b"]["orca_windows"], {"fableWeekly": ["alpha"]})
+        self.assertEqual(c["plans"]["metered"]["key_env"], "OR_KEY")
+
+
 if __name__ == "__main__":
     unittest.main()

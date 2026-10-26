@@ -51,7 +51,13 @@ V2_TOP_KEYS = {"plans", "tools", "leads", "profiles", "projects", "default_profi
 SEAT_KEYS = {"runtime", "model", "effort", "roles", "args", "provider", "policy", "enabled"}
 V2_SEAT_KEYS = {"plan", "fallback"}
 BILLING = {"plan", "metered"}
-QUOTA_SOURCES = {"statusline", "probe", "none"}
+QUOTA_SOURCES = {"statusline", "probe", "orca", "none"}
+PROBES = {"agy", "openrouter"}
+PROBE_FOR_VENDOR = {"google": "agy", "openrouter": "openrouter"}
+ORCA_PROVIDER = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
+ORCA_WINDOW = re.compile(r"^(fableWeekly|bucket:[A-Za-z0-9 ._-]+)$")
+ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+DEFAULT_KEY_ENV = "OPENROUTER_API_KEY"
 DEPTHS = {"standard", "deep", "deep-on-stakes"}
 ROUTER_MODES = {"off", "shadow", "acting"}
 ROTATION_DEFAULTS = {"return_above_pct": 50, "cap_expiry_hours": 5, "probe_every_min": 15}
@@ -130,7 +136,8 @@ def _validate_plans(obj):
         kp = f"plans.{name}"
         _name_ok(kp, name)
         _expect(isinstance(p, dict), f"{kp}: must be an object")
-        bad = sorted(set(p) - {"vendor", "billing", "quota", "budget_usd_month"})
+        bad = sorted(set(p) - {"vendor", "billing", "quota", "budget_usd_month", "orca_provider", "orca_windows",
+                          "probe", "key_env"})
         if bad:
             raise ConfigError(f"{kp}.{bad[0]}: unknown key")
         _expect(p.get("billing") in BILLING, f"{kp}.billing: must be one of {sorted(BILLING)}")
@@ -141,8 +148,34 @@ def _validate_plans(obj):
             b = p["budget_usd_month"]
             _expect(isinstance(b, (int, float)) and not isinstance(b, bool) and b >= 0,
                     f"{kp}.budget_usd_month: must be a non-negative number")
+        provider = p.get("orca_provider")
+        if "orca_provider" in p:
+            _expect(isinstance(provider, str) and ORCA_PROVIDER.match(provider),
+                    f"{kp}.orca_provider: must match [A-Za-z][A-Za-z0-9]*")
+            _expect(quota != "none", f"{kp}.orca_provider: not allowed with quota \"none\"")
+        _expect(quota != "orca" or provider, f"{kp}.orca_provider: required when quota is \"orca\"")
+        windows = p.get("orca_windows", {})
+        if "orca_windows" in p:
+            _expect(isinstance(windows, dict), f"{kp}.orca_windows: must be an object")
+            _expect(not windows or provider, f"{kp}.orca_windows: requires orca_provider")
+            for wid, names in windows.items():
+                _expect(isinstance(wid, str) and ORCA_WINDOW.match(wid),
+                        f"{kp}.orca_windows.{wid}: id must be fableWeekly or bucket:<name>")
+                _expect(isinstance(names, list) and all(isinstance(n, str) for n in names),
+                        f"{kp}.orca_windows.{wid}: must be a list of lead or seat names")
+        probe = p.get("probe")
+        if "probe" in p:
+            _expect(probe in PROBES, f"{kp}.probe: must be one of {sorted(PROBES)}")
+        elif quota == "probe":
+            probe = PROBE_FOR_VENDOR.get(p.get("vendor", ""))  # None: reported unknown at probe time
+        if "key_env" in p:
+            _expect(isinstance(p["key_env"], str) and ENV_NAME.match(p["key_env"]),
+                    f"{kp}.key_env: must match [A-Z_][A-Z0-9_]*")
+            _expect(probe == "openrouter", f"{kp}.key_env: only with probe \"openrouter\"")
         out[name] = {"vendor": p.get("vendor", ""), "billing": p["billing"], "quota": quota,
-                     "budget_usd_month": p.get("budget_usd_month")}
+                     "budget_usd_month": p.get("budget_usd_month"), "orca_provider": provider,
+                     "orca_windows": {k: list(v) for k, v in windows.items()}, "probe": probe,
+                     "key_env": p.get("key_env", DEFAULT_KEY_ENV)}
     return out
 
 
@@ -348,6 +381,11 @@ def load_config(path=None):
     warnings = []
     tools = _validate_tools(obj, warnings)
     leads = _validate_leads(obj, plans, version)
+    for pname, plan in plans.items():
+        for wid, names in plan["orca_windows"].items():
+            for n in names:
+                _expect(n in leads or n in seats,
+                        f"plans.{pname}.orca_windows.{wid}: {n!r} is neither a lead nor a seat")
     profiles = _validate_profiles(obj, leads, seats, version)
     if not profiles:
         profiles = {"default": {"lead_order": [], "checkpoints": {}, "depth": "standard", "router": "off",

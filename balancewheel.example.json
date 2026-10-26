@@ -5,22 +5,31 @@
     "claude-plan": {
       "vendor": "anthropic",
       "billing": "plan",
-      "quota": "statusline"
+      "quota": "statusline",
+      "orca_provider": "claude",
+      "orca_windows": {
+        "fableWeekly": [
+          "fable"
+        ]
+      }
     },
     "chatgpt-plan": {
       "vendor": "openai",
       "billing": "plan",
-      "quota": "probe"
+      "quota": "orca",
+      "orca_provider": "codex"
     },
     "google-plan": {
       "vendor": "google",
       "billing": "plan",
-      "quota": "probe"
+      "quota": "probe",
+      "orca_provider": "antigravity"
     },
     "kimi-plan": {
       "vendor": "moonshot",
       "billing": "plan",
-      "quota": "probe"
+      "quota": "orca",
+      "orca_provider": "kimi"
     },
     "openrouter": {
       "vendor": "openrouter",
