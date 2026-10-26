@@ -21,6 +21,18 @@ Plan 4 shipped as three phases on `main`, each reviewed task by task.
   cc-switch's usage rows are read by sealed copy. Why: Orca covers live canvas and quota bars,
   so what remains for bw is explaining decisions, scoring models, and showing cost.
 - Docs, spec amendments A1-A14, and the CHANGELOG were updated as each phase landed.
+- **Final whole-branch review fix wave (same day).** The final reviewer and a code panel treated
+  a contained lead as the attacker and found writes and reads bw made on the lead's behalf. Kimi's
+  first prompt now goes to `state_dir/prompts/<worktree-key>/first-prompt.md`, never into the
+  lead-writable checkpoint dir (a planted link there aimed bw's write at any file). The answers
+  view moved to `inbox-view/<worktree-key>/answers.md`, and each lead may read only its own
+  view dir: both backends deny the rest of `inbox-view/` and `inbox.jsonl`. The lock fd a lead
+  inherits is read-only, and every reader validates and escapes lock metadata. The containment
+  and guard keys now include the denied ports, so changing `cockpit.port` requires a new
+  verification, and the attack probes the ports it is given. Without `usage_monthly`, OpenRouter
+  month spend carries the previous month's last reading forward as the baseline (overstated,
+  never under); the earlier ruling left it unknown all month, because a baseline taken after
+  the 1st could never qualify. The CHANGELOG's two "Final review of plan 4" entries list the rest.
 
 ## Issues that cost time
 
@@ -60,7 +72,9 @@ Plan 4 shipped as three phases on `main`, each reviewed task by task.
 ## Open items
 
 - **Re-verification runs** after the sandbox and guard changes, which spend a little quota:
-  `bw sandbox verify pi`, `bw sandbox verify kimi`, and `bw guard verify pi`. The review left two
+  `bw sandbox verify pi`, `bw sandbox verify kimi`, and `bw guard verify pi`. The final fix
+  wave changed `lead/sandbox.py` and added the denied ports to every key, so every earlier pass
+  is void; run these once, after the fix wave. The review left two
   live questions for the last: whether the pi extension control loads, and whether 900 s is
   enough for the guard attack.
 - **Task G** once the Google plan's quota allows a live agy run.
@@ -71,8 +85,7 @@ Plan 4 shipped as three phases on `main`, each reviewed task by task.
   warns about until done.
 - **Deferred minors** from the build ledger worth a follow-up: `proc.run` maps a missing cwd to
   "not found"; a failed or timed-out update still starts the `min_interval_hours` window; the
-  `tools.<t>.app` path is not `~`-expanded; `INBOX_LIMIT` counts characters, not bytes; the
-  `build_handoff` argv size should be checked end to end against `read_checkpoint`'s cap;
+  `tools.<t>.app` path is not `~`-expanded; `INBOX_LIMIT` counts characters, not bytes;
   a few test classes sit after the `__main__` guard; `_guarded` and `_num` are duplicated across
   modules; `bw status` does not render the Orca cross-check; the Graph view builds the registry
   per request (version probes make it slower than the other tabs).
