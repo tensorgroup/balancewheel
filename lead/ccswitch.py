@@ -5,9 +5,12 @@ it route, fail over, sync, or update on its own stays off. `write_settings` pre-
 contract before cc-switch's first launch and never overwrites a file that differs;
 `check_settings` reports drift.
 """
+import datetime
+import decimal
 import json
 import os
 
+from lead import sqlite_ro
 from lead.checks import Check
 
 REQUIRED_SETTINGS = {
@@ -78,3 +81,143 @@ def check_settings(d=None):
         return [Check("cc-switch settings", "unknown", f"settings.json {why}")]
     warns = [Check(k, "warn", f"{k} is {json.dumps(c)}, should be {json.dumps(r)}") for k, c, r in _differences(cur)]
     return warns or [Check("cc-switch settings", "ok", "")]
+
+
+# --- usage (read by sealed copy; bw never writes cc-switch's files) ---
+
+LOG_COLUMNS = ("data_source", "app_type", "model", "input_tokens", "output_tokens",
+               "cache_read_tokens", "cache_creation_tokens", "total_cost_usd", "created_at", "status_code")
+ROLLUP_COLUMNS = ("date", "app_type", "model", "request_count", "success_count", "input_tokens",
+                  "output_tokens", "cache_read_tokens", "cache_creation_tokens", "total_cost_usd")
+PRICING_COLUMNS = ("model_id", "input_cost_per_million", "output_cost_per_million")
+
+DATA_SOURCE_TOOL = {"session_log": "claude", "codex_session": "codex", "gemini_session": "gemini",
+                    "pi_session": "pi", "kimi_session": "kimi", "agy_session": "agy"}
+
+
+def _db(d):
+    return os.path.join(d or data_dir(), "cc-switch.db")
+
+
+class _Schema(Exception):
+    pass
+
+
+def _require(conn, table, columns):
+    have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if not have:
+        raise _Schema(f"table {table} missing")
+    missing = [c for c in columns if c not in have]
+    if missing:
+        raise _Schema(f"{table}.{missing[0]} missing")
+
+
+def _cost(text):
+    """Decimal of a TEXT cost, None when it is not a finite number."""
+    try:
+        v = decimal.Decimal(str(text).strip())
+    except (decimal.InvalidOperation, ValueError):
+        return None
+    return v if v.is_finite() else None
+
+
+def _int(v):
+    return v if isinstance(v, int) else 0
+
+
+class _Group:
+    def __init__(self, day, tool, model, origin, unmapped):
+        self.row = {"day": day, "tool": tool, "model": model, "requests": 0, "errors": 0,
+                    "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0,
+                    "origin": origin, "unmapped": unmapped}
+        self.cost = decimal.Decimal(0)
+
+    def add(self, requests, errors, tin, tout, cr, cw, cost):
+        r = self.row
+        r["requests"] += requests
+        r["errors"] += errors
+        r["tokens_in"] += _int(tin)
+        r["tokens_out"] += _int(tout)
+        r["cache_read"] += _int(cr)
+        r["cache_write"] += _int(cw)
+        c = _cost(cost)
+        self.cost = None if (c is None or self.cost is None) else self.cost + c
+
+    def done(self):
+        self.row["cost_usd"] = None if self.cost is None else format(self.cost, "f")
+        return self.row
+
+
+def _local_day(epoch):
+    return datetime.datetime.fromtimestamp(epoch).strftime("%Y-%m-%d")
+
+
+def _read_usage(conn, since, until):
+    _require(conn, "proxy_request_logs", LOG_COLUMNS)
+    _require(conn, "usage_daily_rollups", ROLLUP_COLUMNS)
+    groups = {}
+    sql = f"SELECT {', '.join(LOG_COLUMNS)} FROM proxy_request_logs WHERE data_source != 'proxy' AND created_at >= ?"
+    args = [since]
+    if until is not None:
+        sql += " AND created_at < ?"
+        args.append(until)
+    for src, _app, model, tin, tout, cr, cw, cost, at, status in conn.execute(sql, args):
+        if not isinstance(at, (int, float)):
+            continue
+        tool = DATA_SOURCE_TOOL.get(src)
+        key = (_local_day(at), tool or src, model, "log")
+        g = groups.setdefault(key, _Group(key[0], key[1], model, "log", tool is None))
+        err = 1 if isinstance(status, int) and not 200 <= status <= 299 else 0
+        g.add(1, err, tin, tout, cr, cw, cost)
+    sql = f"SELECT {', '.join(ROLLUP_COLUMNS)} FROM usage_daily_rollups WHERE date >= ?"
+    args = [_local_day(since)]
+    if until is not None:
+        sql += " AND date <= ?"
+        args.append(_local_day(until))
+    for day, app, model, n, ok, tin, tout, cr, cw, cost in conn.execute(sql, args):
+        key = (day, app, model, "rollup")
+        g = groups.setdefault(key, _Group(day, app, model, "rollup", False))
+        g.add(_int(n), max(_int(n) - _int(ok), 0), tin, tout, cr, cw, cost)
+    return [g.done() for _k, g in sorted(groups.items())]
+
+
+def usage(state, since, until=None, d=None):
+    """Usage groups from cc-switch's database (`since`/`until` epoch seconds; `until` exclusive).
+
+    Session-log rows (every `data_source` but `proxy`) by local day, tool and model, plus the
+    daily rollups cc-switch keeps after it prunes the rows. Unknown on any schema change.
+    """
+    path = _db(d)
+    if not os.path.exists(path):
+        return {"available": False, "reason": f"cc-switch not installed ({path} absent)", "groups": []}
+
+    def fn(conn):
+        try:
+            return _read_usage(conn, since, until)
+        except _Schema as e:
+            return e
+
+    out, why = sqlite_ro.query(path, fn, state)
+    if why is not None:
+        return {"available": False, "reason": why, "groups": []}
+    if isinstance(out, _Schema):
+        return {"available": False, "reason": f"cc-switch schema changed ({out})", "groups": []}
+    return {"available": True, "reason": "", "groups": out}
+
+
+def prices(state, d=None):
+    """`model_pricing` as {model_id: {input, output}} per million (strings); {} when unavailable."""
+    path = _db(d)
+    if not os.path.exists(path):
+        return {}
+
+    def fn(conn):
+        try:
+            _require(conn, "model_pricing", PRICING_COLUMNS)
+        except _Schema:
+            return {}
+        return {m: {"input": str(i), "output": str(o)} for m, i, o in
+                conn.execute(f"SELECT {', '.join(PRICING_COLUMNS)} FROM model_pricing")}
+
+    out, why = sqlite_ro.query(path, fn, state)
+    return out if why is None and out else {}

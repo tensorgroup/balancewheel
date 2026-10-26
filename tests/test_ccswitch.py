@@ -1,5 +1,8 @@
+import datetime
+import hashlib
 import json
 import os
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -173,3 +176,198 @@ class SetupCommandTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SCHEMA = REPO / "tests" / "fixtures" / "ccswitch" / "schema.sql"
+
+
+def epoch(day, hour=12):
+    return int(datetime.datetime.strptime(f"{day} {hour}", "%Y-%m-%d %H").timestamp())
+
+
+def fingerprint(path):
+    return hashlib.sha256(slurp(path, "rb")).hexdigest(), os.stat(path).st_mtime_ns
+
+
+class UsageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = os.path.realpath(self.tmp.name)
+        self.state = os.path.join(root, "state")
+        self.d = os.path.join(root, "ccs")
+        os.makedirs(self.d)
+        self.db = os.path.join(self.d, "cc-switch.db")
+        self.writer = sqlite3.connect(self.db)
+        self.writer.execute("PRAGMA journal_mode = WAL")
+        self.writer.execute("PRAGMA wal_autocheckpoint = 0")
+        self.writer.executescript(slurp(SCHEMA))
+        self.writer.commit()
+        self.n = 0
+        self.since = epoch("2026-10-01", 0)
+
+    def tearDown(self):
+        self.writer.close()
+        self.tmp.cleanup()
+
+    def log(self, source="session_log", model="m1", day="2026-10-10", status=200, cost="0.01",
+            tin=10, tout=5, cr=2, cw=1, app="claude"):
+        self.n += 1
+        self.writer.execute(
+            "INSERT INTO proxy_request_logs (request_id, provider_id, app_type, model, input_tokens, "
+            "output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, status_code, "
+            "created_at, data_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (f"r{self.n}", "p", app, model, tin, tout, cr, cw, cost, status, epoch(day), source))
+        self.writer.commit()
+
+    def rollup(self, day="2026-10-05", app="claude", model="m1", n=4, ok=3, cost="1.5"):
+        self.writer.execute(
+            "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_count, "
+            "success_count, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, "
+            "total_cost_usd) VALUES (?,?,?,?,?,?,100,50,20,10,?)", (day, app, "p", model, n, ok, cost))
+        self.writer.commit()
+
+    def usage(self, **kw):
+        return ccswitch.usage(self.state, self.since, d=self.d, **kw)
+
+    def test_proxy_rows_excluded_and_sources_map_to_tools(self):
+        self.log(source="proxy", model="px")
+        for src, tool in [("session_log", "claude"), ("codex_session", "codex"), ("gemini_session", "gemini"),
+                          ("pi_session", "pi"), ("kimi_session", "kimi"), ("agy_session", "agy")]:
+            self.log(source=src, model=f"m-{tool}")
+        out = self.usage()
+        self.assertTrue(out["available"], out["reason"])
+        self.assertEqual({g["model"]: g["tool"] for g in out["groups"]},
+                         {"m-claude": "claude", "m-codex": "codex", "m-gemini": "gemini",
+                          "m-pi": "pi", "m-kimi": "kimi", "m-agy": "agy"})
+        self.assertFalse(any(g["unmapped"] for g in out["groups"]))
+
+    def test_unknown_source_is_its_own_tool_and_unmapped(self):
+        self.log(source="foo_session")
+        (g,) = self.usage()["groups"]
+        self.assertEqual((g["tool"], g["unmapped"], g["origin"]), ("foo_session", True, "log"))
+
+    def test_group_sums_tokens_requests_and_errors(self):
+        self.log(status=200)
+        self.log(status=500)
+        self.log(status=None)
+        self.log(status=429)
+        (g,) = self.usage()["groups"]
+        self.assertEqual((g["requests"], g["errors"]), (4, 2))
+        self.assertEqual((g["tokens_in"], g["tokens_out"], g["cache_read"], g["cache_write"]), (40, 20, 8, 4))
+        self.assertEqual(g["day"], "2026-10-10")
+
+    def test_null_status_is_not_an_error(self):
+        self.log(status=None)
+        self.assertEqual(self.usage()["groups"][0]["errors"], 0)
+
+    def test_days_split_in_local_time(self):
+        self.log(day="2026-10-10")
+        self.log(day="2026-10-11")
+        self.assertEqual([g["day"] for g in self.usage()["groups"]], ["2026-10-10", "2026-10-11"])
+
+    def test_since_and_until_bound_log_rows(self):
+        self.log(day="2026-09-20")
+        self.log(day="2026-10-10")
+        self.log(day="2026-10-20")
+        out = self.usage(until=epoch("2026-10-15"))
+        self.assertEqual([g["day"] for g in out["groups"]], ["2026-10-10"])
+
+    def test_rollups_have_origin_and_errors_from_counts(self):
+        self.rollup(n=4, ok=3)
+        (g,) = self.usage()["groups"]
+        self.assertEqual((g["origin"], g["requests"], g["errors"], g["unmapped"]), ("rollup", 4, 1, False))
+        self.assertEqual((g["tokens_in"], g["tokens_out"], g["cache_read"], g["cache_write"]), (100, 50, 20, 10))
+        self.assertEqual(g["cost_usd"], "1.5")
+
+    def test_rollups_before_since_are_excluded(self):
+        self.rollup(day="2026-09-15")
+        self.assertEqual(self.usage()["groups"], [])
+
+    def test_costs_sum_exactly(self):
+        for _ in range(3):
+            self.log(cost="0.0123")
+        self.assertEqual(self.usage()["groups"][0]["cost_usd"], "0.0369")
+        self.log(model="m2", cost="0.1")
+        self.log(model="m2", cost="0.2")
+        self.assertEqual(self.usage()["groups"][1]["cost_usd"], "0.3")
+
+    def test_unparseable_cost_makes_the_group_cost_none(self):
+        self.log(cost="0.01")
+        self.log(cost="n/a")
+        self.log(model="m2", cost="0.02")
+        by = {g["model"]: g for g in self.usage()["groups"]}
+        self.assertIsNone(by["m1"]["cost_usd"])
+        self.assertEqual(by["m1"]["requests"], 2)
+        self.assertEqual(by["m2"]["cost_usd"], "0.02")
+
+    def test_non_finite_cost_is_none(self):
+        self.log(cost="NaN")
+        self.log(model="m2", cost="Infinity")
+        self.assertEqual([g["cost_usd"] for g in self.usage()["groups"]], [None, None])
+
+    def test_dropped_required_column_is_unavailable_naming_it(self):
+        self.writer.execute("ALTER TABLE proxy_request_logs DROP COLUMN total_cost_usd")
+        self.writer.commit()
+        out = self.usage()
+        self.assertFalse(out["available"])
+        self.assertIn("total_cost_usd", out["reason"])
+        self.assertEqual(out["groups"], [])
+
+    def test_missing_table_is_unavailable_naming_it(self):
+        self.writer.execute("DROP TABLE usage_daily_rollups")
+        self.writer.commit()
+        out = self.usage()
+        self.assertFalse(out["available"])
+        self.assertIn("usage_daily_rollups", out["reason"])
+
+    def test_extra_column_is_ignored(self):
+        self.writer.execute("ALTER TABLE proxy_request_logs ADD COLUMN shiny TEXT")
+        self.writer.commit()
+        self.log()
+        out = self.usage()
+        self.assertTrue(out["available"], out["reason"])
+        self.assertEqual(len(out["groups"]), 1)
+
+    def test_absent_dir_is_not_installed(self):
+        path = os.path.join(self.d, "nope")
+        out = ccswitch.usage(self.state, self.since, d=path)
+        self.assertFalse(out["available"])
+        self.assertEqual(out["reason"], f"cc-switch not installed ({os.path.join(path, 'cc-switch.db')} absent)")
+
+    def test_default_dir_follows_env(self):
+        self.log()
+        old = os.environ.get("BW_CCSWITCH_DIR")
+        os.environ["BW_CCSWITCH_DIR"] = self.d
+        try:
+            self.assertTrue(ccswitch.usage(self.state, self.since)["available"])
+        finally:
+            if old is None:
+                del os.environ["BW_CCSWITCH_DIR"]
+            else:
+                os.environ["BW_CCSWITCH_DIR"] = old
+
+    def test_originals_untouched_and_sealed_dir_empty(self):
+        self.log()
+        self.rollup()
+        files = [self.db, self.db + "-wal"]
+        self.assertTrue(os.path.exists(files[1]))
+        before = {p: fingerprint(p) for p in files}
+        listing = sorted(os.listdir(self.d))
+        self.usage()
+        ccswitch.prices(self.state, d=self.d)
+        self.assertEqual({p: fingerprint(p) for p in files}, before)
+        self.assertEqual(sorted(os.listdir(self.d)), listing)
+        self.assertEqual(os.listdir(os.path.join(self.state, "sealed")), [])
+
+    def test_prices_reads_model_pricing(self):
+        self.writer.execute("INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, "
+                            "output_cost_per_million) VALUES ('m1', 'M One', '3.00', '15.00')")
+        self.writer.commit()
+        self.assertEqual(ccswitch.prices(self.state, d=self.d), {"m1": {"input": "3.00", "output": "15.00"}})
+
+    def test_prices_empty_when_absent(self):
+        self.assertEqual(ccswitch.prices(self.state, d=self.d), {})
+        self.assertEqual(ccswitch.prices(self.state, d=os.path.join(self.d, "nope")), {})
+        self.writer.execute("DROP TABLE model_pricing")
+        self.writer.commit()
+        self.assertEqual(ccswitch.prices(self.state, d=self.d), {})
