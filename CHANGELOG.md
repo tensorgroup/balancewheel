@@ -15,6 +15,13 @@ not against the prose.
 
 ### Added
 
+- **Usage token and cost fields; seat and lead summaries** (`metrics/log.py`, `metrics/summary.py`):
+  log schema, additive. A `usage` line may carry `tokens_in`, `tokens_out` (integers >= 0),
+  `cost_usd` (a finite number >= 0) and `session_id`, written by `log.py usage --tokens-in
+  --tokens-out --cost-usd --session-id`; absent keys are not written, and older lines load
+  unchanged. A seat total is `null`/unavailable until some event reports it, never 0.
+  `metrics/summary.py` holds the pure seat and lead numbers (standout panels, per-lead sessions,
+  minutes, cap switches, overrides, ratings, asks) that the dashboard and the cockpit share.
 - **Plan keys for Orca and probes** (`metrics/config.py`, `balancewheel.example.json`): config
   only, no schema bump. `quota` gains `"orca"` (read the plan's usage from Orca; requires
   `orca_provider`). Plans gain `orca_provider` (an Orca provider name, refused with `quota:

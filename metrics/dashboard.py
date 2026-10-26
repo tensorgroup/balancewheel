@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as cfgmod  # noqa: E402
 import store  # noqa: E402
+import summary  # noqa: E402
 
 PALETTE = ["#2563eb", "#d97706", "#059669", "#dc2626", "#7c3aed", "#0891b2", "#db2777", "#65a30d"]
 VERDICT = {"confirmed": "#059669", "partial": "#d97706", "refuted": "#dc2626", "dropped": "#9ca3af"}
@@ -75,7 +76,7 @@ def radius_for(count):
 
 
 def seat_colors(config, data):
-    names = list(config["seats"]) + sorted({s for p in data["panels"] for s in p["seats"] if s not in config["seats"]})
+    names = summary.seat_names(config, data)
     return {n: PALETTE[i % len(PALETTE)] for i, n in enumerate(names)}
 
 
@@ -87,7 +88,7 @@ def age_days(ts):
 # ---------- sections ----------
 
 def section_now(data, config, seats_state):
-    open_w = [w for w in data["watches"] if w["status"] == "open"]
+    open_w = summary.watches(data)
     oldest = min(open_w, key=lambda w: w["ts"] or "") if open_w else None
     last = data["panels"][-1] if data["panels"] else None
     newest = max((e.get("ts") or "" for e in data["events"]), default="")
@@ -134,35 +135,24 @@ def stacked_bars(panels, seat):
 
 def section_roster(data, config, colors):
     panels = sorted(data["panels"], key=lambda p: p["ts"] or "")
-    w = config["watches"]
-    window = panels[-w["redundant_window_panels"]:] if w["redundant_window_panels"] else panels
+    total_usage = len(data["usage"]) or 1
     rows = []
-    for seat in colors:
-        mine = [p for p in panels if seat in p["findings"]]
-        conf = sum(p["findings"][seat]["confirmed"] or 0 for p in mine)
-        ref = sum(p["findings"][seat]["refuted"] or 0 for p in mine)
-        part = sum(p["findings"][seat]["partial"] or 0 for p in mine)
-        n = conf + ref + part
-        rate = f"{conf / n * 100:.0f}% <span class=\"muted\">(n={n})</span>" if n else '<span class="muted">n=0</span>'
-        recent = [p for p in window if seat in p["findings"] and isinstance(p["findings"][seat].get("unique"), int)][-w["redundant_min_panels"]:]
-        uniq = sum(p["findings"][seat]["unique"] for p in recent)
+    for r in summary.seat_rows(data, config):
+        seat, n = r["seat"], r["n"]
+        rate = f"{r['confirmed'] / n * 100:.0f}% <span class=\"muted\">(n={n})</span>" if n else '<span class="muted">n=0</span>'
+        uniq, recent = r["unique_recent"], r["recent_panels"]
         if not recent:
             meter = '<span class="meter grey"><span style="width:0"></span></span> <span class="muted">no unique recorded</span>'
         else:
             cls = "red" if uniq == 0 else ("amber" if uniq == 1 else "green")
-            pct = min(100, uniq / max(len(recent), 1) * 100)
-            meter = f'<span class="meter {cls}"><span style="width:{pct:.0f}%"></span></span> {uniq} unique / {len(recent)} panels'
-        challenges = sum(1 for p in panels for d in p["disputes"] if d.get("challenger") == seat)
-        wins = sum(1 for p in panels for d in p["disputes"] if d.get("winner") == seat)
-        involved = sum(1 for p in panels for d in p["disputes"] if seat in (d.get("proposals") or {}) or d.get("challenger") == seat)
-        share = f"{wins}/{involved}" if involved else "—"
-        usage = sum(1 for u in data["usage"] if u.get("seat") == seat)
-        total_usage = len(data["usage"]) or 1
-        usage_pct = usage / total_usage * 100
+            pct = min(100, uniq / max(recent, 1) * 100)
+            meter = f'<span class="meter {cls}"><span style="width:{pct:.0f}%"></span></span> {uniq} unique / {recent} panels'
+        share = f"{r['wins']}/{r['involved']}" if r["involved"] else "—"
+        usage_pct = r["calls"] / total_usage * 100
         usage_bar = (f'<span class="meter grey"><span style="width:{usage_pct:.0f}%"></span></span> '
-                     f'{usage} <span class="muted">({usage_pct:.0f}%)</span>')
+                     f'{r["calls"]} <span class="muted">({usage_pct:.0f}%)</span>')
         rows.append(f'<tr><td><span class="swatch" style="background:{colors[seat]}"></span>{esc(seat)}</td><td>{meter}</td>'
-                    f'<td>{rate}</td><td>{challenges}</td><td>{share}</td><td>{usage_bar}</td><td>{stacked_bars(panels, seat)}</td></tr>')
+                    f'<td>{rate}</td><td>{r["challenges"]}</td><td>{share}</td><td>{usage_bar}</td><td>{stacked_bars(panels, seat)}</td></tr>')
     legend = '<p class="legend"><span><i class="swatch" style="background:#059669"></i>confirmed</span><span><i class="swatch" style="background:#d97706"></i>partial</span><span><i class="swatch" style="background:#dc2626"></i>refuted</span></p>'
     return ('<section id="roster"><h2>Roster health</h2><table><tr><th>seat</th><th>unique catches (redundancy meter)</th><th>confirmed rate</th>'
             '<th>challenges</th><th>dispute wins</th><th>usage share</th><th>per-panel counts</th></tr>' + "".join(rows) + f'</table>{legend}</section>')

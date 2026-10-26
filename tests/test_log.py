@@ -163,6 +163,22 @@ class Cli(unittest.TestCase):
             p = store.load(env["BALANCEWHEEL_METRICS_LOG"])["panels"][0]
             self.assertEqual(p["findings"]["alpha"]["unique"], 1); self.assertIn("count_mismatch", p["notes"])
 
+    def test_usage_token_and_cost_fields_round_trip_and_absent_keys_are_not_written(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = os.path.join(tmp, "m.jsonl")
+            env = {"BALANCEWHEEL_METRICS_LOG": log}
+            base = ["usage", "--seat", "alpha", "--mode", "new", "--dir", "/w", "--duration", "1", "--ok", "true"]
+            self.assertEqual(run(base, env=env).returncode, 0)
+            r = run(base + ["--tokens-in", "10", "--tokens-out", "0", "--cost-usd", "0.25", "--session-id", "s1"], env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            old, new = store.load(log)["usage"]
+            for k in ("tokens_in", "tokens_out", "cost_usd", "session_id"):
+                self.assertNotIn(k, old)
+            self.assertEqual((new["tokens_in"], new["tokens_out"], new["cost_usd"], new["session_id"]), (10, 0, 0.25, "s1"))
+            for bad in (["--tokens-in", "-1"], ["--cost-usd", "-0.1"], ["--cost-usd", "nan"], ["--tokens-out", "1.5"]):
+                self.assertNotEqual(run(base + bad, env=env).returncode, 0, bad)
+            self.assertEqual(len(store.load(log)["usage"]), 2)
+
     def test_usage_requires_fields_and_valid_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = {"BALANCEWHEEL_METRICS_LOG": os.path.join(tmp, "m.jsonl")}

@@ -3,6 +3,7 @@
 
   log.py config [--json]              resolved config (JSON)
   log.py usage --seat S --mode M --dir D --duration N --ok B [--model M] [--reason R]
+             [--tokens-in N] [--tokens-out N] [--cost-usd X] [--session-id ID]
   log.py panel [--force] < record.json
   log.py check
   log.py watches
@@ -284,10 +285,26 @@ def cmd_config(args, config):
     print(json.dumps(config, indent=None if args.json else 2))
 
 
+def _nonneg_int(s):
+    v = int(s)
+    if v < 0:
+        raise argparse.ArgumentTypeError("must be >= 0")
+    return v
+
+
+def _nonneg_float(s):
+    v = float(s)
+    if not v >= 0 or v == float("inf"):
+        raise argparse.ArgumentTypeError("must be a finite number >= 0")
+    return v
+
+
 def cmd_usage(args, config):
     store.append(store.log_path(config), {
         "type": "usage", "seat": args.seat, "model": args.model, "mode": args.mode, "dir": args.dir,
         "duration_s": args.duration, "ok": args.ok.lower() == "true", "reason": args.reason,
+        **{k: v for k, v in (("tokens_in", args.tokens_in), ("tokens_out", args.tokens_out),
+                             ("cost_usd", args.cost_usd), ("session_id", args.session_id)) if v is not None},
     })
 
 
@@ -420,6 +437,8 @@ def main(argv=None):
     u.add_argument("--dir", required=True); u.add_argument("--duration", type=int, required=True)
     u.add_argument("--ok", required=True, choices=["true", "false"])
     u.add_argument("--model", default=None); u.add_argument("--reason", default=None)
+    u.add_argument("--tokens-in", type=_nonneg_int, default=None); u.add_argument("--tokens-out", type=_nonneg_int, default=None)
+    u.add_argument("--cost-usd", type=_nonneg_float, default=None); u.add_argument("--session-id", default=None)
     # panel and amend take their record as JSON on stdin. That is invisible from a usage
     # line with no positional arguments, so the shape is spelled out here: a cold user's
     # agent runs --help, not the source.
