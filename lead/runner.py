@@ -486,7 +486,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
     def refresh():
         # network probes and one Orca read: before the first decision and at the boundary only
         try:
-            res = probes.refresh(config, state, time.time(), run=run)
+            res = probes.refresh(config, state, time.time(), plans=rotation.plans_touched(config, profile), run=run)
         except Exception as e:
             ctx.say(f"bw: quota refresh failed ({type(e).__name__}); deciding on what is on disk")
             return

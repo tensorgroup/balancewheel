@@ -14,7 +14,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from lead import containment, proc, runner, sandbox, start, status  # noqa: E402
+from lead import containment, probes, proc, runner, sandbox, start, status  # noqa: E402
 from lead.proc import Result  # noqa: E402
 from lead.runtimes import ADAPTERS  # noqa: E402
 
@@ -366,6 +366,15 @@ class StartCase(unittest.TestCase):
         self.assertIn("bw start: quota po: budget 75% · probe 0m", out)
         self.assertIn("bw start: quota pp: quota unknown — probe: no probe for this plan", out)
         self.assertNotIn("SYNTHETIC-CANARY", out)
+
+    def test_a_refresh_that_raises_is_one_line_and_start_continues(self):
+        with mock.patch.object(probes, "refresh", side_effect=RuntimeError("boom secret detail")):
+            code, out = self.start(FakeRun(), verify=False, update=False)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.count("quota refresh failed"), 1, out)
+        self.assertIn("bw start: quota refresh failed (RuntimeError); deciding on what is on disk", out)
+        self.assertNotIn("boom secret detail", out)
+        self.assertIn("bw start: lead:", out)
 
     def test_dry_run_probes_nothing(self):
         fetch, calls = self.openrouter_plan()

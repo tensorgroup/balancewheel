@@ -42,7 +42,10 @@ class _RedirectRefused(Exception):
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise _RedirectRefused(code)
+        try:
+            fp.close()  # the refused response is never read; its socket goes now, not at garbage collection
+        finally:
+            raise _RedirectRefused(code)
 
 
 def _reason(e):

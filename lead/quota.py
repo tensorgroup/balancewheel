@@ -260,7 +260,20 @@ def summary(snapshot):
     parts = [f"{short.get(w['name'], w['name'])} {100 - w['used_pct']:.0f}%" for w in snapshot["windows"]]
     if snapshot.get("source") and _num(snapshot.get("age_s")):
         parts.append(f"{snapshot['source']} {max(snapshot['age_s'], 0) / 60:.0f}m")
-    return " · ".join(parts)
+    return " — ".join([" · ".join(parts)] + _notes(snapshot))
+
+
+NOTE_LIMIT = 120
+
+
+def _notes(snapshot):
+    """A snapshot's `note` and `notes`, escaped (they can carry text from a tool's output) and short."""
+    notes = snapshot.get("notes")
+    raw = [n for n in [snapshot.get("note")] + (notes if isinstance(notes, list) else []) if isinstance(n, str) and n]
+    if not raw:
+        return []
+    from lead.guard.review import safe  # only when there is a note: the statusline renders summary() often
+    return [n if len(n) <= NOTE_LIMIT else n[:NOTE_LIMIT - 1] + "…" for n in map(safe, raw)]
 
 
 def main(argv):

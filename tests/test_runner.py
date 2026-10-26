@@ -644,6 +644,8 @@ class OrcaReRead(RunnerCase):
         os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
         self.assertEqual(p.wait(10), 0)
         self.assertEqual(count(), 2)
+        plans = [json.loads(l)["plans"] for l in refreshes.read_text().splitlines()]
+        self.assertEqual(plans, [["chatgpt", "pb"]] * 2)  # only the plans the profile touches, as start does
 
     def orca_payload(self):
         doc = json.loads((HERE / "fixtures" / "orca" / "account_list_ok.json").read_text())

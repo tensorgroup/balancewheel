@@ -24,7 +24,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import ccswitch, checks, orca, probes, proc, quota, runner, updates, verify as verifymod
+from . import ccswitch, checks, orca, probes, proc, quota, rotation, runner, updates, verify as verifymod
 from .status import orca_checks
 from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
@@ -38,21 +38,6 @@ OPEN_TIMEOUT_S = 30
 
 def _inside(path, root):
     return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
-
-
-def _plans_touched(config, profile):
-    """Lead plans in the profile's lead_order, then plans of seats in its checkpoints."""
-    out = []
-    for name in profile.get("lead_order", []):
-        p = config["leads"].get(name, {}).get("plan")
-        if p and p not in out:
-            out.append(p)
-    for cp in (profile.get("checkpoints") or {}).values():
-        for seat in cp.get("seats", []):
-            p = ((config.get("seats") or {}).get(seat) or {}).get("plan")
-            if p and p not in out:
-                out.append(p)
-    return out
 
 
 def _lead_command(bw, env):
@@ -135,7 +120,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     runtimes = verifymod.lead_runtimes(config)
     rt_tool = runtime_tools(config)
     tools = config.get("tools") or {}
-    plans = _plans_touched(config, profile)
+    plans = rotation.plans_touched(config, profile)
     if dry_run:
         return _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify,
                         bw, env, say)
@@ -186,8 +171,11 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     # 4. quota (probes, one Orca read; expired caps cleared) and the lead
     orca_entry = results.get("orca")
     orca_version = (orca_entry.get("after") if isinstance(orca_entry, dict) else None) or orca.app_version()
-    refreshed = probes.refresh(config, state, now, plans=plans, run=run, fetch=fetch, env=env,
-                               orca_version=orca_version)
+    try:
+        refreshed = probes.refresh(config, state, now, plans=plans, run=run, fetch=fetch, env=env,
+                                   orca_version=orca_version)
+    except Exception as e:  # never the text: it can carry a URL or a header
+        refreshed = {"notes": [f"quota refresh failed ({type(e).__name__}); deciding on what is on disk"]}
     for line in refreshed["notes"]:
         say(line)
     _quota_and_lead(config, state, project, profile, plans, now, say)

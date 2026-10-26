@@ -289,6 +289,15 @@ class Summary(unittest.TestCase):
         s["windows"].append({"name": "weekly", "used_pct": 60, "resets_at": None})
         self.assertEqual(quota.summary(s), "session 70% · weekly 40% · orca 5m")
 
+    def test_note_and_notes_appended_escaped_and_short(self):
+        s = dict(known(30, NOW - 300), source="probe", age_s=300, note="monthly spend unknown before then",
+                 notes=["pool \x1b[2Jx malformed: " + "y" * 500])
+        out = quota.summary(s)
+        self.assertTrue(out.startswith("session 70% · probe 5m — monthly spend unknown before then — pool \\x1b[2Jx"), out)
+        self.assertNotIn("\x1b", out)
+        self.assertLess(len(out), 300)
+        self.assertEqual(quota.summary(dict(s, note=None, notes="not a list")), "session 70% · probe 5m")
+
 
 class ExpiredCaps(unittest.TestCase):
     def setUp(self):

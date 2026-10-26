@@ -91,6 +91,21 @@ def _earliest_reset(caps, plans, now):
     return min(times) if times else None
 
 
+def plans_touched(config, profile):
+    """Lead plans in the profile's lead_order, then plans of seats in its checkpoints."""
+    out = []
+    for name in profile.get("lead_order", []):
+        p = config["leads"].get(name, {}).get("plan")
+        if p and p not in out:
+            out.append(p)
+    for cp in (profile.get("checkpoints") or {}).values():
+        for seat in cp.get("seats", []):
+            p = ((config.get("seats") or {}).get(seat) or {}).get("plan")
+            if p and p not in out:
+                out.append(p)
+    return out
+
+
 def decide(profile, leads, rotation, current, pinned, quota, caps, now, moment):
     order = list(profile.get("lead_order", []))
     plan = lambda name: leads[name]["plan"]  # noqa: E731

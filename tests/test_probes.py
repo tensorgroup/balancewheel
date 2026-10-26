@@ -257,6 +257,18 @@ def load_bw():
     return mod
 
 
+class NoRedirectTest(unittest.TestCase):
+    def test_redirect_closes_the_response_before_refusing(self):
+        class FP:
+            closed = False
+
+            def close(self):
+                FP.closed = True
+        with self.assertRaises(probes._RedirectRefused):
+            probes._NoRedirect().redirect_request(None, FP(), 302, "Found", {}, "https://elsewhere.invalid/")
+        self.assertTrue(FP.closed)
+
+
 class KeySecrecyTest(unittest.TestCase):
     """The key is in no file under the state dir, no output of `bw probe`, and no reason string."""
 

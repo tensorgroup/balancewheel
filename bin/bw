@@ -61,9 +61,9 @@ def cmd_probe(a, config, state):
     arbitrated = quota.read_quota(state, config, now)
     for name in names:
         a_q = arbitrated.get(name)
-        parts = [quota.summary(a_q)]
+        parts = [quota.summary(a_q)]  # carries the snapshot's note when its reading won
         note = (res["snapshots"].get(name) or {}).get("note")
-        if note:
+        if note and note not in parts[0]:
             parts.append(note)
         n = quota.notice(a_q, config["plans"][name], now, every)
         if n:
