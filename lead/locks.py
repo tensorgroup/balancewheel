@@ -37,12 +37,22 @@ class RuntimeLock:
     def __init__(self, state, runtime):
         os.makedirs(os.path.join(state, "locks"), exist_ok=True)
         self.path = os.path.join(state, "locks", f"runtime-{runtime}.lock")
-        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        # Read-only: flock needs no write access, and nothing should write to the lock file
+        # through the descriptor a lead inherits.
+        self.fd = os.open(self.path, os.O_RDONLY | os.O_CREAT, 0o600)
 
     def shared(self) -> bool:
         """Blocks while an update holds the lock exclusively."""
         fcntl.flock(self.fd, fcntl.LOCK_SH)
         return True
+
+    def try_shared(self) -> bool:
+        """False while an update holds the lock exclusively (never blocks)."""
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
 
     def try_exclusive(self) -> bool:
         try:

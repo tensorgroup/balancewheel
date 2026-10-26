@@ -1,4 +1,4 @@
-import json, os, pty, signal, subprocess, sys, tempfile, time, unittest
+import json, os, pty, signal, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -291,6 +291,68 @@ class RuntimeLocks(RunnerCase):
         os.killpg(self.fake("b")["pgid"], signal.SIGTERM)
         self.assertEqual(p.wait(10), 0, p.stdout.read())
         self.assertTrue(self.exclusive("pi"))
+
+    def hold_exclusive(self, runtime):
+        from lead.locks import RuntimeLock
+        lk = RuntimeLock(str(self.state), runtime)
+        self.assertTrue(lk.try_exclusive())
+        self.addCleanup(lk.release)
+        return lk
+
+    def lines(self, p):
+        got = []
+
+        fd = os.dup(p.stdout.fileno())  # our own copy: tearDown's close of p.stdout cannot wait on this reader
+
+        def pump():
+            buf = b""
+            try:
+                while True:
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    *done, buf = buf.split(b"\n")
+                    got.extend(l.decode(errors="replace") + "\n" for l in done)
+            finally:
+                os.close(fd)
+        threading.Thread(target=pump, daemon=True).start()
+        return got
+
+    def test_start_waits_for_an_update_and_says_so_once(self):
+        held = self.hold_exclusive("codex")
+        p = self.start(env={"FAKE_MODE_a": "exit"})
+        out = self.lines(p)
+        self.assertTrue(wait_for(lambda: any("waiting for the codex update to finish" in l for l in out), 5), out)
+        time.sleep(0.5)
+        self.assertIsNone(self.fake("a"), "the lead started while its runtime was being updated")
+        held.release()
+        self.assertEqual(p.wait(15), 0, "".join(out))
+        self.assertIsNotNone(self.fake("a"))
+        self.assertEqual(sum("waiting for the codex update" in l for l in out), 1, out)
+
+    def test_switch_check_does_not_block_on_an_update(self):
+        p = self.start(env={"FAKE_MODE_a": "sleep", "FAKE_MODE_b": "sleep"})
+        out = self.lines(p)
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        held = self.hold_exclusive("pi")
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        self.assertTrue(wait_for(lambda: any("staying on la: pi is being updated" in l for l in out), 5), out)
+        time.sleep(1.0)  # several polls (0.3 s) pass with the lock still held: no switch, no hang
+        self.assertIsNone(self.fake("b"), "switched to a runtime that is being updated")
+        self.assertIsNone(p.poll())
+        held.release()
+        self.assertTrue(wait_for(lambda: self.fake("b"), 5), "".join(out))  # retried at a later poll
+        os.killpg(self.fake("b")["pgid"], signal.SIGTERM)
+        self.assertEqual(p.wait(10), 0, "".join(out))
+        self.assertEqual(sum("is being updated" in l for l in out), 1, out)
+
+    def test_inherited_runtime_lock_fd_is_read_only(self):
+        p = self.start(env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        ino = os.stat(self.state / "locks" / "runtime-codex.lock").st_ino
+        modes = [m for i, m in self.fake("a")["fds"] if i == ino]
+        self.assertEqual(modes, [os.O_RDONLY])
 
     def test_refused_start_releases_runtime_lock(self):
         p = self.start("--contained-by-bw", "codex")

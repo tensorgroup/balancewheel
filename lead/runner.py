@@ -12,7 +12,8 @@ crashed bw cannot let a second writable lead into the same worktree.
 Runtime lock (lead/locks.py): a shared flock on the lead's runtime, taken before that runtime's
 verification is checked and passed to the lead the same way, so no update of the runtime lands
 between the check and the launch it allows, or under the running lead. Released only once the
-lead's group is gone.
+lead's group is gone. At the start bw waits for an update to finish; a mid-session switch takes it
+without blocking and, while an update holds it, stays on the current lead until a later poll.
 """
 import fcntl
 import json
@@ -298,10 +299,22 @@ class Context:
         return (self.lock.fd,) + ((self.runtime_lock.fd,) if self.runtime_lock is not None else ())
 
     def take_runtime_lock(self, lead_name):
-        """A shared lock on the lead's runtime; blocks while that runtime is being updated."""
-        lk = RuntimeLock(self.state, self.config["leads"][lead_name]["runtime"])
-        lk.shared()
+        """A shared lock on the lead's runtime; blocks (saying so once) while that runtime is
+        being updated. For the start, where there is nothing else to do meanwhile."""
+        rt = self.config["leads"][lead_name]["runtime"]
+        lk = RuntimeLock(self.state, rt)
+        if not lk.try_shared():
+            self.say(f"bw: waiting for the {rt} update to finish")
+            lk.shared()
         return lk
+
+    def try_runtime_lock(self, lead_name):
+        """The shared lock without blocking (the poll loop must keep running); None while held."""
+        lk = RuntimeLock(self.state, self.config["leads"][lead_name]["runtime"])
+        if lk.try_shared():
+            return lk
+        lk.release()
+        return None
 
     def release_runtime_lock(self):
         if self.runtime_lock is not None:
@@ -504,7 +517,13 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                 if d.lead == current:
                     continue
                 # The next lead's runtime lock comes before its checks and is kept for its launch.
-                nxt = ctx.take_runtime_lock(d.lead)
+                # Held by an update: like a refused check, stay and try again at the next poll.
+                nxt = ctx.try_runtime_lock(d.lead)
+                if nxt is None:
+                    if not warned:
+                        ctx.say(f"bw: staying on {current}: {config['leads'][d.lead]['runtime']} is being updated")
+                        warned = True
+                    continue
                 if not _verified(ctx, d.lead):
                     nxt.release()
                     if not warned:

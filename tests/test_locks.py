@@ -60,6 +60,28 @@ class RuntimeLockTest(unittest.TestCase):
         self.addCleanup(lk.release)
         self.assertTrue(lk.try_exclusive())
 
+    def test_fd_is_read_only(self):
+        import fcntl
+        lk = locks.RuntimeLock(self.state, "pi")
+        self.addCleanup(lk.release)
+        self.assertEqual(fcntl.fcntl(lk.fd, fcntl.F_GETFL) & os.O_ACCMODE, os.O_RDONLY)
+
+    def test_try_shared_fails_while_exclusive_held(self):
+        held = locks.RuntimeLock(self.state, "codex")
+        self.addCleanup(held.release)
+        self.assertTrue(held.try_exclusive())
+        lk = locks.RuntimeLock(self.state, "codex")
+        self.addCleanup(lk.release)
+        self.assertFalse(lk.try_shared())
+        held.release()
+        self.assertTrue(lk.try_shared())
+
+    def test_try_shared_coexists_with_shared(self):
+        self.holder("codex")
+        lk = locks.RuntimeLock(self.state, "codex")
+        self.addCleanup(lk.release)
+        self.assertTrue(lk.try_shared())
+
     def test_release_is_idempotent(self):
         lk = locks.RuntimeLock(self.state, "pi")
         self.assertTrue(lk.shared())

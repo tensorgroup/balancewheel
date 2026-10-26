@@ -6,7 +6,8 @@ env:  FAKE_OUT (dir for evidence), FAKE_MODE_<name> = sleep | ignore_term | exit
       records the reply, then exits like `exit`. FAKE_STATE (the bw state dir) makes it replay the
       logged self-test call instead of `ls`. FAKE_GUARD_RUNTIME names the runtime (default pi).
 Writes <FAKE_OUT>/<name>.json: pid, pgid, argv, the BW_GUARD_* variable names, the probe reply, whether every pid listed in FAKE_OUT/*.json
-from earlier leads is gone, and whether it holds the terminal's foreground.
+from earlier leads is gone, whether it holds the terminal's foreground, and each inherited descriptor
+above 2 as [inode, access mode].
 """
 import json, os, signal, sys, time
 
@@ -26,6 +27,17 @@ def alive(pid):
         return True
     except ProcessLookupError:
         return False
+
+
+def inherited_fds():
+    import fcntl
+    fds = []
+    for fd in range(3, 256):
+        try:
+            fds.append([os.fstat(fd).st_ino, fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE])
+        except OSError:
+            pass
+    return fds
 
 
 fg = None
@@ -58,7 +70,7 @@ if mode == "guard_probe":
 with open(os.path.join(out, f"{name}.json"), "w") as fh:
     json.dump({"pid": os.getpid(), "pgid": os.getpgrp(), "argv": sys.argv, "foreground": fg, "probe": probe,
                "guard_env": sorted(k for k in os.environ if k.startswith("BW_GUARD_")),
-               "earlier_alive": [p for p in earlier if alive(p)]}, fh)
+               "earlier_alive": [p for p in earlier if alive(p)], "fds": inherited_fds()}, fh)
 print(f"FAKE {name} started", flush=True)
 if mode == "ignore_term":
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
