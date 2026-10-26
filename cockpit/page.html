@@ -7,12 +7,12 @@
 <style nonce="{{NONCE}}">
   :root {
     --bg: #fbfbf9; --fg: #1d1d1b; --muted: #6b6b66; --line: #deddd6; --head: #f1f0eb;
-    --accent: #2f5f8f; --bar: #4c7fb0; --bar2: #b07a3c; --warn: #9a4b00; color-scheme: light;
+    --accent: #2f5f8f; --bar: #4c7fb0; --bar2: #b07a3c; --warn: #9a4b00; --ok: #2e7d4f; --pend: #b07a00; --bad: #b3261e; color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #17181a; --fg: #e6e5e0; --muted: #9a9993; --line: #34363a; --head: #222427;
-      --accent: #8db8e3; --bar: #6f9fcf; --bar2: #d29a5a; --warn: #f0a85a; color-scheme: dark;
+      --accent: #8db8e3; --bar: #6f9fcf; --bar2: #d29a5a; --warn: #f0a85a; --ok: #6fcf97; --pend: #e0b84a; --bad: #f2837b; color-scheme: dark;
     }
   }
   body { font: 14px/1.45 system-ui, sans-serif; margin: 0; padding: 1rem 1.25rem 2rem; background: var(--bg); color: var(--fg); }
@@ -37,6 +37,14 @@
   svg.bars line { stroke: var(--line); }
   svg.bars g.na rect { fill: none; stroke: var(--muted); stroke-dasharray: 2 2; }
   svg.bars g.na text { fill: var(--muted); font-size: 9px; }
+  svg.graph { display: block; max-width: 100%; height: auto; }
+  svg.graph rect { stroke-width: 1.5; fill: var(--head); }
+  svg.graph text { fill: var(--fg); font-size: 11px; }
+  svg.graph line { stroke: var(--line); stroke-width: 1; }
+  .h-verified { stroke: var(--ok); } .h-pending { stroke: var(--pend); }
+  .h-capped { stroke: var(--bad); } .h-unknown { stroke: var(--muted); stroke-dasharray: 3 2; }
+  .legend { display: flex; flex-wrap: wrap; gap: .25rem 1rem; margin: .25rem 0 .5rem; color: var(--muted); }
+  .legend svg { vertical-align: middle; margin-right: .3rem; }
   #refresh { font: inherit; margin-left: auto; background: none; color: var(--accent); border: 0; cursor: pointer; }
 </style>
 </head>
@@ -333,7 +341,53 @@ function renderNow(d, root) {
   ], d.watches, "no open watches"));
 }
 
-const RENDER = {Models: renderModels, Usage: renderUsage, History: renderHistory, Now: renderNow};
+const HEALTH_NAMES = ["verified", "pending", "capped", "unknown"];
+
+function renderGraph(d, root) {
+  const nodes = list(d.nodes).filter(n => n && typeof n === "object" && typeof n.id === "string");
+  if (!nodes.length) { root.appendChild(para("nothing is configured yet, so there is nothing to draw")); return; }
+  const W = 150, H = 24;
+  const at = {};
+  let maxX = 0, maxY = 0;
+  for (const n of nodes) {
+    const x = Number(n.x), y = Number(n.y);
+    if (!isFinite(x) || !isFinite(y)) continue;
+    at[n.id] = {x: x, y: y};
+    maxX = Math.max(maxX, x + W); maxY = Math.max(maxY, y + H);
+  }
+  const legend = el("div", {class: "legend"});
+  for (const h of HEALTH_NAMES) {
+    const item = el("span");
+    const key = svg("svg", {width: 18, height: 12, "aria-hidden": "true", class: "graph"});
+    key.appendChild(svg("rect", {x: 1, y: 1, width: 16, height: 10, rx: 2, class: "h-" + h}));
+    item.appendChild(key);
+    item.appendChild(document.createTextNode(h));
+    legend.appendChild(item);
+  }
+  root.appendChild(legend);
+  const g = svg("svg", {class: "graph", viewBox: "0 0 " + (maxX + 20) + " " + (maxY + 20), width: maxX + 20, height: maxY + 20,
+                        role: "img", "aria-label": "how projects, profiles, leads, seats, tools, plans and models connect"});
+  for (const e of list(d.edges)) {
+    const a = e && at[e.from], b = e && at[e.to];
+    if (a && b) g.appendChild(svg("line", {x1: a.x + W, y1: a.y + H / 2, x2: b.x, y2: b.y + H / 2}));
+  }
+  for (const n of nodes) {
+    const p = at[n.id];
+    if (!p) continue;
+    const h = HEALTH_NAMES.indexOf(n.health) >= 0 ? n.health : "unknown";
+    const label = missing(n.label) ? n.id : String(n.label);
+    const box = svg("g");
+    box.appendChild(svg("title", {}, (n.kind || "node") + " " + label + ": " + h));
+    box.appendChild(svg("rect", {x: p.x, y: p.y, width: W, height: H, rx: 3, class: "h-" + h}));
+    box.appendChild(svg("text", {x: p.x + 6, y: p.y + 16}, label.length > 22 ? label.slice(0, 21) + "…" : label));
+    g.appendChild(box);
+  }
+  const wrap = el("div", {class: "wrap"});
+  wrap.appendChild(g);
+  root.appendChild(wrap);
+}
+
+const RENDER = {Models: renderModels, Usage: renderUsage, History: renderHistory, Now: renderNow, Graph: renderGraph};
 
 async function show(tab) {
   current = tab;

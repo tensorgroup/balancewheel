@@ -94,7 +94,7 @@ class ViewsCase(unittest.TestCase):
         self.assertIn("throughput per task", out["models"]["lead_columns_pending"])
         self.assertEqual(out["history"]["timeline"], [])
         self.assertEqual(out["now"]["watches"], [])
-        self.assertEqual(out["graph"], {"available": False, "reason": "not built yet"})
+        self.assertIn("nodes", out["graph"])
 
     def test_every_view_serialises_on_a_synthetic_state(self):
         self.synthetic()
@@ -182,7 +182,7 @@ class ViewsCase(unittest.TestCase):
         del CALLS[:]
         self.synthetic()
         b = self.built()
-        for name in ("now", "models", "usage", "history", "graph"):
+        for name in ("now", "models", "usage", "history"):  # graph reads tool versions, so it may shell out
             b[name]()
         self.assertEqual(CALLS, [])
 
@@ -192,6 +192,52 @@ class ViewsCase(unittest.TestCase):
         (caps / "plan-a.json").write_text(json.dumps({"resets_at": NOW + 600, "window": "unknown"}))
         plan = next(p for p in self.built()["now"]()["plans"] if p["name"] == "plan-a")
         self.assertEqual(plan["cap_until"], NOW + 600)
+
+    def test_graph_layers_follow_kind_with_unique_positions(self):
+        g = self.built()["graph"]()
+        layer = {"project": 0, "profile": 1, "lead": 2, "seat": 2, "tool": 3, "plan": 4, "model": 5}
+        self.assertTrue(g["nodes"])
+        for n in g["nodes"]:
+            self.assertEqual(n["layer"], layer[n["kind"]])
+            self.assertTrue(n["id"].startswith(n["kind"] + ":"))
+            self.assertEqual(n["x"], 40 + n["layer"] * 200)
+            self.assertIn(n["health"], ("verified", "pending", "capped", "unknown"))
+        self.assertEqual(len({(n["x"], n["y"]) for n in g["nodes"]}), len(g["nodes"]))
+        for lay in set(layer.values()):
+            col = [n for n in g["nodes"] if n["layer"] == lay]
+            self.assertEqual([n["label"] for n in col], sorted(n["label"] for n in col))
+            self.assertEqual([n["y"] for n in col], [30 + i * 36 for i in range(len(col))])
+        ids = {n["id"] for n in g["nodes"]}
+        self.assertTrue(g["edges"])
+        self.assertTrue(all(e["from"] in ids and e["to"] in ids for e in g["edges"]))
+
+    def test_layout_drops_edges_with_a_missing_endpoint_and_is_deterministic(self):
+        reg = {"tools": [{"id": "tool:t", "name": "t", "health": "verified"}],
+               "plans": [{"id": "plan:p", "name": "p", "health": "bogus"}],
+               "edges": [{"from": "tool:t", "to": "plan:p", "kind": "tool\u2192plan"},
+                         {"from": "tool:t", "to": "plan:gone", "kind": "tool\u2192plan"},
+                         {"from": "lead:gone", "to": "tool:t", "kind": "lead\u2192tool"}]}
+        a = views.layout(reg)
+        self.assertEqual(a["edges"], [{"from": "tool:t", "to": "plan:p"}])
+        self.assertEqual(a["nodes"][1]["health"], "unknown")
+        self.assertEqual(a, views.layout(json.loads(json.dumps(reg))))
+        self.assertEqual(views.layout(None), {"nodes": [], "edges": []})
+        b = self.built()
+        self.assertEqual(b["graph"](), b["graph"]())
+
+    def test_graph_is_unavailable_not_raising_when_the_registry_fails(self):
+        def boom(argv, timeout, **kw):
+            raise RuntimeError("x")
+        b = views.build(self.config, self.state, now_fn=lambda: NOW, run=boom)
+        self.assertIn("nodes", b["graph"]())  # the registry guards its own externals
+        orig = views.registry.build
+        views.registry.build = lambda *a, **k: (_ for _ in ()).throw(ValueError("bad"))
+        try:
+            out = b["graph"]()
+        finally:
+            views.registry.build = orig
+        self.assertEqual(out["available"], False)
+        self.assertIn("ValueError", out["reason"])
 
 
 if __name__ == "__main__":

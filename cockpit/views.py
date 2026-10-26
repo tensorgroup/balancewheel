@@ -1,4 +1,4 @@
-"""views.py — the cockpit's JSON views: Models, Usage, History, Now (and Graph, next step).
+"""views.py — the cockpit's JSON views: Models, Usage, History, Now, Graph.
 
 `build` returns zero-argument callables the server maps to `/api/<name>`. Each call reads fresh:
 one metrics store load, at most one cc-switch copy. Numbers nobody reported are None ("unavailable"
@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 
 from lead import paths  # noqa: F401  (puts metrics/ on sys.path)
-from lead import ccswitch, inbox, proc, quota, status
+from lead import ccswitch, inbox, proc, quota, registry, status
 import store  # noqa: E402
 import summary  # noqa: E402
 
@@ -61,6 +61,37 @@ def _worktrees(facts):
     return out
 
 
+# Graph layers, left to right: the registry's edge direction (design: project -> ... -> model).
+LAYERS = (("projects", "project", 0), ("profiles", "profile", 1), ("leads", "lead", 2), ("seats", "seat", 2),
+          ("tools", "tool", 3), ("plans", "plan", 4), ("models", "model", 5))
+HEALTHS = ("verified", "pending", "capped", "unknown")
+
+
+def layout(reg) -> dict:
+    """Layered positions for a registry snapshot: x by kind's layer, y by label order within the layer.
+    Pure and deterministic; an edge whose endpoint is not a node is dropped."""
+    reg = reg if isinstance(reg, dict) else {}
+    layers = {}
+    for coll, kind, layer in LAYERS:
+        for n in reg.get(coll) or []:
+            if isinstance(n, dict) and isinstance(n.get("id"), str):
+                health = n.get("health") if n.get("health") in HEALTHS else "unknown"
+                label = str(n.get("name") if n.get("name") is not None else n["id"])
+                layers.setdefault(layer, {})[n["id"]] = {"id": n["id"], "label": label, "kind": kind,
+                                                         "layer": layer, "health": health}
+    nodes = []
+    for layer in sorted(layers):
+        for i, n in enumerate(sorted(layers[layer].values(), key=lambda n: (n["label"], n["id"]))):
+            nodes.append(dict(n, x=40 + layer * 200, y=30 + i * 36))
+    ids = {n["id"] for n in nodes}
+    edges, seen = [], set()
+    for e in reg.get("edges") or []:
+        if isinstance(e, dict) and e.get("from") in ids and e.get("to") in ids and (e["from"], e["to"]) not in seen:
+            seen.add((e["from"], e["to"]))
+            edges.append({"from": e["from"], "to": e["to"]})
+    return {"nodes": nodes, "edges": edges}
+
+
 def build(config, state, now_fn=time.time, run=proc.run) -> dict:
     def models():
         data = _load(config)
@@ -91,6 +122,9 @@ def build(config, state, now_fn=time.time, run=proc.run) -> dict:
                 "inbox_readable": f["inbox"] is not None, "watches": summary.watches(data)}
 
     def graph():
-        return {"available": False, "reason": "not built yet"}
+        try:
+            return layout(registry.build(config, state, now_fn(), run))
+        except Exception as e:  # a broken source costs the graph, never the server
+            return {"available": False, "reason": "the registry could not be built (" + type(e).__name__ + ")"}
 
     return {"models": models, "usage": usage, "history": history, "now": now, "graph": graph}
