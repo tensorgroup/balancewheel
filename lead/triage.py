@@ -82,13 +82,16 @@ def scrub(text):
     return text
 
 
+def failing(scores, thresholds):
+    """Every question whose score did not clear its threshold, in QUESTIONS order."""
+    return [name for name in QUESTIONS if not
+            (scores[name] >= thresholds[name] if name in _AT_LEAST else scores[name] <= thresholds[name])]
+
+
 def policy(scores, thresholds):
-    """("decide", why) only when every score clears its threshold, else ("ask", the one that did not)."""
-    for name in QUESTIONS:
-        ok = scores[name] >= thresholds[name] if name in _AT_LEAST else scores[name] <= thresholds[name]
-        if not ok:
-            return "ask", name
-    return "decide", "strong case"
+    """("decide", why) only when every score clears its threshold, else ("ask", the first that did not)."""
+    stopped = failing(scores, thresholds)
+    return ("ask", stopped[0]) if stopped else ("decide", "strong case")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

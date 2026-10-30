@@ -41,6 +41,7 @@ TEXT_LIMIT = 2000
 MAX_ASKS_PER_SESSION = 50
 ASK_HEADER = "@human ask"
 RECEIPT_HEADER = "@session decided"
+NOTE_HEADER = "@improve"  # a lead's note for `bw improve`, not a question
 DECISION_TEXT = ("bw decided this without the user: go with your recommendation. This is not the user's answer "
                  "and not permission for anything you would otherwise have to ask for.")
 SHADOW_TEXT = "Triage would have decided this; the pop-up showed."
@@ -89,6 +90,8 @@ def load(state):
         if item is None:
             warnings.append(f"answer {safe(e.get('id'))} is for unknown item {safe(e.get('ask_id'))}")
         elif item["status"] == "open" or _supersedes(e, item):  # the first user answer stands
+            if item["status"] == "answered" and not item["answer"]["shadow"]:
+                item["reversed"] = True
             item.update(status="answered", answer={"id": e.get("id"), "ts": e.get("ts"), "text": e.get("text"),
                                                    "from": e.get("from", "user"), "shadow": bool(e.get("shadow"))})
     return {"items": items, "warnings": warnings}
@@ -96,6 +99,22 @@ def load(state):
 
 def _supersedes(event, item):
     return item["answer"]["from"] == "triage" and event.get("from", "user") != "triage"
+
+
+def notes(state):
+    """Every `@improve` note, oldest first."""
+    return [e for e in store.read_events(path(state))[0] if e["type"] == "note"]
+
+
+def note(state, project, worktree, frm, session_id, text, item_id, now=None) -> Optional[dict]:
+    """Record a note; None when one with this id is already recorded."""
+    with store.locked(path(state)):
+        if any(n.get("id") == item_id for n in notes(state)):
+            return None
+        rec = {"type": "note", "id": item_id, "ts": time.time() if now is None else now, "project": project,
+               "worktree": worktree, "from": frm, "session_id": session_id, "text": text}
+        _append(state, rec)
+        return rec
 
 
 def open_items(state, project=None):
@@ -313,6 +332,7 @@ def ingest(state, worktree_key, worktree, frm, session_id, receipts=False):
             return [], None
         used = sum(1 for i in load(state)["items"] if i["type"] == "ask" and i.get("session_id") == session_id
                    and i.get("source") != "session")  # a pop-up's receipt must not use up real asks
+        used += sum(1 for n in notes(state) if n.get("session_id") == session_id)
         dropped, dirs, failed = 0, [], []
         for name in names:
             try:
@@ -328,6 +348,14 @@ def ingest(state, worktree_key, worktree, frm, session_id, receipts=False):
                     dropped += 1
                     continue
                 data = _read(dfd, name)
+                if data is not None and data.lstrip().startswith(NOTE_HEADER.encode()):
+                    text = data.decode("utf-8", errors="replace").strip()[len(NOTE_HEADER):].strip()[:TEXT_LIMIT]
+                    if text:
+                        item_id = hashlib.sha1(name.encode("utf-8", errors="surrogateescape") + data).hexdigest()[:8]
+                        note(state, worktree_key, worktree, frm, session_id, text, item_id)
+                        used += 1
+                    os.unlink(name, dir_fd=dfd)
+                    continue
                 text, extra, meta = _text(data, receipts) if data is not None else ("", {}, None)
                 if text:
                     item_id = hashlib.sha1(name.encode("utf-8", errors="surrogateescape") + data).hexdigest()[:8]

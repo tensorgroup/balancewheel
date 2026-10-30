@@ -15,6 +15,12 @@ not against the prose.
 
 ### Added
 
+- **`bw improve`** (`lead/improve.py`, `bin/bw`): suggestions from how the user works, each with its
+  evidence, a minimum sample, and no effect until the user acts. `bw improve note "…"` adds a note,
+  `bw improve done <key>` marks one dealt with (`improve.json` in the state dir, added to `setup/paths.txt`). An
+  ask file starting `@improve` is a note, stored as a `note` event in `inbox.jsonl`; the leads'
+  protocol text asks for one when the user corrects them. `inbox.load` marks a reversed decision. Config schema 3 gains an optional `improve.panel_logs`
+  list, and the normalised panel keeps `absent`.
 - **Question triage** (`lead/triage.py`, `lead/triage_hook.py`, `lead/triage_install.py`, `bw triage
   install|uninstall claude`): a decision model settles leads' questions that have a strong
   recommendation. Config schema 3 gains an optional `triage` object (`mode` per profile: `off`,

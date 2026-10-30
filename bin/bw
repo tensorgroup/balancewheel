@@ -21,6 +21,9 @@
                                                   its inbox file
   bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
   bw setup cc-switch                              pre-write cc-switch's settings (before its first launch)
+  bw improve                                      what bw has seen of how you work, as changes worth making
+  bw improve note "<text>"                        add your own note on what got in the way
+  bw improve done <key>                           dealt with: it returns only on new evidence (a note never)
   bw triage install claude                        add the question-triage hook to Claude Code's settings
   bw triage uninstall claude                      remove it (other entries are left alone)
   bw guard install agy                            add the guard hook entry to agy's hooks file
@@ -33,6 +36,7 @@ import argparse
 import errno
 import json
 import os
+import secrets
 import sys
 import time
 
@@ -41,14 +45,14 @@ from cockpit import server as cockpit_server, views as cockpit_views  # noqa: E4
 from lead import ccswitch, inbox, probes, quota, registry, runner, sandbox, start, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.guard.review import safe  # noqa: E402
-from lead import triage_install  # noqa: E402
+from lead import improve, triage_install  # noqa: E402
 from lead.paths import ConfigError, load_config, state_dir  # noqa: E402  (also puts metrics/ on sys.path)
 import store  # noqa: E402
 from lead.projects import resolve_project, worktree_key  # noqa: E402
 from lead import proc  # noqa: E402
 from lead.paths import read_json, write_json_atomic  # noqa: E402
 
-COMMANDS = ("lead", "status", "registry", "probe", "start", "inbox", "answer", "cockpit", "cap", "sandbox", "guard", "triage",
+COMMANDS = ("lead", "status", "registry", "probe", "start", "inbox", "answer", "cockpit", "cap", "sandbox", "guard", "triage", "improve",
             "setup")
 DECIDED_SEEN = "triage-seen.json"  # when `bw inbox --all` last showed the decided items
 START_STALE_S = 86400  # tools not updated by bw start for this long get a one-line nudge
@@ -69,10 +73,17 @@ def default_argv(argv, cwd):
     return ["lead", *argv], False
 
 
-def lead_nudges(state, cwd, now):
-    """One-line reminders before a lead starts: open inbox items for this worktree, and tools not updated by
-    `bw start` in over a day (only once bw start has run at all). Never raises."""
+def lead_nudges(state, cwd, now, config=None):
+    """One-line reminders before a lead starts: open inbox items for this worktree, tools not updated by
+    `bw start` in over a day (only once bw start has run at all), and changes worth making. Never raises."""
     lines = []
+    if config is not None:
+        try:
+            n = len(_suggestions(config, state, now))
+            if n:
+                lines.append(f"bw: {n} change{'s' if n != 1 else ''} worth making — bw improve")
+        except Exception:  # noqa: BLE001 — a nudge never stops a lead
+            pass
     try:
         top = _toplevel(cwd)
         n = len(inbox.open_items(state, worktree_key(top))) if top else 0
@@ -100,7 +111,7 @@ def _count(s):
 
 
 def cmd_lead(a, config, state):
-    for line in lead_nudges(state, os.getcwd(), time.time()):
+    for line in lead_nudges(state, os.getcwd(), time.time(), config):
         print(line, file=sys.stderr)
     return runner.run(config, state, os.getcwd(), use=a.use, auto=a.auto, rating=not a.no_rating)
 
@@ -227,7 +238,8 @@ def cmd_inbox(a, config, state):
         if i["status"] == "answered":
             ans = i.get("answer") or {}
             if ans.get("from") == "triage":
-                print(f"  {'would have decided' if ans.get('shadow') else 'decided by bw'}: reverse with bw answer {safe(i.get('id'))} \"…\"")
+                print("  would have decided" if ans.get("shadow") else
+                      f"  decided by bw: reverse with bw answer {safe(i.get('id'))} \"…\"")
             else:
                 print(f"  answered: {safe(ans.get('text', ''))}")
         elif (i.get("triage") or {}).get("verdict") == "decide":
@@ -283,6 +295,43 @@ def _report(ok, msg):
 
 def cmd_verify(a, config, state):
     return _report(*verify.sandbox_verify(config, state, a.runtime, a.lead))
+
+
+def _suggestions(config, state, now):
+    data = store.load(store.log_path(config))
+    for log in config.get("improve", {}).get("panel_logs", []):  # panels a setup logs somewhere other than metrics_log
+        data["panels"] = data["panels"] + store.load(log)["panels"]
+    data["panels"] = sorted(data["panels"], key=lambda p: str(p.get("ts")))
+    return improve.suggestions(data, inbox.load(state)["items"], now, notes=inbox.notes(state),
+                               done=improve.load_done(state), thresholds=config.get("triage", {}).get("thresholds"))
+
+
+def cmd_improve(a, config, state):
+    now = time.time()
+    if a.what == "note":
+        text = " ".join(a.rest).strip()
+        if not text:
+            print("bw: improve note needs text", file=sys.stderr)
+            return 2
+        rec = inbox.note(state, None, os.getcwd(), "user", None, text, secrets.token_hex(4), now=now)
+        print(f"bw: noted [{rec['id']}]")
+        return 0
+    if a.what == "done":
+        if len(a.rest) != 1:
+            print("bw: improve done takes one key from `bw improve`", file=sys.stderr)
+            return 2
+        if a.rest[0] not in [s["key"] for s in _suggestions(config, state, now)]:
+            print(f"bw: {safe(a.rest[0])} is not a current suggestion; `bw improve` lists them", file=sys.stderr)
+            return 2
+        improve.mark_done(state, a.rest[0], now)
+        print(f"bw: quieted {safe(a.rest[0])}")
+        return 0
+    found = _suggestions(config, state, now)
+    if not found:
+        print("bw: nothing to change yet; the evidence builds as you work")
+    for s in found:
+        print(f"[{safe(s['key'])}] {safe(s['evidence'])}\n  → {safe(s['action'])}")
+    return 0
 
 
 def cmd_triage(a):
@@ -359,6 +408,8 @@ def main(argv=None):
     tr = sub.add_parser("triage"); trs = tr.add_subparsers(dest="sub", required=True)
     for name in ("install", "uninstall"):
         trs.add_parser(name).add_argument("runtime", choices=["claude"])
+    im = sub.add_parser("improve"); im.add_argument("what", nargs="?", choices=["note", "done"])
+    im.add_argument("rest", nargs="*")
     st = sub.add_parser("setup"); st.add_argument("what", choices=["cc-switch"])
     argv, outside = default_argv(sys.argv[1:] if argv is None else argv, os.getcwd())
     a = ap.parse_args(argv)
@@ -390,7 +441,7 @@ def _dispatch(a):
         sys.exit(f"bw: unknown lead {a.use!r}")
     return {"lead": cmd_lead, "start": cmd_start, "status": cmd_status, "cap": cmd_cap, "registry": cmd_registry, "probe": cmd_probe,
             "cockpit": cmd_cockpit,
-            "sandbox": cmd_verify, "inbox": cmd_inbox, "answer": cmd_answer}[a.cmd](a, config, state)
+            "sandbox": cmd_verify, "inbox": cmd_inbox, "answer": cmd_answer, "improve": cmd_improve}[a.cmd](a, config, state)
 
 
 if __name__ == "__main__":

@@ -146,6 +146,47 @@ class LeadNudges(Case):
         self.assertEqual(json.loads(Path(self.state, self.bw.DECIDED_SEEN).read_text())["ts"], 200)
         self.assertNotIn("decided without you", self.inbox_cmd())
 
+    def improve_cmd(self, what=None, *rest):
+        a = mock.Mock(what=what, rest=list(rest))
+        with mock.patch.object(self.bw.store, "log_path", return_value=os.path.join(self.state, "m.jsonl")), \
+                redirect_stdout(io.StringIO()) as out:
+            code = self.bw.cmd_improve(a, {}, self.state)
+        return code, out.getvalue()
+
+    def test_a_note_shows_in_improve_until_it_is_done(self):
+        os.makedirs(self.state, exist_ok=True)
+        self.assertIn("nothing to change yet", self.improve_cmd()[1])
+        self.assertEqual(self.improve_cmd("note", "too", "many", "nudges")[0], 0)
+        out = self.improve_cmd()[1]
+        self.assertIn("too many nudges", out)
+        key = out.split("]")[0][1:]
+        self.improve_cmd("done", key)
+        self.assertIn("nothing to change yet", self.improve_cmd()[1])
+
+    def test_a_suggestion_adds_one_nudge(self):
+        inbox.note(self.state, None, "/w", "user", None, "slow start", "abc12345")
+        with mock.patch.object(self.bw.store, "log_path", return_value=os.path.join(self.state, "m.jsonl")):
+            lines = self.bw.lead_nudges(self.state, str(self.repo), time.time(), {})
+        self.assertEqual(lines, ["bw: 1 change worth making — bw improve"])
+
+    def test_panels_from_another_log_are_read(self):
+        os.makedirs(self.state, exist_ok=True)
+        log = os.path.join(self.state, "panels.jsonl")
+        now = time.time()
+        for n in range(3):
+            self.bw.store.append(log, {"type": "panel", "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 100 - n)),
+                                       "target": "t", "seats": ["a"], "absent": {"gem": "cap"}})
+        with mock.patch.object(self.bw.store, "log_path", return_value=os.path.join(self.state, "m.jsonl")):
+            found = self.bw._suggestions({"improve": {"panel_logs": [log]}}, self.state, now)
+        self.assertEqual([s["key"] for s in found], ["seat-absent:gem"])
+
+    def test_improve_refuses_a_note_with_no_text(self):
+        self.assertEqual(self.improve_cmd("note")[0], 2)
+
+    def test_done_refuses_a_key_that_is_not_listed(self):
+        os.makedirs(self.state, exist_ok=True)
+        self.assertEqual(self.improve_cmd("done", "typo")[0], 2)
+
     def test_no_nudges_when_fresh_and_empty(self):
         os.makedirs(self.state, exist_ok=True)
         Path(self.state, "start.json").write_text(json.dumps({"ts": time.time() - 3600}))

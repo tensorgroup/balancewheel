@@ -29,7 +29,7 @@ read-only server (`server.py`), its JSON views (`views.py`), and one vanilla-JS 
 (`bw start`), `updates.py` (tool versions and parallel updates), `locks.py` (per-runtime
 locks), `verify.py` (re-verification on a pool), `orca.py` and `sqlite_ro.py` (Orca presence,
 sealed-copy settings, and its quota snapshot), `probes.py` (OpenRouter's key endpoint and the
-refresh that runs the probes with one Orca read; agy awaits its shape), `inbox.py` (leads' asks
+refresh that runs the probes with one Orca read; agy awaits its shape), `improve.py` (`bw improve`, suggestions from how the user works), `inbox.py` (leads' asks
 as files, bw-owned `inbox.jsonl`, the answers-only view), `ccswitch.py` (`bw setup cc-switch` and the sealed-copy usage reader), `registry.py` (`bw registry`, the derived graph), `checks.py`, and `proc.py`
 (the one shell-out helper modules take as `run=`). `tests/attack/lead_containment.sh`
 attack-tests a lead runtime (spends model quota; not part of `unittest discover`).
@@ -91,6 +91,12 @@ moderator verifies every surviving finding against the code → a structured `pa
 record is appended to an append-only JSONL log. A dashboard renders per-seat win share
 and confirmed-finding rates, and seat-policy changes must cite those numbers and state
 re-promotion criteria.
+
+## The standing goal
+
+Working with balancewheel gets easier, faster, and better the more it is used. Prefer the change
+that removes a step for the user, and record what a feature does in a form `lead/improve.py` can
+learn from.
 
 ## Constraints that shape every change here
 

@@ -45,6 +45,7 @@
 ~/.local/state/balancewheel/leads.json
 ~/.local/state/balancewheel/handoffs
 ~/.local/state/balancewheel/inbox.jsonl
+~/.local/state/balancewheel/improve.json
 
 # Orca, the recommended (optional) canvas, writes status hooks into each vendor's user-level
 # config on its first launch: the Claude Code settings and Codex config.toml above, plus

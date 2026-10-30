@@ -259,17 +259,19 @@ class PlanOrcaAndProbeKeys(unittest.TestCase):
 
 
 class Triage(unittest.TestCase):
-    def load(self, triage):
+    def write(self, extra):
         base = {"schema_version": 3, "plans": {"p": {"billing": "plan", "quota": "statusline"}},
                 "leads": {"l": {"runtime": "claude-code", "model": "m", "plan": "p"}},
                 "seats": {"s": {"runtime": "codex", "model": "x", "roles": ["review"], "plan": "p"}},
                 "profiles": {"a": {"lead_order": ["l"]}, "b": {"lead_order": ["l"]}}, "default_profile": "a"}
-        if triage is not None:
-            base["triage"] = triage
+        base.update(extra)
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(base, f)
         self.addCleanup(os.unlink, f.name)
-        return cfg.load_config(f.name)["triage"]
+        return f.name
+
+    def load(self, triage):
+        return cfg.load_config(self.write({} if triage is None else {"triage": triage}))["triage"]
 
     def test_absent_is_off_everywhere(self):
         t = self.load(None)
@@ -282,6 +284,13 @@ class Triage(unittest.TestCase):
         self.assertEqual(t["thresholds"]["high_stakes"], 0.1)
         self.assertEqual(t["thresholds"]["strong_case"], 0.6)
         self.assertEqual(t["key_env"], "OPENROUTER_API_KEY")
+
+    def test_improve_panel_logs(self):
+        self.assertEqual(cfg.load_config(self.write({"improve": {"panel_logs": ["/a/b.jsonl"]}}))["improve"],
+                         {"panel_logs": ["/a/b.jsonl"]})
+        for bad in ({"improve": {"panel_logs": "x"}}, {"improve": {"nope": 1}}):
+            with self.assertRaises(cfg.ConfigError):
+                cfg.load_config(self.write(bad))
 
     def test_the_two_threshold_tables_agree(self):
         sys.path.insert(0, str(HERE.parent))

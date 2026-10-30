@@ -1,5 +1,12 @@
 # Roadmap — from private tooling to shareable project
 
+## Standing goal
+
+Working with balancewheel gets easier, faster, and better the more it is used, for everyone working
+together. Every change should either reduce what the user has to do or make the next improvement
+easier to see. `bw improve` is the loop: what happened, the pattern, the change it points to.
+Letting bw apply a low-risk suggestion by itself waits on evidence that its suggestions are right.
+
 ## Now (dogfooding)
 
 The reference implementation runs as private tooling (shell wrappers, Claude Code

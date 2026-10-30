@@ -17,7 +17,7 @@ EFFORT_LEVELS = {
 }
 SEAT_NAME = re.compile(r"[a-z0-9-]+")  # used with fullmatch: a trailing newline is refused
 TOP_KEYS = {"_comment", "schema_version", "seats", "state_dir", "metrics_log", "commands_dir", "bin_dir", "watches"}
-V3_TOP_KEYS = {"guard", "triage"}
+V3_TOP_KEYS = {"guard", "triage", "improve"}
 V3_LEAD_KEYS = {"autonomy"}
 V3_PROFILE_KEYS = {"protected_branches", "deploy_commands"}
 GUARD_KEYS = {"mode", "model", "on_judge_failure", "rules_on_native"}
@@ -391,6 +391,18 @@ def _validate_triage(obj, profiles):
     return {"mode": mode, "model": model, "key_env": key_env, "thresholds": thresholds}
 
 
+def _validate_improve(obj):
+    given = obj.get("improve", {})
+    _expect(isinstance(given, dict), "improve: must be an object")
+    bad = sorted(set(given) - {"panel_logs"})
+    if bad:
+        raise ConfigError(f"improve.{bad[0]}: unknown key")
+    logs = given.get("panel_logs", [])
+    _expect(isinstance(logs, list) and all(isinstance(p, str) and p.strip() for p in logs),
+            "improve.panel_logs: must be a list of paths")
+    return {"panel_logs": [_abs(p) for p in logs]}
+
+
 def _validate_defaults(obj, key, defaults):
     vals = dict(defaults)
     given = obj.get(key, {})
@@ -449,6 +461,7 @@ def load_config(path=None):
         _expect(prof in profiles, f"projects.{path_key}: unknown profile {prof!r}")
     guard = _validate_guard(obj, profiles, leads, version)
     triage = _validate_triage(obj, profiles)
+    improve = _validate_improve(obj)
     rotation = _validate_defaults(obj, "rotation", ROTATION_DEFAULTS)
     updates = _validate_defaults(obj, "updates", UPDATES_DEFAULTS)
     cockpit = _validate_cockpit(obj, warnings)
@@ -478,6 +491,7 @@ def load_config(path=None):
         "cockpit": cockpit,
         "guard": guard,
         "triage": triage,
+        "improve": improve,
         "path": p,
         "seats": seats,
         "state_dir": state_dir,

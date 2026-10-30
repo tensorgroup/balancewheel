@@ -129,6 +129,7 @@ def _normalise_seats(raw_seats):
 def _normalise_panel(e):
     return {
         "type": "panel",
+        "absent": e.get("absent") if isinstance(e.get("absent"), dict) else {},
         "id": panel_id_for(e),
         "ts": e.get("ts"),
         "target": _normalise_target(e.get("target", "")),

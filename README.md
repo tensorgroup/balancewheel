@@ -37,6 +37,19 @@ and never touch the same file; see [Working with OpenEscapement](#working-with-o
 6. **Knowledge stays markdown; indexes are derived.** All shared knowledge is
    markdown in git. Search layers (FTS, embeddings) are disposable local caches.
 
+## It gets better with use
+
+The standing goal: working with balancewheel gets easier, faster, and better the more it is used,
+for everyone working together on a project. So it watches how you actually work. `bw improve` reads
+what is already recorded (decisions you reversed, questions you only agreed with, session ratings,
+cap switches, leads you forced by hand, seats that keep missing panels) plus the one-line `@improve`
+notes leads publish when you correct them, and names the specific change each pattern points to,
+with its evidence. Every rule has a minimum sample, so a thin log says nothing rather than a guess.
+It only looks at the last 30 days, and `bw improve done` means a suggestion returns only on new
+evidence. It never suggests weakening the safety checks. It changes nothing itself: config and
+protocol edits stay yours. A one-line nudge before a lead
+starts tells you when there is something to look at.
+
 ## How it works
 
 Three roles, one protocol, one log.
@@ -314,6 +327,7 @@ outside a git worktree it shows `bw status`.
     bw status                # plans (quota, caps), worktrees, leads, how each is contained, open inbox items
     bw probe [plan...]       # read quota now (OpenRouter key, Orca), one line per plan
     bw inbox [--project] [--all]   # open asks from leads and notices from bw (--all: answered too)
+    bw improve [note "…"|done <key>] # changes worth making, from how you work; add a note; mark one dealt with
     bw triage install claude       # the question-triage hook in Claude Code's settings (uninstall removes it)
     bw answer <id> "<text>"  # answer an ask, or close a notice
     bw cap <plan>            # record that a plan is capped (for leads without a statusline)
