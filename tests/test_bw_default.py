@@ -116,6 +116,36 @@ class LeadNudges(Case):
         lines = self.bw.lead_nudges(self.state, str(self.repo), time.time())
         self.assertTrue(any("bw start" in line for line in lines), lines)
 
+    def decide(self, key, item_id, now=100):
+        inbox.ask(self.state, key, "/w", "la", "s1", "pick?", item_id)
+        inbox.triage_answer(self.state, item_id, {}, now=now)
+
+    def test_decided_questions_are_counted_until_seen(self):
+        self.decide(self.key(), "a1b2c3d4")
+        lines = self.bw.lead_nudges(self.state, str(self.repo), time.time())
+        self.assertEqual(len(lines), 1)
+        self.assertIn("1 question decided without you", lines[0])
+        Path(self.state, self.bw.DECIDED_SEEN).write_text(json.dumps({"ts": 100}))
+        self.assertEqual(self.bw.lead_nudges(self.state, str(self.repo), time.time()), [])
+
+    def inbox_cmd(self, **kw):
+        a = mock.Mock(all=False, project=False, **{})
+        for k, v in kw.items():
+            setattr(a, k, v)
+        with mock.patch.object(self.bw, "resolve_project", return_value=mock.Mock(worktree_key="mine00000000")), \
+                redirect_stdout(io.StringIO()) as out:
+            self.bw.cmd_inbox(a, {}, self.state)
+        return out.getvalue()
+
+    def test_a_project_view_does_not_mark_other_projects_seen(self):
+        self.decide("mine00000000", "a1b2c3d4"); self.decide("other0000000", "e5f6a7b8", now=200)
+        self.inbox_cmd(all=True, project=True)
+        self.assertFalse(Path(self.state, self.bw.DECIDED_SEEN).exists())
+        out = self.inbox_cmd(all=True)
+        self.assertIn("decided by bw", out)
+        self.assertEqual(json.loads(Path(self.state, self.bw.DECIDED_SEEN).read_text())["ts"], 200)
+        self.assertNotIn("decided without you", self.inbox_cmd())
+
     def test_no_nudges_when_fresh_and_empty(self):
         os.makedirs(self.state, exist_ok=True)
         Path(self.state, "start.json").write_text(json.dumps({"ts": time.time() - 3600}))

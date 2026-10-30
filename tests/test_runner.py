@@ -1,11 +1,12 @@
 import json, os, pty, signal, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT)); sys.path.insert(0, str(ROOT / "metrics"))
 import store  # noqa: E402
-from lead import quota  # noqa: E402
+from lead import proc, quota, runner  # noqa: E402
 from lead.guard import AGY_AWAITS  # noqa: E402
 
 DRIVER = str(HERE / "fixtures" / "run_runner.py")
@@ -737,6 +738,180 @@ def _alive(pid):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TriageRunner(RunnerCase):
+    MODE = "acting"
+
+    def config(self, root):
+        c = super().config(root)
+        c["schema_version"] = 3
+        c["leads"]["lb"]["runtime"] = "claude-code"
+        c["profiles"]["p"]["lead_order"] = ["lb", "la"]
+        c["triage"] = {"mode": {"p": self.MODE}, "model": "m", "key_env": "NO_SUCH_TRIAGE_KEY"}
+        return c
+
+    def items(self):
+        from lead import inbox
+        return inbox.load(str(self.state))["items"]
+
+    def publish(self, name, text):
+        asks = Path(self.fake("b")["inbox_env"]["BW_ASKS"])
+        (asks / f".tmp-{name}").write_text(text)
+        os.rename(asks / f".tmp-{name}", asks / f"{name}.ask")
+
+    def test_claude_lead_gets_the_hook_env_and_stale_values_go(self):
+        p = self.start(env={"FAKE_MODE_b": "exit", "BW_TRIAGE_HOOK": "/stale"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        env = self.fake("b")["triage_env"]
+        self.assertTrue(env["BW_TRIAGE_HOOK"].endswith("lead/triage_hook.py"))
+        self.assertEqual(json.loads(env["BW_TRIAGE_CONFIG"])["mode"], "acting")
+
+    def test_a_failed_judge_leaves_the_ask_open_and_says_so_once(self):
+        p = self.start(env={"FAKE_MODE_b": "sleep"})
+        self.assertTrue(wait_for(lambda: self.fake("b")))
+        self.publish("q", "pick a name?\nRecommendation: a, it matches")
+        self.assertTrue(wait_for(lambda: len(self.items()) == 2, 8))
+        os.killpg(self.fake("b")["pgid"], signal.SIGTERM)
+        out = p.communicate(timeout=15)[0]
+        ask = next(i for i in self.items() if i["type"] == "ask")
+        self.assertEqual(ask["status"], "open")
+        self.assertIn(f"lb asks [{ask['id']}]", out)
+        self.assertEqual(sum(1 for i in self.items() if i.get("kind") == "triage"), 1)
+        (ev,) = [e for e in self.raw_events() if e["type"] == "triage"]
+        self.assertEqual((ev["verdict"], ev["reason"], ev["failed"]), ("ask", "key unset", True))
+        self.assertNotIn("text", ev)
+
+    def test_a_receipt_is_closed_and_printed_as_decided(self):
+        p = self.start(env={"FAKE_MODE_b": "sleep"})
+        self.assertTrue(wait_for(lambda: self.fake("b")))
+        self.publish("r", '@session decided\n{"mode": "acting", "scores": {"strong_case": 0.9, "only_person_knows": 0.1, '
+                          '"outward_or_irreversible": 0.1, "high_stakes": 0.1}}\npick?\nRecommendation: a')
+        self.assertTrue(wait_for(lambda: self.items(), 5))
+        os.killpg(self.fake("b")["pgid"], signal.SIGTERM)
+        out = p.communicate(timeout=15)[0]
+        (i,) = self.items()
+        self.assertEqual(i["answer"]["from"], "triage")
+        self.assertIn(f"decided [{i['id']}] without you", out)
+        (ev,) = [e for e in self.raw_events() if e["type"] == "triage"]
+        self.assertEqual(ev["scores"]["strong_case"], 0.9)
+        self.assertNotIn("asks [", out)
+
+    def raw_events(self):
+        return [json.loads(l) for l in self.log.read_text().splitlines()]
+
+
+class TriageDrain(unittest.TestCase):
+    """drain's rules, with the child replaced: which asks get judged, and what a decision does."""
+
+    def setUp(self):
+        from lead import inbox
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.state = os.path.join(self.tmp.name, "state")
+        os.makedirs(inbox.asks_dir(self.state, "k"))
+        self.inbox = inbox
+        self.said, self.logged = [], []
+        project = mock.Mock(worktree_key="k", worktree="/w", profile="p")
+        self.ctx = mock.Mock(state=self.state, project=project, say=self.said.append, log=self.logged.append,
+                             config={"triage": {"mode": {"p": "acting"}, "model": "m", "key_env": "K", "thresholds": {}}})
+        self.ctx.notice.return_value = None
+        self.s = runner.Session.__new__(runner.Session)
+        self.s.lead_name, self.s.id, self.s.lead = "la", "s1", {"runtime": "codex"}
+
+    def publish(self, name, text="pick?\nRecommendation: a, it fits"):
+        with open(os.path.join(self.inbox.asks_dir(self.state, "k"), f"{name}.ask"), "w") as f:
+            f.write(text)
+
+    def drain(self, verdict="decide", **kw):
+        v = {"verdict": verdict, "reason": "r", "scores": {"strong_case": 0.9}}
+        with mock.patch.object(runner, "judge_child", return_value=v) as j:
+            self.s.drain(self.ctx, **kw)
+        return j
+
+    def test_a_decision_closes_the_ask_writes_the_view_and_reports(self):
+        self.publish("a")
+        self.drain(triage=True)
+        (i,) = self.inbox.load(self.state)["items"]
+        self.assertEqual(i["answer"]["from"], "triage")
+        self.assertIn("@bw decision", Path(self.inbox.view_path(self.state, "k")).read_text())
+        self.assertIn("without you", self.said[0])
+
+    def test_only_the_poll_loop_drain_judges(self):
+        self.publish("a")
+        self.assertFalse(self.drain().called)
+        self.assertEqual(self.inbox.load(self.state)["items"][0]["status"], "open")
+
+    def test_at_most_two_calls_per_drain_and_the_rest_stay_open(self):
+        for n in "abc":
+            self.publish(n)
+        self.assertEqual(self.drain(triage=True).call_count, runner.TRIAGE_PER_DRAIN)
+        self.assertEqual(sum(i["status"] == "open" for i in self.inbox.load(self.state)["items"]), 1)
+
+    def test_shadow_logs_and_changes_nothing(self):
+        self.ctx.config["triage"]["mode"]["p"] = "shadow"
+        self.publish("a")
+        self.drain(triage=True)
+        self.assertEqual(self.inbox.load(self.state)["items"][0]["status"], "open")
+        self.assertTrue(any(e["type"] == "triage" for e in self.logged))
+
+    def test_prefiltered_and_truncated_asks_never_reach_the_child(self):
+        self.publish("a", "no recommendation here")
+        self.publish("b", "deploy it?\nRecommendation: yes")
+        self.publish("c", "ok?\nRecommendation: yes" + " " * self.inbox.READ_LIMIT + "deploy")
+        self.assertFalse(self.drain(triage=True).called)
+
+    def test_a_receipt_from_a_non_claude_lead_stays_a_question(self):
+        self.publish("a", '@session decided\n{"mode": "acting"}\npick?')
+        self.drain()
+        self.assertEqual(self.inbox.load(self.state)["items"][0]["status"], "open")
+
+    def test_a_failed_view_write_still_reports_the_decision(self):
+        self.publish("a")
+        with mock.patch.object(self.inbox, "write_view", side_effect=OSError):
+            self.drain(triage=True)
+        self.assertEqual(self.inbox.load(self.state)["items"][0]["status"], "answered")
+        self.assertIn("without you", self.said[0])
+        self.assertFalse(any("answer with" in line for line in self.said))
+
+    def test_the_user_answering_first_is_not_asked_again(self):
+        self.publish("a")
+        def judge(cfg, text):
+            self.inbox.answer(self.state, self.inbox.load(self.state)["items"][0]["id"], "mine")
+            return {"verdict": "decide", "reason": "r", "scores": {}}
+        with mock.patch.object(runner, "judge_child", side_effect=judge):
+            self.s.drain(self.ctx, triage=True)
+        self.assertEqual(self.said, [])
+
+    def test_prefiltered_asks_are_logged_without_text(self):
+        self.publish("a", "no recommendation here")
+        self.drain(triage=True)
+        ev = next(e for e in self.logged if e["type"] == "triage")
+        self.assertEqual((ev["verdict"], ev["reason"]), ("ask", "no recommendation"))
+        self.assertNotIn("text", ev)
+
+    def test_a_shadow_verdict_is_kept_on_the_ask(self):
+        self.ctx.config["triage"]["mode"]["p"] = "shadow"
+        self.publish("a")
+        self.drain(triage=True)
+        self.assertEqual(self.inbox.load(self.state)["items"][0]["triage"]["verdict"], "decide")
+
+    def test_a_judge_that_raises_leaves_the_question(self):
+        self.publish("a")
+        with mock.patch.object(runner, "judge_child", side_effect=RuntimeError):
+            self.s.drain(self.ctx, triage=True)
+        self.assertEqual(self.inbox.load(self.state)["items"][0]["status"], "open")
+
+
+class JudgeChild(unittest.TestCase):
+    def test_a_stalled_child_is_killed_at_the_bound(self):
+        r = proc.Result(124, "", "", True)
+        with mock.patch.object(runner.proc, "run", return_value=r):
+            self.assertEqual(runner.judge_child({}, "x")["reason"], "timeout")
+
+    def test_junk_output_is_no_verdict(self):
+        for out in ("", "nope", "[]", '{"verdict": "yes"}'):
+            with mock.patch.object(runner.proc, "run", return_value=proc.Result(0, out, "", False)):
+                self.assertEqual(runner.judge_child({}, "x")["reason"], "no verdict")
 
 
 class OrcaReRead(RunnerCase):

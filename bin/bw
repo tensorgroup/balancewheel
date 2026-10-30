@@ -21,6 +21,8 @@
                                                   its inbox file
   bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
   bw setup cc-switch                              pre-write cc-switch's settings (before its first launch)
+  bw triage install claude                        add the question-triage hook to Claude Code's settings
+  bw triage uninstall claude                      remove it (other entries are left alone)
   bw guard install agy                            add the guard hook entry to agy's hooks file
   bw guard uninstall agy                          remove it (other entries are left alone)
   bw guard verify <runtime> [--lead <lead>]       attack-test the guard on a runtime, record a pass
@@ -39,14 +41,16 @@ from cockpit import server as cockpit_server, views as cockpit_views  # noqa: E4
 from lead import ccswitch, inbox, probes, quota, registry, runner, sandbox, start, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.guard.review import safe  # noqa: E402
+from lead import triage_install  # noqa: E402
 from lead.paths import ConfigError, load_config, state_dir  # noqa: E402  (also puts metrics/ on sys.path)
 import store  # noqa: E402
 from lead.projects import resolve_project, worktree_key  # noqa: E402
 from lead import proc  # noqa: E402
-from lead.paths import read_json  # noqa: E402
+from lead.paths import read_json, write_json_atomic  # noqa: E402
 
-COMMANDS = ("lead", "status", "registry", "probe", "start", "inbox", "answer", "cockpit", "cap", "sandbox", "guard",
+COMMANDS = ("lead", "status", "registry", "probe", "start", "inbox", "answer", "cockpit", "cap", "sandbox", "guard", "triage",
             "setup")
+DECIDED_SEEN = "triage-seen.json"  # when `bw inbox --all` last showed the decided items
 START_STALE_S = 86400  # tools not updated by bw start for this long get a one-line nudge
 
 
@@ -74,6 +78,9 @@ def lead_nudges(state, cwd, now):
         n = len(inbox.open_items(state, worktree_key(top))) if top else 0
         if n:
             lines.append(f"bw: {n} open item{'s' if n != 1 else ''} for this worktree — bw inbox --project")
+        d = inbox.decided_since(state, _decided_seen(state), worktree_key(top)) if top else 0
+        if d:
+            lines.append(f"bw: {d} question{'s' if d != 1 else ''} decided without you — bw inbox --all")
     except Exception:  # noqa: BLE001 — a nudge never stops a lead
         pass
     try:
@@ -218,8 +225,25 @@ def cmd_inbox(a, config, state):
         print(f"[{safe(i.get('id'))}] {safe(kind)} · {_age(i.get('ts'), now)} · from {safe(i.get('from'))} · {safe(where)}")
         print(f"  {safe(i.get('text', ''))}")
         if i["status"] == "answered":
-            print(f"  answered: {safe((i.get('answer') or {}).get('text', ''))}")
+            ans = i.get("answer") or {}
+            if ans.get("from") == "triage":
+                print(f"  {'would have decided' if ans.get('shadow') else 'decided by bw'}: reverse with bw answer {safe(i.get('id'))} \"…\"")
+            else:
+                print(f"  answered: {safe(ans.get('text', ''))}")
+        elif (i.get("triage") or {}).get("verdict") == "decide":
+            print("  would have decided")
+    decided = inbox.decided_since(state, _decided_seen(state), project)
+    if decided and not a.all:
+        print(f"bw: {decided} question{'s' if decided != 1 else ''} decided without you — bw inbox --all")
+    shown = [i["answer"]["ts"] for i in items if inbox.decided(i)]
+    if a.all and project is None and shown:  # --project hides other worktrees' decisions, so they stay unseen
+        write_json_atomic(os.path.join(state, DECIDED_SEEN), {"ts": max(shown)})
     return 0
+
+
+def _decided_seen(state):
+    ts = (read_json(os.path.join(state, DECIDED_SEEN), None) or {}).get("ts")
+    return ts if isinstance(ts, (int, float)) and not isinstance(ts, bool) else 0
 
 
 def cmd_answer(a, config, state):
@@ -247,6 +271,8 @@ def cmd_answer(a, config, state):
               f"({type(e).__name__}); it will refresh at the next session start")
         return 0
     print(f"bw: answered {safe(a.id)}; the lead sees it in its inbox file; tell it to look")
+    if item.get("source") == "session":
+        print("bw: the lead never saw this id; tell it which question you mean")
     return 0
 
 
@@ -257,6 +283,16 @@ def _report(ok, msg):
 
 def cmd_verify(a, config, state):
     return _report(*verify.sandbox_verify(config, state, a.runtime, a.lead))
+
+
+def cmd_triage(a):
+    path = triage_install.settings_path()
+    try:
+        print((triage_install.install if a.sub == "install" else triage_install.uninstall)(path))
+    except ValueError as e:
+        print(f"bw: {e}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def cmd_guard_verify(a, config, state):
@@ -320,6 +356,9 @@ def main(argv=None):
     rv = gds.add_parser("review"); rv.add_argument("--profile", default=None)
     rv.add_argument("--recent", type=_count, default=20); rv.add_argument("--sample", type=_count, default=5)
     rv.add_argument("--list", action="store_true")
+    tr = sub.add_parser("triage"); trs = tr.add_subparsers(dest="sub", required=True)
+    for name in ("install", "uninstall"):
+        trs.add_parser(name).add_argument("runtime", choices=["claude"])
     st = sub.add_parser("setup"); st.add_argument("what", choices=["cc-switch"])
     argv, outside = default_argv(sys.argv[1:] if argv is None else argv, os.getcwd())
     a = ap.parse_args(argv)
@@ -334,6 +373,8 @@ def main(argv=None):
 def _dispatch(a):
     if a.cmd == "setup":  # touches only the tool's own settings file, so it needs no config
         return cmd_setup(a)
+    if a.cmd == "triage":  # touches only Claude Code's settings file, so it needs no config
+        return cmd_triage(a)
     if a.cmd == "guard" and a.sub not in ("review", "verify"):  # touches only the hooks file, so it needs no config
         return cmd_guard(a, None, None)
     try:

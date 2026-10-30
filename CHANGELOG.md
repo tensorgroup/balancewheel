@@ -15,6 +15,15 @@ not against the prose.
 
 ### Added
 
+- **Question triage** (`lead/triage.py`, `lead/triage_hook.py`, `lead/triage_install.py`, `bw triage
+  install|uninstall claude`): a decision model settles leads' questions that have a strong
+  recommendation. Config schema 3 gains an optional `triage` object (`mode` per profile: `off`,
+  `shadow`, `acting`; `model`; `key_env`; `thresholds`), absent means off. The ask format gains a
+  `Recommendation:` line and a `@session decided` receipt header. The metrics log gains `triage`
+  events (scores and verdict, no text). `inbox.jsonl` answers gain `from: "triage"`, and the
+  answers view gains `@bw decision` blocks, which are not the user's words; a later `bw answer`
+  supersedes one. Leads' protocol text changes to match. `bw inbox` and the pre-lead nudge count
+  decided questions, and `bw inbox --all` writes `triage-seen.json` in the state dir.
 - **Plain `bw`** (`bin/bw`): in a git worktree it runs `bw lead` there, and lead flags work on it
   (`bw --use <lead>`, `bw --auto`, `bw --no-rating`); outside a worktree it runs `bw status` and says
   so. Before a lead starts, `bw lead` prints one line each when the worktree has open inbox items and

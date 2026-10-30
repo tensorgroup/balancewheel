@@ -13,7 +13,10 @@ Inbox (lead/inbox.py): the lead publishes asks as files in BW_ASKS and reads ans
 a bw-owned file it cannot write. bw ingests asks at session start, about once a second while the
 lead runs, and once more after the lead's group is gone (before a switch's handoff), under the
 session that published them — except asks left over from an earlier session that never got
-drained (bw crashed), which the session-start scan records under the new session. Notices (all leads capped, a pinned lead capped, the guard
+drained (bw crashed), which the session-start scan records under the new session. Triage
+(lead/triage.py) judges new asks in the poll-loop drain only: a decision in the start, switch, or
+exit drain would have no lead to act on it. It runs in a child killed at TRIAGE_KILL_S, at most
+TRIAGE_PER_DRAIN per drain; an ask past that stays open, the safe state. Notices (all leads capped, a pinned lead capped, the guard
 unreachable, an ingest problem) go to the same inbox.
 
 Runtime lock (lead/locks.py): a shared flock on the lead's runtime, taken before that runtime's
@@ -36,7 +39,7 @@ import tempfile
 import time
 import uuid
 
-from . import containment, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox
+from . import containment, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox, triage as triagemod
 from .handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text, write_first_prompt
 from .guard import broker as brk, install as guard_install, launch
 from .guard.launch import GuardUnavailable
@@ -51,6 +54,8 @@ import store  # noqa: E402
 
 REFUSED, LOCKED, UNVERIFIED, NO_LEADS, ALL_CAPPED, GUARD_UNAVAILABLE, START_FAILED = 2, 3, 4, 5, 6, 7, 8
 INGEST_EVERY_S = 1.0
+TRIAGE_PER_DRAIN = 2  # model calls in one drain: the poll loop waits at most this many times TRIAGE_KILL_S
+TRIAGE_KILL_S = 3.0
 TRY_LOCK_ATTEMPTS, TRY_LOCK_PAUSE_S = 5, 0.25  # a mid-session runtime-lock take: ~1 s before "held"
 V0_SCOPE = ("v0: automatic switching for leads that report usage through the Claude Code statusline; "
             "for other leads record a cap with `bw cap <plan>`")
@@ -173,10 +178,14 @@ class Session:
                                  client_dir=client_dir)
         # Every BW_GUARD_* in bw's own environment is stale for this lead; only a guarded session's
         # own values (below) are real.
-        env = {k: v for k, v in os.environ.items() if not k.startswith("BW_GUARD_")}
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("BW_GUARD_", "BW_TRIAGE"))}
         env.update(BW_CHECKPOINT=os.path.join(cp_dir, "checkpoint.md"), BW_SESSION=self.id,
                    BW_ASKS=inboxmod.asks_dir(ctx.state, ctx.project.worktree_key),
                    BW_INBOX=inboxmod.view_path(ctx.state, ctx.project.worktree_key))
+        mode = self.triage_mode(ctx)
+        if mode != "off" and self.lead["runtime"] == "claude-code":
+            env.update(BW_TRIAGE_HOOK=os.path.join(ROOT, "lead", "triage_hook.py"),
+                       BW_TRIAGE_CONFIG=json.dumps({"mode": mode, **triage_cfg(ctx)}))
         if self.broker is not None:
             env.update(BW_GUARD_SOCKET=self.broker.sock_path, BW_GUARD_TOKEN=self.broker.token,
                        BW_GUARD_MODE=self.broker.mode, BW_GUARD_DIR=client_dir, BW_GUARD_MARKERS=self.markers_path)
@@ -297,20 +306,77 @@ class Session:
                 ctx.notice("guard-unreachable", line[len("bw: "):])
                 self.marker_notice_sent = True
 
-    def drain(self, ctx):
+    def triage_mode(self, ctx):
+        return ctx.config.get("triage", {}).get("mode", {}).get(ctx.project.profile, "off")
+
+    def drain(self, ctx, triage=False):
         """Ingest every ask in the worktree's asks dir under this session's identity — this lead's,
-        and at session start any an earlier session left undrained. Never raises."""
+        and at session start any an earlier session left undrained. `triage`: also judge them; only
+        the poll loop passes it. Never raises."""
         key = ctx.project.worktree_key
+        mode = self.triage_mode(ctx)
+        receipts = mode != "off" and self.lead["runtime"] == "claude-code"
         try:
-            recs, problem = inboxmod.ingest(ctx.state, key, ctx.project.worktree, self.lead_name, self.id)
+            recs, problem = inboxmod.ingest(ctx.state, key, ctx.project.worktree, self.lead_name, self.id,
+                                            receipts=receipts)
         except Exception as e:  # ingest does not raise by contract; a bug in it must not stop the lead
             recs, problem = [], f"inbox: ingest failed ({type(e).__name__})"
+        calls = 0
         for r in recs:
+            ctx.log({"type": "ask", "id": r["id"], "project": key, "session_id": self.id, "from": self.lead_name})
+            if r.get("source") == "session":
+                self._log_triage(ctx, r, "session", "shadow" if r.get("shadow") else "acting",
+                                 {"verdict": "decide", "scores": r.get("scores")})
+                if not r.get("shadow"):
+                    self._say_decided(ctx, r)
+                continue
+            why = "truncated" if r.get("truncated") else triagemod.prefilter(r["text"])
+            if triage and mode != "off":
+                if why is not None:
+                    self._log_triage(ctx, r, "inbox", mode, {"verdict": "ask", "reason": why})
+                elif calls < TRIAGE_PER_DRAIN:
+                    calls += 1
+                    if self._triage(ctx, r, mode):
+                        continue
             ctx.say(f"bw: {self.lead_name} asks [{r['id']}]: {inboxmod.first_line(r['text'])} — "
                     f"answer with bw answer {r['id']} \"…\"")
-            ctx.log({"type": "ask", "id": r["id"], "project": key, "session_id": self.id, "from": self.lead_name})
         if problem and ctx.notice("inbox", problem):
             ctx.say(f"bw: {problem}")
+
+    def _triage(self, ctx, rec, mode):
+        """Judge one ask; True when no one needs telling that it is waiting for an answer."""
+        try:
+            v = judge_child(triage_cfg(ctx), rec["text"])
+            self._log_triage(ctx, rec, "inbox", mode, v)
+            if v.get("failed") and ctx.notice("triage", f"triage could not judge a question ({v['reason']}); "
+                                                        "questions are reaching you as usual"):
+                ctx.say(f"bw: triage could not judge a question ({safe(v['reason'])})")
+            if v["verdict"] != "decide":
+                return False
+            if mode != "acting":
+                inboxmod.note_verdict(ctx.state, rec["id"], v["verdict"], v.get("scores"))
+                return False
+            if inboxmod.triage_answer(ctx.state, rec["id"], v.get("scores")) is None:
+                return True  # the user answered while the model was thinking
+        except Exception as e:  # noqa: BLE001 — triage never stops a lead; the ask stays as it was recorded
+            ctx.say(f"bw: triage failed ({type(e).__name__}); the question stands")
+            return False
+        self._say_decided(ctx, rec)
+        try:
+            inboxmod.write_view(ctx.state, ctx.project.worktree_key)
+        except OSError as e:  # the decision is recorded; the file catches up at the next write
+            ctx.say(f"bw: the inbox answers file could not be written ({type(e).__name__}); tell the lead to carry on")
+        return True
+
+    def _say_decided(self, ctx, rec):
+        ctx.say(f"bw: decided [{rec['id']}] without you: {inboxmod.first_line(rec['text'])} — "
+                f"reverse with bw answer {rec['id']} \"…\"")
+
+    def _log_triage(self, ctx, rec, source, mode, v):
+        ctx.log({"type": "triage", "id": rec["id"], "project": ctx.project.worktree_key, "session_id": self.id,
+                 "lead": self.lead_name, "source": source, "mode": mode, "verdict": v["verdict"],
+                 "reason": v.get("reason"), "failed": bool(v.get("failed")), "scores": v.get("scores"),
+                 "cost": v.get("cost")})
 
     def finish_guard(self, ctx):
         """Stop the broker and log the guard event; call before logging `session end`."""
@@ -465,6 +531,27 @@ def write_pin(state, key, lead):
         else:
             pins.pop(key, None)
         write_json_atomic(_pins_path(state), pins)
+
+
+def triage_cfg(ctx):
+    t = ctx.config["triage"]
+    return {"model": t["model"], "key_env": t["key_env"], "thresholds": t["thresholds"]}
+
+
+def judge_child(cfg, text):
+    """lead/triage.py in a child killed at TRIAGE_KILL_S, so a stalled reply cannot hold the poll loop."""
+    with tempfile.TemporaryFile("w+") as f:
+        json.dump({"text": text, "config": cfg}, f)
+        f.seek(0)
+        r = proc.run([sys.executable, "-I", os.path.join(ROOT, "lead", "triage.py")], TRIAGE_KILL_S, stdin=f)
+    if r.timed_out:
+        return {"verdict": "ask", "reason": "timeout", "failed": True}
+    try:
+        v = json.loads(r.out)
+    except ValueError:
+        return {"verdict": "ask", "reason": "no verdict", "failed": True}
+    return v if isinstance(v, dict) and v.get("verdict") in ("decide", "ask") else \
+        {"verdict": "ask", "reason": "no verdict", "failed": True}
 
 
 def _guarded(lead):
@@ -664,8 +751,8 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
             while session.proc.poll() is None:
                 time.sleep(0.1)
                 if time.time() >= next_ingest:
-                    next_ingest = time.time() + INGEST_EVERY_S
-                    session.drain(ctx)
+                    session.drain(ctx, triage=True)
+                    next_ingest = time.time() + INGEST_EVERY_S  # a slow judge must not make drains back to back
                 if time.time() < next_poll:
                     continue
                 next_poll = time.time() + poll_s

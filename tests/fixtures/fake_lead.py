@@ -81,6 +81,7 @@ with open(os.path.join(out, f"{name}.json"), "w") as fh:
     json.dump({"pid": os.getpid(), "pgid": os.getpgrp(), "argv": sys.argv, "foreground": fg, "probe": probe,
                "guard_env": sorted(k for k in os.environ if k.startswith("BW_GUARD_")),
                "inbox_env": {k: os.environ.get(k) for k in ("BW_ASKS", "BW_INBOX")},
+               "triage_env": {k: os.environ.get(k) for k in ("BW_TRIAGE_HOOK", "BW_TRIAGE_CONFIG")},
                "earlier_alive": [p for p in earlier if alive(p)], "fds": inherited_fds()}, fh)
 print(f"FAKE {name} started", flush=True)
 if mode == "ignore_term":

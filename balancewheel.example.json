@@ -40,17 +40,28 @@
   },
   "tools": {
     "claude": {
-      "update": ["claude", "update"]
+      "update": [
+        "claude",
+        "update"
+      ]
     },
     "agy": {
-      "update": ["agy", "update"]
+      "update": [
+        "agy",
+        "update"
+      ]
     },
     "orca": {
       "app": "/Applications/Orca.app",
       "self_updating": true
     },
     "cc-switch": {
-      "update": ["brew", "upgrade", "--cask", "cc-switch"],
+      "update": [
+        "brew",
+        "upgrade",
+        "--cask",
+        "cc-switch"
+      ],
       "timeout_s": 900
     }
   },
@@ -215,6 +226,13 @@
       "product": "shadow"
     },
     "on_judge_failure": "allow"
+  },
+  "triage": {
+    "mode": {
+      "product": "shadow"
+    },
+    "model": "typesafe/jev-1.13",
+    "key_env": "OPENROUTER_API_KEY"
   },
   "state_dir": "~/.local/state/balancewheel",
   "metrics_log": "~/.local/state/balancewheel/metrics.jsonl",

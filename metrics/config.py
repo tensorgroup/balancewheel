@@ -17,12 +17,15 @@ EFFORT_LEVELS = {
 }
 SEAT_NAME = re.compile(r"[a-z0-9-]+")  # used with fullmatch: a trailing newline is refused
 TOP_KEYS = {"_comment", "schema_version", "seats", "state_dir", "metrics_log", "commands_dir", "bin_dir", "watches"}
-V3_TOP_KEYS = {"guard"}
+V3_TOP_KEYS = {"guard", "triage"}
 V3_LEAD_KEYS = {"autonomy"}
 V3_PROFILE_KEYS = {"protected_branches", "deploy_commands"}
 GUARD_KEYS = {"mode", "model", "on_judge_failure", "rules_on_native"}
 GUARD_MODES = {"shadow", "acting"}
 JUDGE_FAILURES = {"allow", "ask"}
+TRIAGE_KEYS = {"mode", "model", "key_env", "thresholds"}
+TRIAGE_MODES = {"off", "shadow", "acting"}
+TRIAGE_THRESHOLDS = {"strong_case": 0.6, "only_person_knows": 0.7, "outward_or_irreversible": 0.3, "high_stakes": 0.3}
 SCHEMA_VERSIONS = (1, 2, 3)
 AUTONOMY = {"native", "guard", "bypass", "manual"}
 SUPPORTED_AUTONOMY = {
@@ -356,6 +359,38 @@ def _validate_guard(obj, profiles, leads, version):
     return {"mode": mode, "model": model, "on_judge_failure": failure, "rules_on_native": False}
 
 
+def _validate_triage(obj, profiles):
+    given = obj.get("triage", {})
+    _expect(isinstance(given, dict), "triage: must be an object")
+    bad = sorted(set(given) - TRIAGE_KEYS)
+    if bad:
+        raise ConfigError(f"triage.{bad[0]}: unknown key")
+    mode = {p: "off" for p in profiles}
+    m_in = given.get("mode", {})
+    _expect(isinstance(m_in, dict), "triage.mode: must be an object")
+    for prof, m in m_in.items():
+        kp = f"triage.mode.{prof}"
+        _expect(prof in profiles, f"{kp}: unknown profile {prof!r}")
+        _expect(m in TRIAGE_MODES, f"{kp}: must be one of {sorted(TRIAGE_MODES)}, got {m!r}")
+        mode[prof] = m
+    model = given.get("model")
+    if model is not None:
+        _expect(isinstance(model, str) and model.strip(), "triage.model: must be a non-empty string")
+    _expect(model is not None or all(m == "off" for m in mode.values()),
+            "triage.model: required unless every profile's mode is off")
+    key_env = given.get("key_env", "OPENROUTER_API_KEY")
+    _expect(isinstance(key_env, str) and key_env.strip(), "triage.key_env: must be a non-empty string")
+    thresholds = dict(TRIAGE_THRESHOLDS)
+    t_in = given.get("thresholds", {})
+    _expect(isinstance(t_in, dict), "triage.thresholds: must be an object")
+    for k, v in t_in.items():
+        _expect(k in TRIAGE_THRESHOLDS, f"triage.thresholds.{k}: unknown key; valid: {sorted(TRIAGE_THRESHOLDS)}")
+        _expect(isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 1,
+                f"triage.thresholds.{k}: must be a number from 0 to 1")
+        thresholds[k] = v
+    return {"mode": mode, "model": model, "key_env": key_env, "thresholds": thresholds}
+
+
 def _validate_defaults(obj, key, defaults):
     vals = dict(defaults)
     given = obj.get(key, {})
@@ -413,6 +448,7 @@ def load_config(path=None):
     for path_key, prof in projects.items():
         _expect(prof in profiles, f"projects.{path_key}: unknown profile {prof!r}")
     guard = _validate_guard(obj, profiles, leads, version)
+    triage = _validate_triage(obj, profiles)
     rotation = _validate_defaults(obj, "rotation", ROTATION_DEFAULTS)
     updates = _validate_defaults(obj, "updates", UPDATES_DEFAULTS)
     cockpit = _validate_cockpit(obj, warnings)
@@ -441,6 +477,7 @@ def load_config(path=None):
         "updates": updates,
         "cockpit": cockpit,
         "guard": guard,
+        "triage": triage,
         "path": p,
         "seats": seats,
         "state_dir": state_dir,

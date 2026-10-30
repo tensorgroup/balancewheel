@@ -386,6 +386,11 @@ with a symlinked path component rather than silently widening.
 
 ## Decision model: routing advice and shadow review scoring (pilot)
 
+Updated 2026-10-30: the same model now settles leads' questions when `triage.mode` is `acting`. That
+is not advice: its verdict decides, inside the bounds in the README's question triage entry. The
+four-question policy was calibrated on 14 synthetic questions; the thresholds are starting values,
+and reversals in the inbox are the evidence for moving them.
+
 Written 2026-09-29. Which model does a task, how hard it thinks, and how deep the review goes
 were chosen by feel. A *decision model* (a "System One" model: TypeSafe's Jev was first, on
 2026-09-15) answers narrow typed questions — `choice` (pick an option), `score` (a place on an

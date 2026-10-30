@@ -175,7 +175,7 @@ class Records(InboxCase):
         with self.assertRaises(ValueError):
             inbox.notice(self.state, KEY, "made-up", "x")
         self.assertEqual(inbox.NOTICE_KINDS,
-                         {"all-capped", "pinned-capped", "router-shadow", "guard-unreachable", "inbox"})
+                         {"all-capped", "pinned-capped", "router-shadow", "guard-unreachable", "inbox", "triage"})
 
     def test_view_holds_answers_and_ask_ids_never_ask_text(self):
         self.publish("a", "ASK-TEXT-secret question")
@@ -347,6 +347,152 @@ class Cli(InboxCase):
         self.assertIn(r["id"], out)
         self.assertIn("which \\x1b[2J branch?", out)
         self.assertNotIn("\x1b", out)
+
+
+class Triage(InboxCase):
+    def asked(self, text="pick?\nRecommendation: a"):
+        self.publish("a", text)
+        return self.ingest()[0][0]
+
+    def test_a_decision_closes_the_ask_and_is_not_the_users(self):
+        r = self.asked()
+        self.assertIsNotNone(inbox.triage_answer(self.state, r["id"], {"strong_case": 0.9}))
+        (i,) = self.items()
+        self.assertEqual((i["status"], i["answer"]["from"]), ("answered", "triage"))
+        self.assertEqual(inbox.open_items(self.state), [])
+
+    def test_the_view_labels_a_decision_and_never_as_an_answer(self):
+        r = self.asked()
+        inbox.triage_answer(self.state, r["id"], {})
+        inbox.write_view(self.state, KEY)
+        view = Path(inbox.view_path(self.state, KEY)).read_text()
+        self.assertIn(f"@bw decision [id:{r['id']}]", view)
+        self.assertNotIn("@lead answer", view)
+        self.assertIn("not the user's answer", view)
+
+    def test_a_user_answer_supersedes_a_decision_and_then_stands(self):
+        r = self.asked()
+        inbox.triage_answer(self.state, r["id"], {})
+        inbox.answer(self.state, r["id"], "no, b")
+        inbox.write_view(self.state, KEY)
+        (i,) = self.items()
+        self.assertEqual((i["answer"]["text"], i["answer"]["from"]), ("no, b", "user"))
+        view = Path(inbox.view_path(self.state, KEY)).read_text()
+        self.assertIn("@lead answer", view)
+        self.assertNotIn("@bw decision", view)
+        with self.assertRaises(ValueError):
+            inbox.answer(self.state, r["id"], "again")
+
+    def test_the_user_getting_there_first_drops_the_decision(self):
+        r = self.asked()
+        inbox.answer(self.state, r["id"], "mine")
+        self.assertIsNone(inbox.triage_answer(self.state, r["id"], {}))
+        self.assertEqual(self.items()[0]["answer"]["text"], "mine")
+
+    def test_a_second_triage_answer_changes_nothing(self):
+        r = self.asked()
+        inbox.triage_answer(self.state, r["id"], {})
+        self.assertIsNone(inbox.triage_answer(self.state, r["id"], {}))
+
+    def test_decided_since_skips_shadow_reversed_and_old(self):
+        r = self.asked()
+        inbox.triage_answer(self.state, r["id"], {}, now=100)
+        self.publish("b", "other")
+        r2 = self.ingest()[0][0]
+        inbox.triage_answer(self.state, r2["id"], {}, shadow=True, now=100)
+        self.assertEqual(inbox.decided_since(self.state, 50), 1)
+        self.assertEqual(inbox.decided_since(self.state, 100), 0)
+        inbox.answer(self.state, r["id"], "no")
+        self.assertEqual(inbox.decided_since(self.state, 50), 0)
+
+    def test_a_read_limit_hit_is_marked_truncated(self):
+        self.publish("a", "ok?\nRecommendation: yes" + " " * inbox.READ_LIMIT + "\ndeploy now")
+        (r,) = self.ingest()[0]
+        self.assertTrue(r["truncated"])
+
+    def test_long_text_is_marked_truncated(self):
+        self.publish("a", "x" * (inbox.TEXT_LIMIT + 1))
+        self.assertTrue(self.ingest()[0][0]["truncated"])
+
+    def test_old_answers_without_a_from_still_load(self):
+        r = self.asked()
+        from lead.inbox import store
+        store.append(inbox.path(self.state), {"type": "answer", "id": "x", "ask_id": r["id"], "ts": 1, "text": "old"})
+        self.assertEqual(self.items()[0]["answer"]["from"], "user")
+
+
+class Receipts(InboxCase):
+    SCORES = '{"strong_case": 0.9, "only_person_knows": 0.1, "outward_or_irreversible": 0.1, "high_stakes": 0.1}'
+    BODY = '@session decided\n{"mode": "acting", "scores": ' + SCORES + '}\npick?\nRecommendation: a'
+
+    def test_a_receipt_is_closed_and_absent_from_the_view(self):
+        self.publish("r", self.BODY)
+        (r,) = inbox.ingest(self.state, KEY, "/w", "la", "s1", receipts=True)[0]
+        self.assertEqual(r["source"], "session")
+        (i,) = self.items()
+        self.assertEqual((i["status"], i["text"], i["answer"]["from"]), ("answered", "pick?\nRecommendation: a", "triage"))
+        inbox.write_view(self.state, KEY)
+        self.assertEqual(Path(inbox.view_path(self.state, KEY)).read_text(), "")
+
+    def test_a_user_can_still_reverse_a_receipt(self):
+        self.publish("r", self.BODY)
+        (r,) = inbox.ingest(self.state, KEY, "/w", "la", "s1", receipts=True)[0]
+        inbox.answer(self.state, r["id"], "actually b")
+        inbox.write_view(self.state, KEY)
+        self.assertIn("@lead answer", Path(inbox.view_path(self.state, KEY)).read_text())
+
+    def test_a_shadow_receipt_is_recorded_as_shadow(self):
+        self.publish("r", self.BODY.replace("acting", "shadow"))
+        inbox.ingest(self.state, KEY, "/w", "la", "s1", receipts=True)
+        (i,) = self.items()
+        self.assertTrue(i["answer"]["shadow"])
+        self.assertEqual(i["answer"]["text"], inbox.SHADOW_TEXT)
+        self.assertEqual(inbox.decided_since(self.state, 0), 0)
+
+    def test_without_receipts_the_header_cannot_hide_a_question(self):
+        self.publish("r", self.BODY)
+        self.ingest()
+        (i,) = self.items()
+        self.assertEqual(i["status"], "open")
+
+    def test_a_malformed_or_risky_receipt_stays_an_open_question(self):
+        bad = ("@session decided\n{}\nMay I do it?\nRecommendation: a",
+               '@session decided\n{"mode": "shadow"}\nq?\nRecommendation: a',
+               '@session decided\n{"mode": "x", "scores": ' + self.SCORES + '}\nq?\nRecommendation: a',
+               '@session decided\n{"mode": "acting", "scores": {"strong_case": true}}\nq?\nRecommendation: a',
+               self.BODY.replace("pick?", "deploy now?"), self.BODY.replace("Recommendation: a", "no line"),
+               self.BODY + " " * inbox.READ_LIMIT)
+        for n, body in enumerate(bad):
+            self.publish(f"r{n}", body)
+        inbox.ingest(self.state, KEY, "/w", "la", "s1", receipts=True)
+        self.assertEqual([i["status"] for i in self.items()], ["open"] * len(bad))
+
+    def test_without_receipts_the_text_is_kept_whole(self):
+        self.publish("r", self.BODY)
+        self.ingest()
+        self.assertTrue(self.items()[0]["text"].startswith("@session decided"))
+
+    def test_receipts_do_not_use_up_real_asks(self):
+        for n in range(inbox.MAX_ASKS_PER_SESSION):
+            self.publish(f"r{n}", self.BODY)
+        inbox.ingest(self.state, KEY, "/w", "la", "s1", receipts=True)
+        self.publish("real", "a real question")
+        (r,) = inbox.ingest(self.state, KEY, "/w", "la", "s1", receipts=True)[0]
+        self.assertEqual(r["text"], "a real question")
+
+    def test_a_shadow_verdict_stays_with_the_open_ask(self):
+        self.publish("a", "q?\nRecommendation: a")
+        (r,) = self.ingest()[0]
+        inbox.note_verdict(self.state, r["id"], "decide", {})
+        (i,) = self.items()
+        self.assertEqual((i["status"], i["triage"]["verdict"]), ("open", "decide"))
+
+    def test_a_bad_meta_line_stays_an_open_question(self):
+        self.publish("r", "@session decided\nnot json\nreal question")
+        inbox.ingest(self.state, KEY, "/w", "la", "s1", receipts=True)
+        (i,) = self.items()
+        self.assertEqual(i["status"], "open")
+        self.assertIn("real question", i["text"])
 
 
 if __name__ == "__main__":

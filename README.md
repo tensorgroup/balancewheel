@@ -314,6 +314,7 @@ outside a git worktree it shows `bw status`.
     bw status                # plans (quota, caps), worktrees, leads, how each is contained, open inbox items
     bw probe [plan...]       # read quota now (OpenRouter key, Orca), one line per plan
     bw inbox [--project] [--all]   # open asks from leads and notices from bw (--all: answered too)
+    bw triage install claude       # the question-triage hook in Claude Code's settings (uninstall removes it)
     bw answer <id> "<text>"  # answer an ask, or close a notice
     bw cap <plan>            # record that a plan is capped (for leads without a statusline)
     bw sandbox verify <rt>   # attack-test a bw-contained runtime (pi, kimi) and record a pass
@@ -463,6 +464,17 @@ First time? See "Start leading" at the end of this section.
   - **Caps.** A reading never creates or extends a cap. bw removes a cap past its
     `resets_at` once a fresh known reading taken at or after that time exists, else
     `cap_expiry_hours` after it; an unexpired cap is never touched by a reading.
+- **Question triage (since 2026-10-30, off by default).** A decision model settles the questions
+  that do not need you. `triage.mode.<profile>` is `off`, `shadow` (compute and log, change nothing)
+  or `acting`. A lead's ask needs a `Recommendation:` line; bw drops anything that reads as outward
+  or irreversible straight into your inbox with no model call, and asks the model four yes/no
+  questions about the rest. The thresholds live in config. A settled ask reaches the lead as an
+  `@bw decision` block, which says it is not your answer and grants nothing. Claude Code pop-ups go
+  through a hook (`bw triage install claude`): a settled pop-up is denied with a note to take the
+  recommended option, anything else shows as usual. Any failure leaves the question as it would
+  have been. `bw inbox` counts what was decided, `bw inbox --all` lists it, and `bw answer <id> "…"`
+  reverses a decision. The question's text, best-effort redacted, goes to the model provider with
+  zero-data-retention routing. Guard approvals and permission prompts never pass through triage.
 - **The inbox (since 2026-10-25).** A lead asks you something only you can answer by writing
   a file, not by printing it: it writes `$BW_ASKS/.tmp-<random>` and renames it to
   `$BW_ASKS/<random>.ask`, one question per file (`BW_ASKS` is a directory the lead can

@@ -1,4 +1,4 @@
-import json, sys, unittest
+import json, os, sys, tempfile, unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -256,6 +256,46 @@ class PlanOrcaAndProbeKeys(unittest.TestCase):
         c = load_obj(o)
         self.assertEqual(c["plans"]["plan-b"]["orca_windows"], {"fableWeekly": ["alpha"]})
         self.assertEqual(c["plans"]["metered"]["key_env"], "OR_KEY")
+
+
+class Triage(unittest.TestCase):
+    def load(self, triage):
+        base = {"schema_version": 3, "plans": {"p": {"billing": "plan", "quota": "statusline"}},
+                "leads": {"l": {"runtime": "claude-code", "model": "m", "plan": "p"}},
+                "seats": {"s": {"runtime": "codex", "model": "x", "roles": ["review"], "plan": "p"}},
+                "profiles": {"a": {"lead_order": ["l"]}, "b": {"lead_order": ["l"]}}, "default_profile": "a"}
+        if triage is not None:
+            base["triage"] = triage
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(base, f)
+        self.addCleanup(os.unlink, f.name)
+        return cfg.load_config(f.name)["triage"]
+
+    def test_absent_is_off_everywhere(self):
+        t = self.load(None)
+        self.assertEqual(t["mode"], {"a": "off", "b": "off"})
+        self.assertIsNone(t["model"])
+
+    def test_modes_merge_and_thresholds_fill_in(self):
+        t = self.load({"mode": {"a": "acting"}, "model": "m", "thresholds": {"high_stakes": 0.1}})
+        self.assertEqual(t["mode"], {"a": "acting", "b": "off"})
+        self.assertEqual(t["thresholds"]["high_stakes"], 0.1)
+        self.assertEqual(t["thresholds"]["strong_case"], 0.6)
+        self.assertEqual(t["key_env"], "OPENROUTER_API_KEY")
+
+    def test_the_two_threshold_tables_agree(self):
+        sys.path.insert(0, str(HERE.parent))
+        from lead import triage as tr
+        self.assertEqual(tr.DEFAULT_THRESHOLDS, cfg.TRIAGE_THRESHOLDS)
+
+    def test_bad_input_is_refused(self):
+        for bad, needle in (({"mode": {"a": "acting"}}, "triage.model"), ({"mode": {"z": "off"}}, "unknown profile"),
+                            ({"mode": {"a": "on"}, "model": "m"}, "must be one of"), ({"nope": 1}, "unknown key"),
+                            ({"thresholds": {"x": 1}}, "unknown key"), ({"thresholds": {"high_stakes": 2}}, "0 to 1"),
+                            ({"thresholds": {"high_stakes": True}}, "0 to 1"), ({"key_env": ""}, "key_env")):
+            with self.assertRaises(cfg.ConfigError) as c:
+                self.load(bad)
+            self.assertIn(needle, str(c.exception))
 
 
 if __name__ == "__main__":
