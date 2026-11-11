@@ -112,15 +112,26 @@
       },
       "plan": "openrouter"
     },
-    "fable": {
+    "opus": {
       "runtime": "claude-code",
-      "model": "claude-fable-5-1",
+      "model": "claude-opus-5-5",
       "roles": [
         "design",
         "plan",
         "review",
         "debug",
         "decision"
+      ],
+      "plan": "claude-plan"
+    },
+    "fable": {
+      "runtime": "claude-code",
+      "model": "claude-fable-5-2",
+      "roles": [
+        "design",
+        "plan",
+        "review",
+        "debug"
       ],
       "plan": "claude-plan"
     },
@@ -154,7 +165,7 @@
         "design": {
           "seats": [
             "astra",
-            "fable",
+            "opus",
             "gem"
           ],
           "required": [
@@ -164,13 +175,13 @@
         "review": {
           "seats": [
             "astra",
-            "fable",
+            "opus",
             "gem",
             "ox"
           ],
           "required": [
             "astra",
-            "fable"
+            "opus"
           ],
           "min_seats": 3
         }

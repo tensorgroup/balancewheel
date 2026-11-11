@@ -13,6 +13,16 @@ not against the prose.
 
 ## [Unreleased]
 
+### Changed
+
+- **Reserved seats; the same-vendor blind seat moves to the default tier.** `balancewheel.example.json`
+  adds an `opus` seat (`claude-opus-5-5`) and puts it where `fable` stood in every profile's
+  checkpoints, including the high-stakes review's `required` list. `fable` stays configured on
+  `claude-fable-5-2` (released 2026-11-09) but sits in no default checkpoint: it joins deep panels
+  and stuck debugging only. The reason is cost (the top tier is twice the default tier per token);
+  `docs/architecture.md` states the pattern and the condition that would reverse it. A config copied
+  from the earlier example keeps working unchanged; no schema moved.
+
 ### Added
 
 - **`bw improve`** (`lead/improve.py`, `bin/bw`): suggestions from how the user works, each with its

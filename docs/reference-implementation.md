@@ -15,17 +15,19 @@ and the on-demand second seat the same day (both in the roster since 2026-09-02)
 updated 2026-09-22 when the on-demand Opus seat moved to Opus 5.5; updated 2026-09-25 for
 OpenAI's GPT-6 Sol and Luna (two new traps in the Codex section; the astra seat is unchanged);
 updated 2026-09-26 with the quota fallback for the Claude seat and Claude subagents (see Seat
-wrappers).*
+wrappers); updated 2026-11-11 when Opus 5.5 at effort `medium` became the default for the
+primary agent and the blind seat, and Fable 5.2 (released 2026-11-09) became a reserved
+seat for deep panels and stuck debugging.*
 
 ## The cast
 
 | Role | Software | Model | Billing |
 |---|---|---|---|
-| Moderator / primary | Claude Code (CLI) with the [superpowers](https://github.com/obra/superpowers) plugin (6.x) as the workflow skeleton | Claude (Fable/Opus tier) | Anthropic subscription |
+| Moderator / primary | Claude Code (CLI) with the [superpowers](https://github.com/obra/superpowers) plugin (6.x) as the workflow skeleton | `claude-opus-5-5` at effort `medium` (raised per task); Fable only on an escalation (since 2026-11-11) | Anthropic subscription |
 | Planning + review seat ("astra") | Codex CLI ≥0.153 | `gpt-6-astra`, xhigh reasoning (was `gpt-5.6-sol`, seat "sol", until 2026-09-11) | OpenAI Pro subscription (CLI OAuth) |
 | Planning seat ("ox") | pi 0.85.x (0.74.x until 2026-09-16; was OpenCode ≥1.18 until 2026-09-03) | `z-ai/glm-5.3-flash` via OpenRouter (was `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
-| Same-vendor blind seat ("fable") | Claude Code headless (`claude -p`), fresh session, write tools disallowed plus a pre-tool guard hook | `claude-fable-5-1` (since 2026-09-02) | Claude subscription (flat) |
-| On-demand second same-vendor seat ("opus") | same mechanism | `claude-opus-5-5` (was `claude-opus-4-8` until 2026-09-22, when 4.8 went legacy) | Claude subscription (flat); off the default roster since 2026-09-02 on 4.8's scoreboard evidence |
+| Same-vendor blind seat ("opus") | Claude Code headless (`claude -p`), fresh session, write tools disallowed plus a pre-tool guard hook | `claude-opus-5-5`, effort `medium` (since 2026-11-11; the on-demand seat from 2026-09-22, `claude-opus-4-8` before) | Claude subscription (flat); a fresh scoreboard |
+| Reserved same-vendor seat ("fable") | same mechanism | `claude-fable-5-2` (`claude-fable-5-1` from 2026-09-02 until 2026-11-11, when it was the default blind seat) | Claude subscription (flat), twice Opus 5.5 per token; deep panels and stuck debugging only, each run with its reason |
 | Blind one-shot fallback | plain HTTPS (`chat/completions`) | same OpenRouter model | OpenRouter API key |
 
 Why these: each vendor's *own* CLI gives the seat repo exploration, native session

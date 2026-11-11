@@ -19,7 +19,9 @@ which narrows "driver mode is failover, not promotion" to drivers outside a prof
 Updated 2026-10-25: Orca named as the recommended canvas, and canvas control channels added
 to what a sandbox must deny (`docs/orca.md`). Revised 2026-10-25: the lead's autonomy and
 the `bw guard` broker, with the trust boundary it rests on ("Leads, profiles, and rotation").
-Updated 2026-10-26: the registry and the cockpit as derived, read-only views.*
+Updated 2026-10-26: the registry and the cockpit as derived, read-only views.
+Updated 2026-11-11: reserved seats (the expensive top-tier model, held for deep panels and
+stuck debugging) and seat C on the vendor's default-tier model.*
 
 ## The problem
 
@@ -44,7 +46,7 @@ their disagreement into signal instead of noise.
 | Moderator / orchestrator | Primary agent (Claude Code session) | its own transcript + instruction files |
 | Seat A ("astra") | Codex CLI headless (`codex exec -p review`), pinned model, read-only sandbox | Codex session store (resumable) |
 | Seat B ("ox") | pi headless (`pi -p --tools read,grep,find,ls,bash -e guard.ts`), pinned OpenRouter model, in-process read-only guard | JSONL session file chosen by the wrapper (resumable) |
-| Seat C ("fable") | the moderator's own vendor CLI, headless, in a fresh session with none of the moderator's conversation; write tools disallowed plus a pre-tool guard | the CLI's own session store (resumable) |
+| Seat C ("opus"; "fable" when reserved) | the moderator's own vendor CLI, headless, in a fresh session with none of the moderator's conversation; write tools disallowed plus a pre-tool guard | the CLI's own session store (resumable) |
 
 Seat C is the **same-vendor blind seat** (added to the reference roster 2026-09-02):
 the moderator's model family run without the moderator's context, so its round-1
@@ -55,7 +57,17 @@ also be **on demand** rather than default: the reference roster dropped a second
 same-vendor seat from the default panel on scoreboard evidence (one unique catch in its
 first thirteen findings, and the log's only refuted finding) and convenes it only for
 high-stakes targets, with a stated re-promotion criterion (five consecutive panels with
-at least one confirmed unique catch). Cross-examination is capped at two rounds, and
+at least one confirmed unique catch). A seat can also be **reserved**: the most capable
+model a vendor offers, held out of every default panel because of its price and convened
+only for a deep panel or debugging that is stuck (a failed first fix, a recurring bug, or
+seats that still disagree after cross-examination), each run recording its reason. Since
+2026-11-11 the reference roster runs the same-vendor blind seat on the vendor's
+default-tier model and keeps the top-tier model as a reserved seat. The top tier costs
+twice as much per token, and in the reference user's panels a cross-vendor planning seat
+added more than the more expensive same-vendor model did. The reserved seat is scored like
+every other seat, so its runs show whether the escalation earns its price; logged
+catches the default seat missed on the same targets would reverse the change.
+Cross-examination is capped at two rounds, and
 each seat at a wall-clock cap (twelve minutes standard, thirty for a deep tier): a seat
 that does not return is logged as absent and the panel proceeds; a timeout never
 changes the roster.
