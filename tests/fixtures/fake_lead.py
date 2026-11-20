@@ -77,20 +77,24 @@ if os.environ.get(f"FAKE_UNLOCK_{name}"):  # a lead dropping the locks it inheri
             fcntl.flock(fd, fcntl.LOCK_UN)
         except OSError:
             pass
-with open(os.path.join(out, f"{name}.json"), "w") as fh:
+# Write to a temp name and rename: the tests poll for this file, and a reader must never see it
+# half-written (an empty read raised JSONDecodeError in test_switch_check_does_not_block_on_an_update).
+with open(os.path.join(out, f"{name}.json.tmp"), "w") as fh:
     json.dump({"pid": os.getpid(), "pgid": os.getpgrp(), "argv": sys.argv, "foreground": fg, "probe": probe,
                "guard_env": sorted(k for k in os.environ if k.startswith("BW_GUARD_")),
                "inbox_env": {k: os.environ.get(k) for k in ("BW_ASKS", "BW_INBOX")},
                "triage_env": {k: os.environ.get(k) for k in ("BW_TRIAGE_HOOK", "BW_TRIAGE_CONFIG")},
                "earlier_alive": [p for p in earlier if alive(p)], "fds": inherited_fds()}, fh)
+os.replace(os.path.join(out, f"{name}.json.tmp"), os.path.join(out, f"{name}.json"))
 print(f"FAKE {name} started", flush=True)
 if mode == "ignore_term":
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if os.environ.get(f"FAKE_SPAWN_{name}"):
     import subprocess
     kid = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-    with open(os.path.join(out, f"{name}-child.json"), "w") as fh:
+    with open(os.path.join(out, f"{name}-child.json.tmp"), "w") as fh:
         json.dump({"pid": kid.pid}, fh)
+    os.replace(os.path.join(out, f"{name}-child.json.tmp"), os.path.join(out, f"{name}-child.json"))
 
 
 def publish_ask():
