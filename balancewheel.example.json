@@ -76,6 +76,12 @@
       "model": "gpt-6-astra",
       "plan": "chatgpt-plan"
     },
+    "agy-gemini": {
+      "runtime": "agy",
+      "model": "gemini-4-neon-high",
+      "plan": "google-plan",
+      "autonomy": "manual"
+    },
     "agy-claude": {
       "runtime": "agy",
       "model": "claude-opus-5-5-high",
@@ -94,7 +100,8 @@
         "decision"
       ],
       "policy": "why this seat has these roles; the evidence cited; what would change them",
-      "plan": "chatgpt-plan"
+      "plan": "chatgpt-plan",
+      "fallback": "gem"
     },
     "ox": {
       "runtime": "pi",
@@ -137,7 +144,7 @@
     },
     "gem": {
       "runtime": "agy",
-      "model": "gemini-3.1-pro-high",
+      "model": "gemini-4-neon-high",
       "roles": [
         "review"
       ],
@@ -151,7 +158,8 @@
         "review"
       ],
       "enabled": false,
-      "plan": "kimi-plan"
+      "plan": "kimi-plan",
+      "fallback": "gem"
     }
   },
   "profiles": {
@@ -159,6 +167,7 @@
       "lead_order": [
         "claude",
         "astra",
+        "agy-gemini",
         "agy-claude"
       ],
       "checkpoints": {
@@ -200,6 +209,7 @@
       "lead_order": [
         "claude",
         "astra",
+        "agy-gemini",
         "agy-claude"
       ],
       "checkpoints": {

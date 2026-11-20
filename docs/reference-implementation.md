@@ -17,7 +17,9 @@ OpenAI's GPT-6 Sol and Luna (two new traps in the Codex section; the astra seat 
 updated 2026-09-26 with the quota fallback for the Claude seat and Claude subagents (see Seat
 wrappers); updated 2026-11-11 when Opus 5.5 at effort `medium` became the default for the
 primary agent and the blind seat, and Fable 5.2 (released 2026-11-09) became a reserved
-seat for deep panels and stuck debugging.*
+seat for deep panels and stuck debugging; updated 2026-11-20 when the Gemini seat moved to
+Gemini 4 Neon and became the stand-in for the OpenAI and Kimi seats while their plans are capped,
+and a Gemini lead joined the lead order after the OpenAI lead (see Seat wrappers).*
 
 ## The cast
 
@@ -248,6 +250,23 @@ Pin each alias in the harness settings (Claude Code: `ANTHROPIC_DEFAULT_OPUS_MOD
 fallback is the exact version you chose. Verify end to end: arm the flag, dispatch a subagent
 pinned to the capped model, and check the model id in its transcript, not the hook's own
 output.
+
+**Cross-vendor stand-in for capped seats (2026-11-20).** The same flag pattern works across
+vendors, one flag per seat. When the OpenAI or the Kimi plan is used up, the Gemini seat runs
+in its place: the OpenAI and Kimi wrappers check their own flag first and hand the same
+arguments to the Gemini wrapper, and a run that fails on a usage limit arms the flag and re-runs
+once on Gemini. In config this is `seats.<seat>.fallback`. The Gemini seat runs Gemini 4 Neon
+(`gemini-4-neon-high` in agy), the newest Gemini 4 model as of 2026-11-18; it is not on a
+checkpoint roster by itself. The stand-in run scores under the Gemini seat's id and the capped
+seat is `absent` with reason "usage cap"; if two capped seats both stood in, keep one run.
+Traps: match the usage-limit pattern on **error lines only**, because Codex echoes the prompt on
+stderr and a review of quota code would trip a plain match; and let the attack harness bypass
+the stand-in, or an attack on a capped seat silently tests the Gemini seat instead.
+The lead order follows the same plans: Claude Code while the Anthropic plan has quota, then
+Codex on the OpenAI plan, then agy on Gemini 4 Neon when both are capped (`lead_order` in each
+profile; rotation picks the first lead whose plan is not capped and returns to an earlier one at
+a boundary once its quota recovers). The Gemini lead runs with `autonomy: manual`, because an agy
+lead cannot use the guard until agy's hooks are verified.
 
 **Temp-dir hygiene (seats and drivers alike).** Every vendor CLI extracts scratch files into
 `$TMPDIR` — Codex unpacks multi-megabyte native libraries there, Node writes its compile

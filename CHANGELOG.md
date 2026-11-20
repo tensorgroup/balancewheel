@@ -15,6 +15,15 @@ not against the prose.
 
 ### Changed
 
+- **The Gemini seat stands in for capped seats.** `balancewheel.example.json` moves the `gem` seat
+  from `gemini-3.1-pro-high` to `gemini-4-neon-high` (Gemini 4 Neon, the newest Gemini 4 model,
+  2026-11-18) and sets `fallback: "gem"` on the `astra` and `kimi` seats, so the Gemini seat runs in
+  their place while their plans are capped. `fallback` already existed in schema 3; no schema moved.
+- **A Gemini lead between the OpenAI lead and the agy Claude lead.** `balancewheel.example.json` adds
+  an `agy-gemini` lead (`gemini-4-neon-high` via agy, `autonomy: manual`) and puts it third in each
+  profile's `lead_order`: Claude while the Anthropic plan has quota, then the OpenAI lead, then
+  Gemini when both are capped. No schema moved.
+
 - **Reserved seats; the same-vendor blind seat moves to the default tier.** `balancewheel.example.json`
   adds an `opus` seat (`claude-opus-5-5`) and puts it where `fable` stood in every profile's
   checkpoints, including the high-stakes review's `required` list. `fable` stays configured on
