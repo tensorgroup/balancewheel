@@ -67,6 +67,14 @@ OpenEscapement" section owns the install order and the reconcile rule.
   integration rules `bw` and setup enforce.
 - `docs/roadmap.md` — dogfooding goals, the four extraction criteria, the planned
   directory shape (`seats/`, `panel/`, `metrics/`, `packs/`), and non-goals.
+- `docs/usage-map/` — the public, interactive usage map linked from the README (served by
+  GitHub Pages from `/docs`): who takes part, their journeys, and the parts each step
+  touches. `infra.js` is hand-written; `data.generated.js` is generated and committed.
+  **Regenerate it in the same commit as any change to a `bw` command, a module (`lead/`,
+  `lead/guard/`, `metrics/`, `cockpit/`), a runtime adapter, `balancewheel.example.json`,
+  the config keys, or `setup/paths.txt`:** run `python3 docs/usage-map/generate.py` and
+  commit the result. Update `infra.js` in the same commit when a journey or a planned item
+  changes or ships.
 - `CHANGELOG.md` — what each tagged version pins and what moved between versions. A version
   here is a contract (config and log schemas, `setup/paths.txt`, the setup prompt), not a
   download: there is nothing to install, so semver applies to those interfaces, not to the

@@ -80,6 +80,22 @@ Details: [docs/architecture.md](docs/architecture.md) (design and rationale),
 [docs/reference-implementation.md](docs/reference-implementation.md) (the rebuild guide:
 tools, versions, models, the settings that took debugging, the traps, the checklist).
 
+## See it as a map
+
+[`docs/usage-map/`](docs/usage-map/) is one zoomable page that shows how Balancewheel is
+used: who takes part, where each thing lives, and nine journeys you can step through, from
+setting up a machine to shipping seat policy to OpenEscapement. Its `bw` commands, modules,
+config keys, and roster are generated from this repository and `balancewheel.example.json`.
+
+[![The Balancewheel usage map](docs/usage-map/preview.png)](https://tensorgroup.github.io/balancewheel/usage-map/)
+
+To use it without the web, open `docs/usage-map/index.html` in a browser; it needs no
+server. After the code changes, regenerate its data and reopen it:
+
+```sh
+python3 docs/usage-map/generate.py --open
+```
+
 ## Status and the plan
 
 **Design repo, mid-extraction.** The reference implementation runs as the author's

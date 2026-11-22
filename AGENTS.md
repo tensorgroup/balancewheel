@@ -23,6 +23,10 @@ Python 3.9+, standard library only. There is nothing to install and no build ste
 - `python3 metrics/log.py --help` is the logger CLI (`panel`, `usage`, `watches`, `resolve`,
   `amend`, `check`, `config`).
 - `python3 metrics/dashboard.py --help` renders the dashboard.
+- `python3 docs/usage-map/generate.py [--open]` regenerates the public usage map's data
+  (`docs/usage-map/data.generated.js`, committed). Run it in the same commit as any change to
+  a `bw` command, a module, a runtime adapter, `balancewheel.example.json`, the config keys,
+  or `setup/paths.txt`; `CLAUDE.md` has the details.
 
 ## Coding Style & Naming Conventions
 
