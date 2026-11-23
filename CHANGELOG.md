@@ -15,6 +15,9 @@ not against the prose.
 
 ### Changed
 
+- **The lead verification key hashes `lead/codepaths.py`.** The lists of names that load as code
+  (pi and Kimi) move there from `lead/runtimes.py`. Every pi and Kimi lead, and every guarded lead,
+  re-verifies once.
 - **The Gemini seat stands in for capped seats.** `balancewheel.example.json` moves the `gem` seat
   from `gemini-3.1-pro-high` to `gemini-4-neon-high` (Gemini 4 Neon, the newest Gemini 4 model,
   2026-11-18) and sets `fallback: "gem"` on the `astra` and `kimi` seats, so the Gemini seat runs in

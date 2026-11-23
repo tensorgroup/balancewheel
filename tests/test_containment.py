@@ -139,3 +139,15 @@ class RecordPassConcurrency(unittest.TestCase):
                         t.join()
                 with open(os.path.join(d, store)) as f:
                     self.assertEqual(sorted(json.load(f)), ["kimi", "pi"], store)
+
+
+class PublicKeyHelpers(unittest.TestCase):
+    def test_key_hashes_codepaths(self):
+        key = containment.verification_key("pi", ["pi", "--version"], "sandbox-exec",
+                                           run=lambda a, t: Result(0, "pi 1\n", "", False))
+        self.assertEqual(key["codepaths_sha"], containment.sha_file(os.path.join(containment.HERE, "codepaths.py")))
+        self.assertIn("adapter_sha", key)
+
+    def test_public_helpers(self):
+        self.assertIs(containment.manifest, containment._manifest)
+        self.assertEqual(containment.first_line(["x"], run=lambda a, t: Result(0, "v 2\nmore", "", False)), "v 2")

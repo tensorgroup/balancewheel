@@ -445,7 +445,7 @@ class Containment(unittest.TestCase):
     def test_verification_key_fields(self):
         key = containment.verification_key("pi", [sys.executable, "--version"], "sandbox-exec")
         self.assertEqual(set(key), {"runtime", "runtime_version", "backend", "backend_version", "sandbox_sha", "adapter_sha",
-                                    "denied_ports"})
+                                    "codepaths_sha", "denied_ports"})
         self.assertTrue(key["runtime_version"])
         self.assertEqual(key["denied_ports"], sandbox.denied_ports())
 

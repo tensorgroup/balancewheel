@@ -36,6 +36,10 @@ def _first_line(argv, run=proc.run):
     return ((r.out or r.err).strip().splitlines() or ["unknown"])[0]
 
 
+sha_file = _sha
+first_line = _first_line
+
+
 def verification_key(runtime, version_argv, backend, run=proc.run, ports=None):
     """`ports`: the denied ports (`sandbox.denied_ports(config)`); None means the defaults."""
     if backend == "nono" and shutil.which("nono"):
@@ -45,6 +49,7 @@ def verification_key(runtime, version_argv, backend, run=proc.run, ports=None):
     return {"runtime": runtime, "runtime_version": _first_line(version_argv, run), "backend": backend,
             "backend_version": backend_version, "sandbox_sha": _sha(os.path.join(HERE, "sandbox.py")),
             "adapter_sha": _sha(os.path.join(HERE, "runtimes.py")),
+            "codepaths_sha": _sha(os.path.join(HERE, "codepaths.py")),
             "denied_ports": sorted(sandbox.denied_ports() if ports is None else ports)}
 
 
@@ -69,6 +74,9 @@ def _manifest(path, seen=()):
                 out[rel] = _manifest(full, seen) if os.path.islink(full) else _sha(full)
         return {"dir": out}
     return {"sha": _sha(path), "scripts": _named_scripts(path)}
+
+
+manifest = _manifest
 
 
 def _commands(node):

@@ -13,6 +13,7 @@ import os
 from collections import namedtuple
 
 from .guard import install as _guard_install
+from .codepaths import KIMI_CODE, PI_CODE  # noqa: F401  (re-exported: the adapters and tests use them here)
 from .sandbox import RuntimeGrants
 
 Adapter = namedtuple("Adapter", "argv contained_by grants prompt_mode version_argv verify_argv verify_flags "
@@ -64,12 +65,6 @@ def _add_dirs(writable):
     """Extra writable dirs (the checkpoint dir) for runtimes whose own sandbox stops at the worktree."""
     return [a for d in writable for a in ("--add-dir", d)]
 
-
-# Inside a runtime's writable state dir, what loads as code or config in the user's NEXT,
-# unsandboxed session stays read-only — a contained lead must not plant a hook there. Sessions,
-# caches, logs, and the vendor's own credential refresh stay writable.
-KIMI_CODE = ["bin", "config.toml", "tui.toml", "mcp.json", "AGENTS.md", "skills", "plugins", "hooks", "agents"]
-PI_CODE = ["extensions", "settings.json", "models.json", "skills", "prompts", "themes", "AGENTS.md", "SYSTEM.md"]
 
 ADAPTERS = {
     "claude-code": Adapter(
