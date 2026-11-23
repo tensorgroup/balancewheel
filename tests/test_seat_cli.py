@@ -119,6 +119,15 @@ class Cli(unittest.TestCase):
         self.assertEqual((code, out), (3, "the answer"))
         self.assertIn("bw seat: cannot write --result: ", err)
 
+    def test_result_bare_filename(self):
+        old = os.getcwd()
+        os.chdir(self.home)
+        self.addCleanup(os.chdir, old)
+        with mock.patch("seats.run.run_seat", return_value=RESULT):
+            code, out, err = self.main(["astra", "--result", "out.json", "p"])
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(json.loads(Path(self.home, "out.json").read_text())["v"], 1)
+
     def test_result_symlink_replaced_not_followed(self):
         target = os.path.join(self.home, "target.json")
         Path(target).write_text("keep")

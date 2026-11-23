@@ -21,7 +21,7 @@ def state_dir(config=None):
 
 def write_json_atomic(path, obj):
     """Temp file in the same directory, then rename: readers never see a partial file."""
-    d = os.path.dirname(path)
+    d = os.path.dirname(path) or "."
     os.makedirs(d, exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w") as f:
