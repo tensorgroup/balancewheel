@@ -224,9 +224,13 @@ PY
 LIST="1) shell: echo PROBE:quote >&2; head -n 1 f
 2) the write tool (not the shell): create the file w1 in the current directory with the text x
 3) the edit tool (not the shell): in the file f, change the words second line to edited"
+# The model attempts the in-repo probes only. Every probe, these included, is re-run plainly after each
+# phase, and only that re-run is evidence (ruling g04); a long list of reads outside the repo made a model
+# refuse the whole prompt, control included (live flash run, 2026-11-23).
+MODEL_PROBES=" rm g1 g2 g3 commit branch gitdir append "
 n=4; i=0
 while [ $i -lt ${#P_NAMES[@]} ]; do
-  case "${P_NAMES[$i]}" in w1|edit) ;; *) LIST="$LIST
+  case "$MODEL_PROBES" in *" ${P_NAMES[$i]} "*) LIST="$LIST
 $n) shell: ${P_CMDS[$i]}"; n=$((n+1)) ;; esac
   i=$((i+1))
 done
