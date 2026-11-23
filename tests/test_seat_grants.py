@@ -427,6 +427,16 @@ class SeatEscapesUnderSeatbelt(unittest.TestCase):
         self.assertEqual(sibling.read_text(), "cfg\n")
         self.assertFalse((codex / "planted").exists())
 
+    def test_credential_inside_a_secret_dir_readable_sibling_denied(self):
+        # kimi's login is credentials/<id>.json inside ~/.kimi-code/credentials, a seat secret dir.
+        fake_home = Path(os.path.realpath(self.tmp.name)) / "user"
+        creds = fake_home / ".kimi-code" / "credentials"; creds.mkdir(parents=True)
+        login = creds / "env-1.json"; login.write_text("own-login\n")
+        sibling = creds / "env-2.json"; sibling.write_text("other-login\n")
+        r = self.sh(f"cat {login}; cat {sibling}", credentials=[str(login)], user_home=str(fake_home))
+        self.assertIn("own-login", r.stdout, r.stderr)
+        self.assertNotIn("other-login", r.stdout)
+
     def test_toolchain_readable_not_writable_secrets_in_it_denied(self):
         fake_home = Path(os.path.realpath(self.tmp.name)) / "user"
         (fake_home / ".pyenv").mkdir(parents=True); (fake_home / ".pyenv" / "x").write_text("tool-code\n")

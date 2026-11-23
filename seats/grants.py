@@ -303,7 +303,11 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
     # A credential inside a secret dir is read again after the secret deny.
     own = [home] + writes + creds
     return Grants(rules, reads, denied, [home, own_scratch] + creds, tools,
-                  secret_denies(user_home, own) + ipc_denies(user_home, keychain)
+                  secret_denies(user_home, own)
+                  # A declared credential inside a secret dir (kimi's credentials/<id>.json) is read
+                  # again after the secret denies; its siblings stay denied.
+                  + [f'(allow file-read* (literal "{check_path(c)}"))' for c in creds]
+                  + ipc_denies(user_home, keychain)
                   + _path_metadata([(state, home), (scratch_root, own_scratch)]))
 
 
