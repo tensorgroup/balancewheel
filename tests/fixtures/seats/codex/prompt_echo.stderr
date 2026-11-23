@@ -1,0 +1,12 @@
+OpenAI Codex v0.0.0 (research preview)
+--------
+workdir: /tmp/example
+model: m-test
+--------
+user
+Review the quota module. It prints "You have hit your usage limit." when a plan is capped.
+Check that the out of quota path exits 75.
+codex
+No significant findings.
+tokens used
+920

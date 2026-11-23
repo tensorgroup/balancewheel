@@ -22,6 +22,9 @@ not against the prose.
 - **`seats/` package.** Per-seat sessions (`state_dir/seats/sessions/`) and seat caps
   (`state_dir/seats/caps/`).
 - **The seat brief** (`seats/brief.py`), cached in `state_dir/seats/briefs/`.
+- **Seat adapters** (`seats/adapters.py`), separate from the lead adapters so a seat change never resets a
+  lead key. Codex and Claude Code first. A Claude Code seat needs `CLAUDE_CODE_OAUTH_TOKEN` (from
+  `claude setup-token`) in the env.
 
 ### Fixed
 
