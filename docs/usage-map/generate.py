@@ -306,6 +306,10 @@ def main():
                    "// Regenerate and open: python3 docs/usage-map/generate.py --open\n"
                    f"window.USAGE_MAP_DATA = {json.dumps(data, indent=1)};\n", encoding="utf-8")
     print(f"usage map: {n_cmds} commands, {n_mods} modules, {len(cfg.get('seats', {}))} seats, {tests} tests -> {rel(OUT)}")
+    sys.path.insert(0, str(OUT.parent))
+    import check_stories  # the hand-written stories must point only at real places and boxes
+    if check_stories.main():
+        sys.exit(1)
     if "--open" in sys.argv[1:]:
         open_page()
 

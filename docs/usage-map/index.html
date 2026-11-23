@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Balancewheel Usage Map</title>
 <!-- Open this file straight from disk. Generated parts: data.generated.js (committed; regenerate with
-     python3 docs/usage-map/generate.py --open). People, places, services and journeys: infra.js. Engine: app.js. -->
+     python3 docs/usage-map/generate.py --open). Map boxes: infra.js. Map engine: app.js.
+     Why and Who tabs: stories-data.js (strict JSON, checked by check_stories.py) drawn by stories.js. -->
 <style>
 :root {
   color-scheme: light;
@@ -48,10 +49,10 @@ code, .mono, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
   display: flex; align-items: center; gap: 12px; padding: 10px 16px;
   border-bottom: 1px solid var(--line); background: var(--surface); position: relative; z-index: 5; flex-wrap: wrap;
 }
-.brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; min-width: 0; }
-.brand h1 { font-size: 17px; margin: 0; letter-spacing: -.01em; white-space: nowrap; }
+.brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; min-width: 0; flex: 1 1 0; overflow: hidden; }
+.brand h1 { font-size: 17px; margin: 0; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .brand span { color: var(--ink-3); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.search-wrap { position: relative; flex: 0 1 340px; min-width: 180px; }
+.search-wrap { position: relative; flex: 0 1 280px; min-width: 150px; }
 #search {
   width: 100%; height: 36px; border-radius: 99px; border: 1px solid var(--line); background: var(--bg);
   color: var(--ink); padding: 0 14px 0 34px; font: inherit;
@@ -76,13 +77,6 @@ code, .mono, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .btn:disabled { opacity: .4; cursor: default; }
 .icon { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); cursor: pointer; display: inline-grid; place-items: center; padding: 0; }
-.menu-wrap { position: relative; }
-#flow-menu {
-  position: absolute; right: 0; top: 42px; width: 260px; padding: 6px; background: var(--surface); border: 1px solid var(--line);
-  border-radius: 12px; box-shadow: var(--shadow); z-index: 20; display: grid;
-}
-#flow-menu button { text-align: left; border: 0; background: none; padding: 9px 12px; border-radius: 8px; cursor: pointer; }
-#flow-menu button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* ── stats strip ─────────────────────────────────────── */
 #stats { display: flex; gap: 8px; padding: 8px 16px; overflow-x: auto; border-bottom: 1px solid var(--line); background: var(--ground); scrollbar-width: none; }
@@ -126,24 +120,11 @@ code, .mono, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 .key label { display: flex; gap: 6px; align-items: center; cursor: pointer; color: var(--ink); }
 .key .row { display: flex; gap: 10px; flex-wrap: wrap; }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
-.flow-on .legend { display: none; }
 #tip {
   position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); padding: 6px 10px; border-radius: 8px;
   font-size: 12px; display: grid; max-width: 240px; z-index: 6;
 }
 #tip span { opacity: .7; font-size: 11px; }
-#flowbar {
-  position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); width: min(560px, calc(100% - 32px));
-  background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 14px 16px; z-index: 7;
-}
-.fb-top { display: flex; align-items: center; gap: 8px; }
-.fb-top .icon { margin-left: auto; width: 30px; height: 30px; }
-.fb-desc { margin: 2px 0 8px; font-size: 12.5px; }
-.fb-text { margin: 0 0 10px; }
-.fb-dots { display: flex; gap: 5px; margin-bottom: 10px; flex-wrap: wrap; }
-.fb-dots button { width: 22px; height: 6px; border-radius: 3px; border: 0; background: var(--line); cursor: pointer; padding: 0; }
-.fb-dots button.on { background: var(--accent); }
-.fb-ctrl { display: flex; gap: 8px; justify-content: flex-end; }
 
 /* ── panel ───────────────────────────────────────────── */
 #panel {
@@ -165,6 +146,7 @@ code, .mono, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 .p-list.actions li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; padding-left: 0; }
 .p-list:not(.actions) > li::before { content: ""; position: absolute; left: 2px; top: .62em; width: 5px; height: 5px; border-radius: 50%; background: var(--ink-3); opacity: .5; }
 .linkish { border: 0; background: none; padding: 0; color: var(--accent-ink); cursor: pointer; text-align: left; font-weight: 500; }
+a.linkish { text-decoration: none; }
 .linkish:hover { text-decoration: underline; }
 .muted { color: var(--ink-3); }
 .dir { color: var(--ink-3); width: 1.1em; display: inline-block; }
@@ -188,7 +170,6 @@ code, .mono, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 .missing p { color: var(--ink-2); }
 .planned-note { margin: 14px 20px 0; padding: 8px 12px; border: 1px dashed var(--warn); border-radius: 8px; color: var(--warn); font-size: 12.5px; }
 .p-plain { margin: 0; color: var(--ink-2); }
-.fb-cmd { margin: 0 0 10px; }
 .gen { padding: 14px 20px 22px; font-size: 11.5px; color: var(--ink-3); border-top: 1px solid var(--line); margin-top: 12px; }
 
 /* ── SVG map ─────────────────────────────────────────── */
@@ -243,26 +224,154 @@ code, .mono, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 .edge.derived.hl .edge-line { stroke-width: 1.2; }
 .focusing .edge:not(.hl) .edge-line { opacity: .07; }
 @keyframes march { to { stroke-dashoffset: -12; } }
-.flow-line { fill: none; stroke: var(--observe); stroke-width: 3.5; stroke-dasharray: 9 6; animation: march 0.9s linear infinite; }
-.flow-badge circle { fill: var(--observe); }
-#map .flow-badge text { fill: #fff; font-weight: 700; }
 /* Edges never take clicks or hover, so a raised edge cannot block the box under it. */
 .layer-edges, .layer-edgesTop { pointer-events: none; }
-.flowing .layer-edges, .flowing .layer-edgesTop { opacity: .25; }
-.flowing .node:not(.in-flow), .flowing .item:not(.in-flow), .flowing .group:not(.in-flow) { opacity: .45; }
-.flow-now .node-bg, .flow-now .group-bg, .flow-now .item-bg { stroke: var(--observe) !important; stroke-width: 3 !important; }
-@media (prefers-reduced-motion: reduce) { .edge.hl .edge-line, .flow-line { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .edge.hl .edge-line { animation: none; } }
 
 /* level of detail: app.js sets hide-<tier> when that text tier is too small to read */
 .hide-t30 .t30, .hide-t22 .t22, .hide-t16 .t16, .hide-t12 .t12, .hide-t9 .t9, .hide-t7 .t7, .hide-t5_5 .t5_5,
 .hide-t4_2 .t4_2, .hide-t3_2 .t3_2, .hide-t2_4 .t2_4, .hide-t1_8 .t1_8, .hide-t1_3 .t1_3 { display: none; }
 .huge-t30 .t30, .huge-t22 .t22, .huge-t16 .t16, .huge-t12 .t12, .huge-t9 .t9 { opacity: .12; }
 
+
+/* ── tabs ────────────────────────────────────────────── */
+.tabs { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 99px; background: var(--bg); }
+.tabs button { border: 0; background: none; padding: 6px 14px; border-radius: 99px; cursor: pointer; color: var(--ink-2); white-space: nowrap; }
+.tabs button:hover { color: var(--ink); }
+.tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); font-weight: 600; }
+.btn.repo { text-decoration: none; color: var(--ink); }
+.btn.small { height: 30px; padding: 0 12px; font-size: 12.5px; text-decoration: none; color: var(--ink); }
+#tab-how { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#tab-why, #tab-who { flex: 1; min-height: 0; overflow: auto; background: var(--bg); }
+.tabpanel:focus { outline: none; }
+.page { max-width: 1180px; margin: 0 auto; padding: 28px 24px calc(48px + env(safe-area-inset-bottom, 0px)); }
+.page.story { max-width: none; }
+.why-lead { font-size: 17px; color: var(--ink-2); max-width: 760px; margin: 0 0 22px; }
+.sec-title { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); margin: 40px 0 6px; }
+.sec-sub { margin: 0 0 14px; }
+.why-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.why-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.why-card h2 { font-size: 18px; margin: 8px 0 6px; letter-spacing: -.01em; }
+.why-card p { margin: 0 0 10px; color: var(--ink-2); }
+.why-icon { font-size: 26px; }
+.why-links { list-style: none; padding: 0; margin: auto 0 0; display: grid; gap: 4px; font-size: 13px; }
+.why-links a, .why-out a, .person-stories a, .crumb a, .step-list a { color: var(--accent-ink); text-decoration: none; font-weight: 500; }
+.why-links a:hover, .why-out a:hover, .person-stories a:hover, .crumb a:hover { text-decoration: underline; }
+.why-out { margin-top: auto !important; font-size: 13px; }
+.truth-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.truth-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 13px; }
+.truth-card.planned { border-style: dashed; }
+.truth-card ul { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.truth-head { display: flex; gap: 8px; align-items: center; }
+.star { color: #d97706; }
+.views { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.view-card { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); text-decoration: none; }
+.view-card:hover { border-color: var(--accent); }
+.view-card span { color: var(--ink-2); font-size: 13px; }
+/* org */
+.org-name { font-size: 26px; margin: 0 0 6px; letter-spacing: -.02em; }
+.teams { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; align-items: start; }
+.team { background: var(--ground); border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 10px; }
+.team h2 { margin: 0; font-size: 16px; }
+.team > p { margin: -6px 0 0; font-size: 12.5px; }
+.person { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.person.elsewhere { opacity: .7; }
+.person-head { display: flex; gap: 10px; align-items: center; }
+.person-head .muted { font-size: 12px; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; display: inline-grid; place-items: center; font-weight: 700; color: var(--bg); background: var(--person); flex: none; }
+.goal { margin: 8px 0; color: var(--ink-2); font-size: 13px; }
+.person-stories { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; font-size: 13px; }
+.person .muted a { color: var(--accent-ink); }
+.owned h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); margin: 4px 0; }
+.owned-place { font-size: 12.5px; color: var(--ink-2); }
+.story-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 18px; }
+.story-chip { font-size: 12.5px; border: 1px solid var(--line); border-radius: 99px; padding: 4px 11px; background: var(--surface); color: var(--ink); text-decoration: none; }
+.story-chip .who { color: var(--ink-3); }
+.story-chip:hover { border-color: var(--accent); }
+.story-chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.story-chip.on .who { color: color-mix(in srgb, var(--bg) 70%, transparent); }
+.story-chip.planned { border-style: dashed; }
+/* storyboard */
+.crumb { margin: 0 0 8px; }
+.story-head h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: -.02em; display: flex; gap: 10px; align-items: center; }
+.story-who { margin: 0 0 6px; display: flex; gap: 6px; align-items: center; color: var(--ink-2); }
+.story-head .why-lead { margin-bottom: 12px; }
+.legend-row { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 10px; }
+.key-item { display: inline-flex; gap: 6px; align-items: center; }
+.key-item i { width: 26px; height: 0; border-top: 2.5px solid var(--k); display: inline-block; }
+.key-share { --k: var(--accent); } .key-store { --k: var(--repo); } .key-read { --k: var(--vendor); } .key-sign { --k: var(--author); }
+.key-store i { border-top-style: dashed; } .key-read i { border-top-style: dotted; } .key-sign i { border-top: 5px double var(--k); }
+.key-planned i { width: 18px; height: 12px; border: 1.5px dashed var(--ink-3); border-radius: 3px; }
+.story-body { display: flex; flex-direction: column; gap: 14px; }
+.board-frame { flex: 1; min-width: 0; display: flex; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; }
+.lane-col { position: relative; flex: none; border-right: 1px solid var(--line); }
+.board-scroll { flex: 1; min-width: 0; overflow-x: auto; }
+.board { position: relative; }
+.board-svg { position: absolute; inset: 0; pointer-events: none; }
+.lane-bg { fill: transparent; } .lane-bg.odd { fill: color-mix(in srgb, var(--ink) 3.5%, transparent); }
+.col-on { fill: color-mix(in srgb, var(--accent) 8%, transparent); stroke: color-mix(in srgb, var(--accent) 40%, transparent); stroke-width: 1; }
+.lane-label { position: absolute; left: 0; right: 0; padding: 10px 10px 8px 14px; display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; border-top: 1px solid var(--line); }
+.lane-label b { line-height: 1.25; }
+.lane-label .muted { font-size: 11.5px; }
+.lane-label.planned b::after { content: " (planned)"; font-weight: 400; color: var(--warn); }
+.lane-icon { font-size: 16px; }
+.lane-truth { font-size: 11px; color: var(--warn); margin-top: 2px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.lane-label.truth-now { box-shadow: inset 4px 0 0 #d97706; }
+.step-num { position: absolute; top: 6px; text-align: center; font-size: 11px; font-weight: 700; color: var(--ink-3); }
+.step-num.on { color: var(--accent-ink); }
+.step-card { position: absolute; z-index: 2; text-align: left; border: 1.5px solid var(--line); background: var(--surface); border-radius: 10px; padding: 8px 10px; cursor: pointer; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; font-size: 12.5px; line-height: 1.3; box-shadow: 0 2px 8px rgba(0, 0, 0, .06); }
+.step-card b { font-weight: 650; }
+.step-card:hover { border-color: var(--ink-3); }
+.step-card.on { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.step-card.planned { border-style: dashed; background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.mv { fill: none; stroke-width: 2; opacity: .55; }
+.mv.on { opacity: 1; stroke-width: 2.6; }
+.mv-share { stroke: var(--accent); } .mv-store { stroke: var(--repo); stroke-dasharray: 6 3; }
+.mv-read { stroke: var(--vendor); stroke-dasharray: 2 3; } .mv-sign { stroke: var(--author); stroke-width: 3.2; }
+.mk-share { fill: var(--accent); } .mk-store { fill: var(--repo); } .mk-read { fill: var(--vendor); } .mk-sign { fill: var(--author); }
+.pill { position: absolute; z-index: 3; transform: translate(-50%, -50%); max-width: 190px; font-size: 11.5px; line-height: 1.25; padding: 3px 8px; border-radius: 8px;
+  background: var(--surface); border: 1.5px solid var(--k); color: var(--ink); opacity: .72; text-align: center; }
+.pill.on { opacity: 1; box-shadow: var(--shadow); }
+.pill-share { --k: var(--accent); } .pill-store { --k: var(--repo); border-style: dashed; } .pill-read { --k: var(--vendor); border-style: dotted; } .pill-sign { --k: var(--author); border-width: 3px; border-style: double; }
+.pill-kind { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; color: color-mix(in srgb, var(--k, var(--ink-3)) 75%, var(--ink)); }
+.truth-badge { position: absolute; z-index: 3; color: #d97706; font-size: 16px; opacity: .45; }
+.truth-badge.on { opacity: 1; }
+.step-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 8px 28px; }
+.sp-main, .sp-side { display: grid; gap: 6px; align-content: start; }
+.step-panel h3 { margin: 2px 0 0; font-size: 17px; }
+.step-panel h4 { margin: 8px 0 0; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+.step-panel p { margin: 0; }
+.step-panel .planned-note { margin: 0; }
+.moves { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.mv-row { border-left: 3px solid var(--k); padding-left: 8px; }
+.mv-row-share { --k: var(--accent); } .mv-row-store { --k: var(--repo); } .mv-row-read { --k: var(--vendor); } .mv-row-sign { --k: var(--author); }
+.step-nav { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+.step-nav .btn { text-decoration: none; color: inherit; }
+.step-nav .btn.primary { color: var(--bg); }
+.step-nav .off { opacity: .4; cursor: default; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.story-head h1:focus { outline: none; }
+.step-list .code { margin-top: 6px; }
+.step-list .btn.small { margin-top: 6px; }
+.step-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.step-list > li { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.step-list > li.on { border-color: var(--accent); }
+.step-list > li.planned { border-style: dashed; }
+.step-list p { margin: 6px 0; }
+.step-list-head .n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--ink); color: var(--bg); font-size: 12px; margin-right: 6px; }
+.truth-line { font-size: 12.5px; }
+
 /* ── small screens: the panel becomes a bottom sheet ─── */
 @media (max-width: 760px) {
   .brand span, .kbd, #stats { display: none; }
   .topbar { gap: 8px; padding: 8px 12px; }
-  .search-wrap { order: 3; flex: 1 0 100%; }
+  .search-wrap { order: 4; flex: 1 0 100%; }
+  .tabs { order: 3; flex: 1 0 100%; justify-content: space-between; }
+  .tabs button { flex: 1; padding: 6px 8px; }
+  .btn.repo { padding: 0 12px; }
+  .page { padding: 18px 16px calc(40px + env(safe-area-inset-bottom, 0px)); }
+  .step-panel { grid-template-columns: 1fr; }
   #panel { position: absolute; left: 0; right: 0; bottom: 0; width: auto; max-height: 58%; border-left: 0; border-top: 1px solid var(--line);
     border-radius: 16px 16px 0 0; box-shadow: var(--shadow); z-index: 8; }
   .key { display: none; }
@@ -274,18 +383,23 @@ code, .mono, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 <body>
 <header class="topbar">
   <div class="brand"><h1 id="brand-title"></h1><span id="brand-sub"></span></div>
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button id="tabbtn-why" role="tab" type="button" data-tab="why" aria-controls="tab-why" aria-selected="true">Why</button>
+    <button id="tabbtn-who" role="tab" type="button" data-tab="who" aria-controls="tab-who" aria-selected="false" tabindex="-1">Who uses it</button>
+    <button id="tabbtn-how" role="tab" type="button" data-tab="how" aria-controls="tab-how" aria-selected="false" tabindex="-1">How it's built</button>
+  </nav>
   <div class="search-wrap">
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="8.5" cy="8.5" r="6"/><path d="m13 13 5 5"/></svg>
     <input id="search" type="search" placeholder="Search people, commands, files…" autocomplete="off" aria-label="Search the map" aria-controls="results">
     <span class="kbd">/</span>
     <ul id="results" role="listbox" hidden></ul>
   </div>
-  <div class="menu-wrap">
-    <button id="flows-btn" class="btn" type="button" aria-haspopup="menu" aria-expanded="false">▶ Journeys</button>
-    <div id="flow-menu" role="menu" hidden></div>
-  </div>
+  <a id="repo-link" class="btn repo" href="#" target="_blank" rel="noopener">GitHub ↗</a>
   <button id="theme" class="icon" type="button" aria-label="Switch light or dark theme">◐</button>
 </header>
+<section id="tab-why" class="tabpanel" role="tabpanel" aria-labelledby="tabbtn-why" tabindex="-1"></section>
+<section id="tab-who" class="tabpanel" role="tabpanel" aria-labelledby="tabbtn-who" tabindex="-1" hidden></section>
+<section id="tab-how" class="tabpanel" role="tabpanel" aria-labelledby="tabbtn-how" tabindex="-1" hidden>
 <nav id="stats" aria-label="Size of the system"></nav>
 <main class="stage">
   <div class="canvas-wrap">
@@ -293,7 +407,6 @@ code, .mono, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
       <defs>
         <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-3)"/></marker>
         <marker id="arrow-pipe" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--core)"/></marker>
-        <marker id="arrow-flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--observe)"/></marker>
       </defs>
       <g id="world"></g>
     </svg>
@@ -312,7 +425,6 @@ code, .mono, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
       <button id="zoom-fit" class="icon" type="button" aria-label="Show the whole system">⤢</button>
       <span id="zoom-level" aria-live="polite"></span>
     </div>
-    <section id="flowbar" hidden aria-live="polite"></section>
     <button id="panel-open" class="icon" type="button" aria-label="Show details">i</button>
   </div>
   <aside id="panel" class="open" aria-label="Details">
@@ -321,8 +433,11 @@ code, .mono, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
     <p id="gen-info" class="gen"></p>
   </aside>
 </main>
+</section>
 <script src="data.generated.js"></script>
 <script src="infra.js"></script>
+<script src="stories-data.js"></script>
 <script src="app.js"></script>
+<script src="stories.js"></script>
 </body>
 </html>

@@ -82,10 +82,15 @@ tools, versions, models, the settings that took debugging, the traps, the checkl
 
 ## See it as a map
 
-[`docs/usage-map/`](docs/usage-map/) is one zoomable page that shows how Balancewheel is
-used: who takes part, where each thing lives, and nine journeys you can step through, from
-setting up a machine to shipping seat policy to OpenEscapement. Its `bw` commands, modules,
-config keys, and roster are generated from this repository and `balancewheel.example.json`.
+[`docs/usage-map/`](docs/usage-map/) is one page with three tabs:
+
+- **Why** — the benefits in a sentence or two each, and where each source of truth lives.
+- **Who uses it** — Windup Workshop, a fictional company, and a storyboard for each task its
+  people do: what each step stores, what it shares and with whom, and which place holds the
+  truth. Nine stories run from setting up a machine to shipping seat policy to
+  OpenEscapement.
+- **How it's built** — one zoomable map of every part. Its `bw` commands, modules, config
+  keys, and roster are generated from this repository and `balancewheel.example.json`.
 
 [![The Balancewheel usage map](docs/usage-map/preview.png)](https://tensorgroup.github.io/balancewheel/usage-map/)
 

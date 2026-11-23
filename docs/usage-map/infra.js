@@ -1,26 +1,27 @@
 // docs/usage-map/infra.js — the hand-written layer of the Balancewheel usage map.
 // Written 2026-11-22 against the README, docs/architecture.md, docs/roadmap.md and the code.
-// It holds what the code cannot show: who takes part, where things live, and the journeys.
+// It holds what the code cannot show: who takes part and where things live. The people and
+// their stories (the Why and Who tabs) are in stories-data.js.
 // Generated parts (bw commands, modules, the example roster, config keys, home paths) come
 // from docs/usage-map/generate.py → data.generated.js. Ids prefixed cmd:, mod:, seat:, lead:,
 // plan:, tool:, profile:, rt:, key:, path: are generated; the rest are defined here.
 window.USAGE_MAP_INFRA = {
   title: 'Balancewheel Usage Map',
-  tagline: 'How you, your lead agent and the review seats use Balancewheel, step by step',
+  tagline: 'Why it helps, who uses it, and how it is built',
   rootTitle: 'Balancewheel',
+  repoUrl: 'https://github.com/tensorgroup/balancewheel',
   generateCommand: 'python3 docs/usage-map/generate.py --open',
   repoBlob: 'https://github.com/tensorgroup/balancewheel/blob/main/',
   canvas: { w: 2600, h: 2300 },
   summary:
     'Balancewheel lets one coding agent (the lead) work with other vendors\' agents as read-only reviewers (the seats). The lead moderates: seats review blind, only disputed claims are cross-examined, the lead checks every surviving finding against the code, and each panel is logged and scored. bw keeps a lead running in each worktree, switches to the next lead when a plan runs out, routes the lead\'s questions to you, and turns the log into a scoreboard. It writes only under your home directory.',
   howTo: [
-    'Start with a journey (top bar): each one walks a real task step by step, with the command to run.',
+    'New here? Start with the Why and Who uses it tabs. Each story there links back to the boxes on this map.',
     'Click a box to see its connections and details. Click it again to zoom in; once more to zoom out to everything it connects to.',
     'Click empty space to clear the lines. Esc goes up one level. Press / to search.',
     'Dashed boxes are planned, not built. Boxes with many small cells are generated from the code and the example config.',
   ],
   derivedLabel: 'Generated links (from code and example config)',
-  flowsLabel: 'Journeys',
   legend: [
     { tone: 'anthropic', label: 'Anthropic', color: '#d97706' },
     { tone: 'openai', label: 'OpenAI', color: '#10a37f' },
@@ -291,113 +292,5 @@ window.USAGE_MAP_INFRA = {
     { from: 'packsexport', to: 'modelseats', kind: 'planned' },
     { from: 'seatsgen', to: 'seats', label: 'wrappers', kind: 'planned' },
     { from: 'guardacting', to: 'broker', kind: 'planned' },
-  ],
-
-  flows: [
-    {
-      id: 'install', title: 'Set up a machine', persona: 'you',
-      desc: 'Once per machine. Balancewheel writes only under your home directory, so back that up first.',
-      steps: [
-        { node: 'backups', text: 'Back up every path a setup touches, before anything writes.', command: 'setup/backup.sh' },
-        { node: 'config', text: 'Copy the example config, replace the rows with your own plans, leads and seats, then validate it.', command: 'cp balancewheel.example.json ~/.config/balancewheel/config.json\npython3 metrics/log.py config' },
-        { node: 'quota', text: 'Install bin/bw-statusline as Claude Code\'s statusLine, so caps are seen automatically.', command: 'bw-statusline <plan>' },
-        { node: 'attack', text: 'Attack-test the sandbox and the guard on each runtime that needs them. A lead runs only after a recorded pass.', command: 'bw sandbox verify pi\nbw guard verify pi' },
-        { node: 'triagehook', text: 'Optionally let the decision model settle questions with a strong recommendation.', command: 'bw triage install claude' },
-        { node: 'registry', text: 'Check what the config wires together.', command: 'bw registry --print' },
-      ],
-    },
-    {
-      id: 'daily', title: 'Start the day', persona: 'you',
-      desc: 'One command opens the right lead for a project.',
-      steps: [
-        { node: 'bwstart', text: 'bw start updates the tools in parallel, re-verifies containment, and reads quota.', command: 'bw start ~/code/<project>' },
-        { node: 'rotation', text: 'Rotation picks the lead from the profile\'s lead_order, quota and caps.' },
-        { node: 'orca', text: 'The lead opens in an Orca pane (or a Terminal tab).' },
-        { node: 'runner', text: 'bw lead holds the worktree lock and the runtime lock for the session. Plain bw in a worktree does the same.', command: 'bw' },
-        { node: 'lead', text: 'You work in the lead. It keeps a checkpoint current at every task boundary.' },
-        { node: 'inbox', text: 'bw prints a line when the worktree has open asks.', command: 'bw inbox --project' },
-      ],
-    },
-    {
-      id: 'cap', title: 'A plan runs out', persona: 'lead',
-      desc: 'Work continues on another subscription, and returns when the preferred plan resets.',
-      steps: [
-        { node: 'quota', text: 'The statusline (or a probe, Orca, or bw cap) records that the plan is capped.', command: 'bw cap <plan> --resets-at <epoch>' },
-        { node: 'rotation', text: 'Rotation decides the next eligible lead. It never switches mid-turn for a plan that is merely low.' },
-        { node: 'runner', text: 'bw stops the lead\'s whole process group and confirms it is gone.' },
-        { node: 'handoff', text: 'bw writes a handoff from git facts and the lead\'s last checkpoint.' },
-        { node: 'nextlead', text: 'The next lead starts with the handoff and continues its next: line.' },
-        { node: 'metricslog', text: 'The switch is logged as session and lead events.' },
-        { node: 'rotation', text: 'After the preferred plan resets, the next bw lead returns to it.' },
-      ],
-    },
-    {
-      id: 'ask', title: 'A lead needs a decision', persona: 'lead',
-      desc: 'Questions reach you as files, and a decision model may settle the easy ones.',
-      steps: [
-        { node: 'lead', text: 'The lead decides what it can. A question that is really yours ends with a Recommendation: line.' },
-        { node: 'askfile', text: 'It writes the question to $BW_ASKS/<id>.ask, one question per file.' },
-        { node: 'decider', text: 'With triage on, the decision model scores it. In acting mode a strong recommendation stands as an @bw decision.' },
-        { node: 'inbox', text: 'Otherwise you see it in the inbox and answer it.', command: 'bw inbox\nbw answer <id> "<text>"' },
-        { node: 'answers', text: 'bw writes the answer to the lead\'s BW_INBOX. Your later answer always supersedes a decision.' },
-        { node: 'lead', text: 'The lead re-reads BW_INBOX and continues.' },
-      ],
-    },
-    {
-      id: 'panel', title: 'Review at a checkpoint', persona: 'lead',
-      desc: 'The panel protocol, from brief to logged record.',
-      steps: [
-        { node: 'profile:high-stakes', text: 'The profile names the seats for this checkpoint, which are required, and the minimum count.' },
-        { node: 'p-brief', text: 'The lead writes one shared brief.' },
-        { node: 'p-blind', text: 'Seats review blind and in parallel.' },
-        { node: 'seats', text: 'Each seat is another vendor\'s CLI, enforced read-only. A capped seat\'s fallback stands in.' },
-        { node: 'p-dispute', text: 'Only disputed claims are cross-examined, the claim relayed alone.' },
-        { node: 'p-bar', text: 'Challenges below the substance bar are dropped.' },
-        { node: 'p-verify', text: 'The lead checks every surviving finding against the code.' },
-        { node: 'p-log', text: 'One panel record is appended to the log.', command: 'python3 metrics/log.py panel …' },
-      ],
-    },
-    {
-      id: 'scoreboard', title: 'Change seat policy from numbers', persona: 'you',
-      desc: 'The log becomes a scoreboard, and the scoreboard is the only reason to change a seat.',
-      steps: [
-        { node: 'metricslog', text: 'Panels, sessions, ratings and usage accumulate in metrics.jsonl.' },
-        { node: 'dashboard', text: 'Render the dashboard: per-seat win share and confirmed-finding rate.', command: 'python3 metrics/dashboard.py' },
-        { node: 'watches', text: 'Watches flag panel bloat, skimmed verification, and a seat that stopped contributing.', command: 'python3 metrics/log.py watches' },
-        { node: 'cockpit', text: 'The cockpit shows models, usage, history and the live graph.', command: 'bw cockpit' },
-        { node: 'config', text: 'Change the seat\'s roles in config, citing the numbers, with a re-promotion criterion if it is demoted.' },
-      ],
-    },
-    {
-      id: 'guardaudit', title: 'Audit the guard', persona: 'you',
-      desc: 'In v0 the guard only logs. Your verdicts are the evidence for ever letting it act.',
-      steps: [
-        { node: 'broker', text: 'For a guarded lead, the broker judges each tool call and logs what it would have done.' },
-        { node: 'guardlog', text: 'Decisions go to guard.jsonl, scrubbed.' },
-        { node: 'greview', text: 'Review the stops and a sample of the allows, and mark each right or wrong.', command: 'bw guard review' },
-        { node: 'guardacting', text: 'Acting mode (block, not log) is planned; the review evidence is what would justify it.' },
-      ],
-    },
-    {
-      id: 'improve', title: 'Make it easier with use', persona: 'you',
-      desc: 'bw watches how you work and proposes changes worth making.',
-      steps: [
-        { node: 'metricslog', text: 'Sessions, ratings, asks and switches are already in the log.' },
-        { node: 'improve', text: 'See what bw suggests.', command: 'bw improve' },
-        { node: 'improve', text: 'Add your own note on what got in the way.', command: 'bw improve note "<text>"' },
-        { node: 'improve', text: 'Mark one dealt with; it returns only on new evidence.', command: 'bw improve done <key>' },
-      ],
-    },
-    {
-      id: 'toesc', title: 'Ship seat policy to repos', persona: 'you',
-      desc: 'Balancewheel justifies the policy; OpenEscapement distributes it. The export step is planned.',
-      steps: [
-        { node: 'dashboard', text: 'The scoreboard is the evidence for each seat\'s duties.' },
-        { node: 'modelseats', text: 'Today the model-seats pack is written by hand from this repo\'s seat policy.' },
-        { node: 'packsexport', text: 'Planned: packs/ regenerates that pack\'s catalog and changelog from the log.' },
-        { node: 'escbin', text: 'esc ships the pack into repos as a signed rule pack.', command: 'esc sync' },
-        { node: 'govrepo', text: 'Agents in a governed repo read the managed block every session. There, the pack\'s rule wins.' },
-      ],
-    },
   ],
 };

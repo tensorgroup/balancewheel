@@ -68,13 +68,16 @@ OpenEscapement" section owns the install order and the reconcile rule.
 - `docs/roadmap.md` — dogfooding goals, the four extraction criteria, the planned
   directory shape (`seats/`, `panel/`, `metrics/`, `packs/`), and non-goals.
 - `docs/usage-map/` — the public, interactive usage map linked from the README (served by
-  GitHub Pages from `/docs`): who takes part, their journeys, and the parts each step
-  touches. `infra.js` is hand-written; `data.generated.js` is generated and committed.
+  GitHub Pages from `/docs`), in three tabs: Why, Who uses it (Windup Workshop storyboards),
+  and How it's built (the zoomable map). `infra.js` (map boxes) and `stories-data.js` (the
+  Why cards, the org, places and stories; strict JSON) are hand-written; `data.generated.js`
+  is generated and committed. `generate.py` runs `check_stories.py`, which fails on a story
+  that points at a missing place, person or map box, or that shows a planned box as built.
   **Regenerate it in the same commit as any change to a `bw` command, a module (`lead/`,
   `lead/guard/`, `metrics/`, `cockpit/`), a runtime adapter, `balancewheel.example.json`,
   the config keys, or `setup/paths.txt`:** run `python3 docs/usage-map/generate.py` and
-  commit the result. Update `infra.js` in the same commit when a journey or a planned item
-  changes or ships.
+  commit the result. Update `infra.js` and the stories in `stories-data.js` in the same
+  commit when a task a story tells, or a planned item, changes or ships.
 - `CHANGELOG.md` — what each tagged version pins and what moved between versions. A version
   here is a contract (config and log schemas, `setup/paths.txt`, the setup prompt), not a
   download: there is nothing to install, so semver applies to those interfaces, not to the

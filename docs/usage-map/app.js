@@ -1,6 +1,9 @@
 // app.js — zoomable usage-map engine. No libraries, no network; opens from disk.
-// Inputs: window.USAGE_MAP_INFRA (infra.js, hand-written: people, places, services, journeys)
-// and window.USAGE_MAP_DATA (data.generated.js, generated from the code).
+// Inputs: window.USAGE_MAP_INFRA (infra.js, hand-written: people, places, services),
+// window.USAGE_MAP_DATA (data.generated.js, generated from the code), and, for the "in
+// stories" links, window.USAGE_MAP_STORIES (stories-data.js). The map lives in the "How it's
+// built" tab; stories.js owns the tabs and the URL hash, and drives the map through
+// window.USAGE_MAP. The map writes the hash (#how/<id>) only while its tab is shown.
 (() => {
   'use strict';
   const INFRA = window.USAGE_MAP_INFRA;
@@ -32,7 +35,7 @@
   const world = document.getElementById('world');
   const layers = {};
   // Resting edges draw under the nodes; highlighted edges move up to `edgesTop`.
-  for (const name of ['clusters', 'edges', 'nodes', 'edgesTop', 'flow']) {
+  for (const name of ['clusters', 'edges', 'nodes', 'edgesTop']) {
     layers[name] = svgEl('g', { class: `layer-${name}` }, world);
   }
 
@@ -359,6 +362,8 @@
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let anim = null;
   const size = () => ({ w: svg.clientWidth || 1, h: svg.clientHeight || 1 });
+  // While another tab is shown the SVG has no size; camera work then waits for show().
+  const shown = () => svg.clientWidth > 0;
   // The whole-map view leaves room at the top for the breadcrumb and at the bottom for the minimap.
   const FIT_RECT = { x: 0, y: -70, w: W, h: H + 300 };
   const fitUpp = () => {
@@ -374,6 +379,7 @@
   }
   let lastTierState = '';
   function applyCam() {
+    if (!shown()) return;
     clampCam();
     const s = size();
     const vw = s.w * cam.upp;
@@ -393,6 +399,7 @@
     updateMinimap();
   }
   function flyTo(rect, pad = 1.12) {
+    if (!shown()) return;
     const s = size();
     const target = {
       cx: rect.x + rect.w / 2,
@@ -482,9 +489,8 @@
     if (drag && drag.moved < 6 && e.type === 'pointerup') {
       const hit = drag.target.closest && drag.target.closest('[data-id]');
       if (hit) {
-        clearFlow();
         clickBox(hit.getAttribute('data-id'));
-      } else if (!flow && selectedId) {
+      } else if (selectedId) {
         // A click on empty canvas clears the selection and its lines; the view stays put.
         select('root');
       }
@@ -614,8 +620,9 @@
     highlight(selectedId);
     renderCrumbs(id);
     renderPanel(it);
+    if (!shown()) return;
     try {
-      history.replaceState(null, '', id === 'root' ? location.pathname : `#${encodeURIComponent(id)}`);
+      history.replaceState(null, '', id === 'root' ? '#how' : `#how/${encodeURIComponent(id)}`);
     } catch {
       /* file:// in some browsers */
     }
@@ -631,7 +638,7 @@
   }
   function link(id, label) {
     const it = items.get(id);
-    return htmlEl('button', { type: 'button', class: 'linkish', onclick: () => { clearFlow(); select(id, { fly: true }); } }, label || (it ? it.title : id));
+    return htmlEl('button', { type: 'button', class: 'linkish', onclick: () => select(id, { fly: true }) }, label || (it ? it.title : id));
   }
   function fileLink(path) {
     const wrapEl = htmlEl('span', { class: 'file' });
@@ -672,11 +679,19 @@
     });
     return section(`Connections (${own.length})`, list(rows), own.length > 60 ? htmlEl('p', { class: 'muted' }, `…and ${own.length - 60} more`) : null);
   }
-  function flowsFor(id) {
-    return INFRA.flows.filter((f) => f.persona === id || f.steps.some((s) => s.node === id));
+  // Stories (stories-data.js) that name this box: a persona's own stories, or any story with
+  // a step on the box. Each links to its storyboard on the "Who uses it" tab.
+  const STORIES = window.USAGE_MAP_STORIES || {};
+  const PEOPLE = new Map(((STORIES.org && STORIES.org.people) || []).map((p) => [p.id, p]));
+  function storiesFor(id) {
+    return (STORIES.stories || []).filter((st) => {
+      const person = PEOPLE.get(st.person);
+      return (person && (person.personas || []).includes(id)) || (st.steps || []).some((x) => x.node === id);
+    });
   }
-  function flowButton(f) {
-    return htmlEl('button', { type: 'button', class: 'linkish', onclick: () => startFlow(f.id) }, `▶ ${f.title}`);
+  function storyLink(st) {
+    const person = PEOPLE.get(st.person);
+    return htmlEl('a', { class: 'linkish', href: `#who/${st.id}` }, `${person ? `${person.name}: ` : ''}${st.title}`);
   }
 
   function renderPanel(it) {
@@ -691,10 +706,8 @@
     if (d.desc || d.blurb) panelBody.append(htmlEl('p', { class: 'p-desc' }, d.desc || d.blurb));
     if (d.usage) panelBody.append(section('Use it', htmlEl('pre', { class: 'code' }, d.usage)));
     if (d.wants) panelBody.append(section('What they want', htmlEl('p', { class: 'p-plain' }, d.wants)));
-    if (it.kind === 'persona' || it.kind === 'cluster' || it.kind === 'service' || it.kind === 'item') {
-      const fl = flowsFor(it.id);
-      if (fl.length) panelBody.append(section(it.kind === 'persona' ? `Their journeys (${fl.length})` : `In journeys (${fl.length})`, list(fl.map((f) => [flowButton(f)]))));
-    }
+    const sts = storiesFor(it.id);
+    if (sts.length) panelBody.append(section(it.kind === 'persona' ? `Their stories (${sts.length})` : `In stories (${sts.length})`, list(sts.map((st) => [storyLink(st)]))));
     if (d.facts && d.facts.length) panelBody.append(section('How it works', list(d.facts)));
     if (d.flags && d.flags.length) {
       panelBody.append(section(`Options (${d.flags.length})`, list(d.flags.map((f) => [chip(f.name, 'mono'), f.desc ? htmlEl('span', { class: 'muted' }, ` ${f.desc}`) : '']))));
@@ -718,119 +731,10 @@
     panelBody.append(htmlEl('p', { class: 'p-desc' }, INFRA.summary));
     const personas = [...items.values()].filter((x) => x.kind === 'persona');
     if (personas.length) panelBody.append(section('Who uses it', list(personas.map((p) => [link(p.id), htmlEl('span', { class: 'muted' }, ` ${p.data.sub || ''}`)]))));
-    panelBody.append(section('Walk through a journey', list(INFRA.flows.map((f) => [flowButton(f)]))));
+    if ((STORIES.stories || []).length) panelBody.append(section('See it in a story', list(STORIES.stories.map((st) => [storyLink(st)]))));
     panelBody.append(section('How to use this map', list(INFRA.howTo)));
     panelBody.append(section('Areas', list(INFRA.clusters.map((c) => [link(c.id), htmlEl('span', { class: 'muted' }, ` ${c.subtitle}`), isPlanned(c) ? chip('planned', 'flag') : '']))));
   }
-
-  // ── journeys (flows) ───────────────────────────────────────────────────────
-  let flow = null;
-  const flowBar = document.getElementById('flowbar');
-  function startFlow(fid) {
-    const f = INFRA.flows.find((x) => x.id === fid);
-    if (!f) return;
-    clearFlow();
-    flow = { f, i: 0, timer: null };
-    svg.classList.add('flowing');
-    svg.parentElement.classList.add('flow-on');
-    const badgesOn = new Map(); // node id → badges already drawn, so a revisited box shows each step
-    f.steps.forEach((s, i) => {
-      const it = items.get(s.node);
-      if (!it) return console.warn('usage map: journey node missing', s.node);
-      if (it.el) it.el.classList.add('in-flow');
-      if (i > 0) {
-        const prev = items.get(f.steps[i - 1].node);
-        if (prev && prev.id !== it.id) svgEl('path', { d: edgePath(prev.rect, it.rect, 0.18).d, class: 'flow-line', 'marker-end': 'url(#arrow-flow)' }, layers.flow);
-      }
-      const r = it.rect;
-      const rad = Math.max(2.5, Math.min(13, r.h * 0.18, r.w * 0.12));
-      const seen = badgesOn.get(it.id) || 0;
-      badgesOn.set(it.id, seen + 1);
-      const bx = r.x - rad * 0.9 + rad + seen * rad * 2.3;
-      const b = svgEl('g', { class: 'flow-badge' }, layers.flow);
-      svgEl('circle', { cx: bx, cy: r.y - rad * 0.9 + rad, r: rad }, b);
-      const t = svgEl('text', { x: bx, y: r.y - rad * 0.9 + rad * 1.38, 'font-size': rad * 1.1, 'text-anchor': 'middle' }, b);
-      t.textContent = String(i + 1);
-    });
-    goStep(0);
-  }
-  function clearFlow() {
-    if (flow && flow.timer) clearInterval(flow.timer);
-    layers.flow.textContent = '';
-    for (const n of document.querySelectorAll('.in-flow, .flow-now')) n.classList.remove('in-flow', 'flow-now');
-    svg.classList.remove('flowing');
-    svg.parentElement.classList.remove('flow-on');
-    flow = null;
-    flowBar.hidden = true;
-  }
-  function goStep(i) {
-    if (!flow) return;
-    const steps = flow.f.steps;
-    flow.i = Math.max(0, Math.min(steps.length - 1, i));
-    for (const n of document.querySelectorAll('.flow-now')) n.classList.remove('flow-now');
-    const it = items.get(steps[flow.i].node);
-    if (it) {
-      if (it.el) it.el.classList.add('flow-now');
-      flyTo(it.rect, it.kind === 'item' ? 9 : it.kind === 'cluster' ? 1.15 : 3.2);
-      renderCrumbs(it.id);
-      renderPanel(it);
-    }
-    renderFlowBar();
-  }
-  function renderFlowBar() {
-    if (!flow) return;
-    flowBar.hidden = false;
-    const { f, i } = flow;
-    flowBar.textContent = '';
-    const top = htmlEl('div', { class: 'fb-top' });
-    top.append(htmlEl('b', {}, f.title), htmlEl('span', { class: 'muted' }, ` Step ${i + 1} of ${f.steps.length}`));
-    top.append(htmlEl('button', { type: 'button', class: 'icon', 'aria-label': 'Close journey', onclick: () => { clearFlow(); select(selectedId || 'root'); } }, '×'));
-    const step = f.steps[i];
-    const body = htmlEl('p', { class: 'fb-text' });
-    body.append(htmlEl('strong', {}, `${items.get(step.node)?.title || step.node}: `), step.text);
-    const ctrl = htmlEl('div', { class: 'fb-ctrl' });
-    const back = htmlEl('button', { type: 'button', class: 'btn', onclick: () => goStep(i - 1) }, '← Back');
-    const next = htmlEl('button', { type: 'button', class: 'btn primary', onclick: () => goStep(i + 1) }, 'Next →');
-    back.disabled = i === 0;
-    next.disabled = i === f.steps.length - 1;
-    ctrl.append(back, htmlEl('button', { type: 'button', class: 'btn', onclick: togglePlay }, flow.timer ? 'Pause' : 'Play'), next);
-    const dots = htmlEl('div', { class: 'fb-dots' });
-    f.steps.forEach((_, k) => dots.append(htmlEl('button', { type: 'button', class: k === i ? 'on' : '', 'aria-label': `Step ${k + 1}`, onclick: () => goStep(k) })));
-    const cmd = step.command ? htmlEl('pre', { class: 'code fb-cmd' }, step.command) : null;
-    flowBar.append(top, htmlEl('p', { class: 'muted fb-desc' }, f.desc), body);
-    if (cmd) flowBar.append(cmd);
-    flowBar.append(dots, ctrl);
-  }
-  function togglePlay() {
-    if (!flow) return;
-    if (flow.timer) {
-      clearInterval(flow.timer);
-      flow.timer = null;
-    } else {
-      if (flow.i === flow.f.steps.length - 1) goStep(0);
-      flow.timer = setInterval(() => {
-        if (!flow) return;
-        if (flow.i >= flow.f.steps.length - 1) {
-          clearInterval(flow.timer);
-          flow.timer = null;
-          renderFlowBar();
-        } else goStep(flow.i + 1);
-      }, 3600);
-    }
-    renderFlowBar();
-  }
-  const flowMenu = document.getElementById('flow-menu');
-  document.getElementById('flows-btn').textContent = `▶ ${INFRA.flowsLabel || 'Journeys'}`;
-  for (const f of INFRA.flows) {
-    flowMenu.append(htmlEl('button', { type: 'button', role: 'menuitem', onclick: () => { flowMenu.hidden = true; startFlow(f.id); } }, f.title));
-  }
-  document.getElementById('flows-btn').addEventListener('click', (e) => {
-    flowMenu.hidden = !flowMenu.hidden;
-    e.currentTarget.setAttribute('aria-expanded', String(!flowMenu.hidden));
-  });
-  document.addEventListener('click', (e) => {
-    if (!flowMenu.hidden && !e.target.closest('#flow-menu, #flows-btn')) flowMenu.hidden = true;
-  });
 
   // ── search ─────────────────────────────────────────────────────────────────
   const search = document.getElementById('search');
@@ -876,7 +780,6 @@
     if (!r) return;
     results.hidden = true;
     search.blur();
-    clearFlow();
     select(r.id, { fly: true });
   }
   search.addEventListener('input', runSearch);
@@ -942,26 +845,22 @@
   document.getElementById('zoom-in').addEventListener('click', () => zoomAt(size().w / 2, size().h / 2, 1.8));
   document.getElementById('zoom-out').addEventListener('click', () => zoomAt(size().w / 2, size().h / 2, 1 / 1.8));
   document.getElementById('zoom-fit').addEventListener('click', () => {
-    clearFlow();
     select('root');
     flyTo(items.get('root').rect, 1);
   });
   document.getElementById('panel-close').addEventListener('click', () => panel.classList.remove('open'));
   document.getElementById('panel-open').addEventListener('click', () => panel.classList.add('open'));
   document.addEventListener('keydown', (e) => {
-    if (e.target.matches('input, textarea')) return;
+    if ((e.target.matches && e.target.matches('input, textarea')) || !shown()) return;
     if (e.key === '/') {
       e.preventDefault();
       search.focus();
     } else if (e.key === 'Escape') {
-      if (flow) return clearFlow();
       const it = selectedId ? items.get(selectedId) : null;
       select(it && it.parent ? it.parent : 'root', { fly: true });
     } else if (e.key === '0') document.getElementById('zoom-fit').click();
     else if (e.key === '+' || e.key === '=') document.getElementById('zoom-in').click();
     else if (e.key === '-') document.getElementById('zoom-out').click();
-    else if (flow && e.key === 'ArrowRight') goStep(flow.i + 1);
-    else if (flow && e.key === 'ArrowLeft') goStep(flow.i - 1);
   });
   const root = document.documentElement;
   try {
@@ -991,19 +890,30 @@
   document.getElementById('gen-info').textContent = `Generated parts read from the code on ${DATA.generatedAt.slice(0, 10)} at ${DATA.commit}. Regenerate and reopen: ${INFRA.generateCommand}`;
 
   // ── start ──────────────────────────────────────────────────────────────────
-  cam.upp = fitUpp();
-  cam.cy = H / 2 + 80;
-  applyCam();
-  const start = decodeURIComponent(location.hash.slice(1));
-  if (start && items.has(start)) select(start, { fly: true });
-  else select('root');
-  // A link that changes only the hash (#cli, #p-author) selects that box without a reload.
-  window.addEventListener('hashchange', () => {
-    const id = decodeURIComponent(location.hash.slice(1));
-    if (id && items.has(id) && id !== selectedId) {
-      clearFlow();
-      select(id, { fly: true });
-    }
-  });
+  // stories.js owns the hash. It calls show() each time the "How it's built" tab appears,
+  // because the SVG has no size while another tab is shown.
+  let fitted = false;
+  let shownOnce = false;
+  select('root');
+  window.USAGE_MAP = {
+    has: (id) => items.has(id),
+    select: (id) => select(items.has(id) ? id : 'root', { fly: true }),
+    show(id) {
+      stopAnim();
+      cam.upp = fitUpp();
+      if (!fitted) cam.cy = H / 2 + 80;
+      fitted = true;
+      applyCam();
+      const first = !shownOnce;
+      shownOnce = true;
+      const target = id && items.has(id) ? id : selectedId || 'root';
+      if (target === 'root') {
+        select('root');
+        flyTo(items.get('root').rect, 1);
+      } else select(target, { fly: true });
+      // On a phone the details sheet starts closed, so the map is visible first.
+      if (first && !id && window.innerWidth < 760) panel.classList.remove('open');
+    },
+  };
   if (window.innerWidth < 760) panel.classList.remove('open');
 })();
