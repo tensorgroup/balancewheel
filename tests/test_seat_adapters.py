@@ -64,9 +64,12 @@ class Shared(unittest.TestCase):
             for runtime, ad in adapters.SEAT_ADAPTERS.items():
                 adapters.make_code_dirs(runtime, home)
                 adapters.make_code_dirs(runtime, home)  # a second run is fine
+                deny = ad.grants({"model": "m"}, home).deny_write
                 for rel in adapters.CODE_DIRS[runtime]:
-                    self.assertTrue(os.path.isdir(os.path.join(home, rel)), rel)
-                    self.assertIn(os.path.join(home, rel), ad.grants({"model": "m"}, home).deny_write)
+                    p = os.path.join(home, rel)
+                    self.assertTrue(os.path.isdir(p), rel)
+                    # a denied code dir, or the parent of a denied code file the CLI makes at start
+                    self.assertTrue(p in deny or any(os.path.dirname(d) == p for d in deny), rel)
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as elsewhere:
             os.symlink(elsewhere, os.path.join(home, ".claude"))
             with self.assertRaises(OSError):
@@ -209,7 +212,7 @@ class Codex(unittest.TestCase):
         self.assertEqual(adapters.CODEX_CA_BUNDLE, "/etc/ssl/cert.pem")
 
     def test_credentials_refresh(self):  # R11: auth.json holds a refresh token
-        [(real, name, refreshes)] = self.ad.credentials
+        [(real, name, refreshes)] = self.ad.credentials()
         self.assertEqual(name, "auth.json")
         self.assertTrue(real.endswith("/auth.json"))
         self.assertTrue(refreshes)
@@ -266,7 +269,8 @@ class ClaudeCode(unittest.TestCase):
 
     def test_backend(self):  # the login is an env token, not the keychain
         self.assertEqual(self.ad.backend, "any")
-        self.assertEqual(self.ad.credentials, [])
+        self.assertEqual(self.ad.credentials(), [])
+        self.assertFalse(self.ad.keychain)
 
     def test_env_key(self):
         self.assertIn(RECORDED_ENV_KEY["claude-code"], self.ad.env_keys)
@@ -510,8 +514,8 @@ class Pi(unittest.TestCase):
         self.assertEqual(g.env, {"PI_CODING_AGENT_DIR": HOME})
         self.assertFalse(g.private_home)  # the real HOME keeps a Volta shim working; the agent dir is the seat home
         self.assertEqual(self.ad.home_env(HOME), {"PI_CODING_AGENT_DIR": HOME})
-        self.assertEqual(self.ad.credentials, [])
-        self.assertEqual(self.ad.state_dirs, [])
+        self.assertEqual(self.ad.credentials(), [])
+        self.assertEqual(self.ad.home_argv(HOME), [])
 
     def test_volta_home_read_through_the_toolchain_list(self):
         # nono denies reads under the home by default. The pi shim is Volta's: without a read of
@@ -622,7 +626,7 @@ class Kimi(unittest.TestCase):
         self.assertEqual(g.env, {"KIMI_CODE_HOME": HOME})
         self.assertTrue(g.private_home)
         self.assertEqual(self.ad.home_env(HOME), {"KIMI_CODE_HOME": HOME})
-        self.assertEqual(self.ad.state_dirs, [])
+        self.assertEqual(self.ad.home_argv(HOME), [])
 
     def test_code_paths_in_home_write_denied(self):  # R14
         g = self.ad.grants(self.SEAT, HOME)
@@ -659,7 +663,8 @@ class Kimi(unittest.TestCase):
 
 class Agy(unittest.TestCase):
     """agy runs on the real HOME: a private HOME loses the keychain login (ruling S-agy, checked
-    2026-11-23). Its writes go to its own state dir only, declared in `state_dirs`."""
+    2026-11-23). --gemini_dir moves its config and state dir into the seat home, and the keychain
+    login still loads (spike, 2026-11-23): it writes nothing under the real ~/.gemini."""
     ad = adapters.SEAT_ADAPTERS["agy"]
     SEAT = {"runtime": "agy", "model": "m-test", "args": []}
 
@@ -751,23 +756,21 @@ class Agy(unittest.TestCase):
         self.assertFalse(g.private_home)
         self.assertEqual(g.env, {})
         self.assertEqual(self.ad.home_env(HOME), {})
-        self.assertEqual(self.ad.state_dirs, [adapters._agy_state()])
-        self.assertEqual(self.ad.credentials, [])
+        self.assertEqual(self.ad.credentials(), [])
+        self.assertTrue(self.ad.keychain)  # the login is in the keychain: the seat may ask it
+        self.assertEqual(self.ad.home_argv(HOME), [f"--gemini_dir={HOME}/gemini"])
 
-    def test_code_paths_in_home_write_denied(self):  # R14: the code names in its state dir stay read-only
+    def test_code_paths_in_home_write_denied(self):  # R14: the code names in its own gemini dir stay read-only
         g = self.ad.grants(self.SEAT, HOME)
-        state = adapters._agy_state()
-        self.assertEqual(sorted(g.deny_write), sorted(os.path.join(state, n) for n in adapters.AGY_CODE))
-        for memory in ("knowledge", "brain", "implicit", "annotations"):  # prompt-bearing state a lead reads later
-            self.assertIn(os.path.join(state, memory), g.deny_write)
-        for own in ("conversations", "conversation_summaries.db", "history.jsonl"):  # the seat's own resume
-            self.assertNotIn(os.path.join(state, own), g.deny_write)
-        self.assertTrue(set(g.deny_write) <= set(self.ad.hook_files(HOME)))
-
-    def test_hook_files_outside_state(self):
-        gemini = os.path.join(os.path.expanduser("~"), ".gemini")
-        for p in ("settings.json", "config/mcp_config.json", "skills", "policies"):
-            self.assertIn(os.path.join(gemini, p), self.ad.hook_files(HOME))
+        gemini = os.path.join(HOME, "gemini")
+        self.assertEqual(sorted(g.deny_write), sorted(os.path.join(gemini, n) for n in adapters.AGY_CODE))
+        for memory in ("knowledge", "implicit", "annotations"):  # prompt-bearing state a later run reads
+            self.assertIn(os.path.join(gemini, "antigravity-cli", memory), g.deny_write)
+        for own in ("conversations", "conversation_summaries.db", "bin", "builtin", "brain"):  # agy rewrites these
+            self.assertNotIn(os.path.join(gemini, "antigravity-cli", own), g.deny_write)
+        self.assertEqual(sorted(g.deny_write), sorted(self.ad.hook_files(HOME)))
+        real = os.path.join(os.path.expanduser("~"), ".gemini")
+        self.assertFalse(any(p.startswith(real + "/") for p in g.write + g.deny_write))  # nothing in the real dir
 
     def test_stray_stderr_on_a_good_run_is_not_an_error(self):
         out, _ = fixture("agy", "ok")

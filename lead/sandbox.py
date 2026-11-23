@@ -23,11 +23,12 @@ import sys
 import tempfile
 from collections import namedtuple
 
-Grants = namedtuple("Grants", "rules read deny_read reread tool_read")    # rules: [(allow|deny, subpath|literal, path)]
+Grants = namedtuple("Grants", "rules read deny_read reread tool_read extra")    # rules: [(allow|deny, subpath|literal, path)]
 # deny_read: paths no read grant reaches (bw's sealed copies, the inbox record, the answers views);
 # reread: paths inside a deny_read that are readable again (the lead's own answers view), emitted after it;
-# tool_read: a seat's toolchain reads (seats.grants). Unlike `read`, they never lift a secret deny.
-Grants.__new__.__defaults__ = ((), (), ())
+# tool_read: a seat's toolchain reads (seats.grants). Unlike `read`, they never lift a secret deny;
+# extra: raw Seatbelt deny rules that go last in both backends' profiles (seats.grants: agent sockets, keychain).
+Grants.__new__.__defaults__ = ((), (), (), ())
 RuntimeGrants = namedtuple("RuntimeGrants", "read write env private_home deny_write")
 RuntimeGrants.__new__.__defaults__ = ((),)  # deny_write: paths inside `write` that stay read-only
 
@@ -47,10 +48,17 @@ CANVAS_CONTROL_DIRS = ["Library/Application Support/orca", ".config/herdr"]
 CANVAS_CONTROL_PORTS = [6768, 15721]
 DEFAULT_COCKPIT_PORT = 8765
 SECRET_READS = [".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker/config.json",
-                ".codex/auth.json", ".claude/.credentials.json", ".kimi-code/credentials", ".pi/agent/auth.json",
-                ".gemini/oauth_creds.json", ".config/gcloud",
+                ".codex/auth.json", ".claude/.credentials.json", ".kimi-code/credentials", ".kimi-code/oauth",
+                ".pi/agent/auth.json", ".gemini/oauth_creds.json", ".config/gcloud",
+                ".gemini/antigravity-cli/antigravity-oauth-token",  # agy's token when the keychain save fails
                 ".cc-switch",  # its DB holds Codex auth and copies of every vendor config
-                ".cargo/credentials", ".cargo/credentials.toml"]  # crates.io registry tokens
+                ".cargo/credentials", ".cargo/credentials.toml",  # crates.io registry tokens
+                ".git-credentials", ".config/git/credentials",  # git's credential store
+                ".npmrc", ".pypirc"]  # package registry tokens
+# Secrets under a runtime home that an env var moves: (env name, names under that dir).
+SECRET_ENV_HOMES = [("CODEX_HOME", ("auth.json",)), ("KIMI_CODE_HOME", ("credentials", "oauth"))]
+# The user's global git config: files only, so ~/.config/git/credentials stays unread.
+GIT_CONFIG_FILES = [".gitconfig", ".config/git/config", ".config/git/ignore", ".config/git/attributes"]
 
 
 def denied_ports(config=None):
@@ -86,14 +94,34 @@ def _git_dir(worktree):
     return os.path.realpath(r.stdout.strip())
 
 
+def secret_paths(home=None):
+    """Every secret path as a real path: SECRET_READS under the home, plus the secrets under a runtime
+    home that CODEX_HOME or KIMI_CODE_HOME moves (the adapters honor both)."""
+    home = home or os.path.expanduser("~")
+    out = [os.path.join(home, s) for s in SECRET_READS]
+    for env, names in SECRET_ENV_HOMES:
+        moved = os.environ.get(env)
+        if moved:
+            out += [os.path.join(os.path.expanduser(moved), n) for n in names]
+    return list(dict.fromkeys(os.path.realpath(p) for p in out))
+
+
 def git_config_reads():
-    """The user's global git config paths that exist, as real paths, plus the link node of each
-    symlinked one (dotfiles). git dies when one exists but is unreadable, so every git command in a
-    lead or a seat needs these. Read only."""
+    """The user's global git config files that exist (GIT_CONFIG_FILES), as real paths, plus the link
+    node of each symlinked file or config dir (dotfiles). Files only: a dir grant would reach
+    ~/.config/git/credentials. git dies when a config file exists but is unreadable, so every git
+    command in a lead or a seat needs these. Read only."""
     home = os.path.expanduser("~")
-    cfg = [os.path.join(home, ".gitconfig"), os.path.join(home, ".config", "git")]
-    return ([_real(p) for p in cfg if os.path.exists(p)]
-            + [check_path(os.path.abspath(p)) for p in cfg if os.path.islink(p)])
+    out = []
+    for rel in GIT_CONFIG_FILES:
+        given = os.path.join(home, rel)
+        if not os.path.isfile(given):
+            continue
+        out.append(_real(given))
+        for node in (given, os.path.dirname(given)):
+            if os.path.islink(node):
+                out.append(check_path(os.path.abspath(node)))
+    return list(dict.fromkeys(out))
 
 
 def lead_grants(project, runtime, state_dir):
@@ -147,7 +175,8 @@ def lead_grants(project, runtime, state_dir):
 
 
 def _inside(p, roots):
-    return any(p == r or p.startswith(r.rstrip("/") + "/") for r in roots)
+    p = os.path.normpath(p)
+    return any(p == r or p.startswith(r.rstrip("/") + "/") for r in map(os.path.normpath, roots))
 
 
 def _rule(action, kind, path):
@@ -178,21 +207,23 @@ def seatbelt_profile(grants, scratch, ports=None):
              f'(allow file-write* (subpath "/dev") (subpath "{check_path(os.path.realpath(scratch))}"))']
     parts += [_rule(*r) for r in grants.rules]
     own = [p for _, _, p in grants.rules] + list(grants.read)  # a runtime still reads its own login
-    paths = [os.path.realpath(os.path.join(home, s)) for s in SECRET_READS]
-    paths = [p for p in paths if not any(p == o or p.startswith(o.rstrip("/") + "/") for o in own)]
+    paths = [p for p in secret_paths(home) if not any(p == o or p.startswith(o.rstrip("/") + "/") for o in own)]
     secrets = " ".join(f'(subpath "{check_path(p)}")' for p in paths)
     parts.append(f"(deny file-read* {secrets})")
     parts += _read_denies(grants)
     parts += IPC_DENIES + canvas_denies(denied_ports() if ports is None else ports)
+    parts += list(grants.extra)
     return "".join(parts)
 
 
-def _tool_secret_denies(grants):
-    """nono: a read deny for each secret path inside a toolchain read. nono's own secret list does not
-    name these (a registry token in ~/.cargo), and the read grant would otherwise reach them."""
-    home = os.path.expanduser("~")
-    secrets = [os.path.realpath(os.path.join(home, s)) for s in SECRET_READS]
-    return [f'(deny file-read* (subpath "{check_path(s)}"))' for s in secrets if _inside(s, list(grants.tool_read))]
+def _read_secret_denies(grants):
+    """nono: a read deny for each secret path inside a read or toolchain read grant. nono's own secret
+    list does not name these (a registry token in ~/.cargo), and the read grant would otherwise reach
+    them. A secret inside a write grant (a runtime's own login dir) is left to that grant."""
+    reads = list(grants.read) + list(grants.tool_read)
+    writes = [p for a, _, p in grants.rules if a == "allow"]
+    return [f'(deny file-read* (subpath "{check_path(s)}"))' for s in secret_paths()
+            if _inside(s, reads) and not _inside(s, writes)]
 
 
 def nono_profile(grants, scratch, ports=None):
@@ -216,9 +247,10 @@ def nono_profile(grants, scratch, ports=None):
                        "read_file": [p for p in reads if not os.path.islink(p) and os.path.isfile(p)]},
         # nono resolves grants to real paths; the link node itself needs a raw read rule.
         "unsafe_macos_seatbelt_rules": [f'(allow file-read* (literal "{p}"))' for p in reads if os.path.islink(p)]
-                                       + _tool_secret_denies(grants)
+                                       + _read_secret_denies(grants)
                                        + ordered + _read_denies(grants)  # nono's default reads $TMPDIR
-                                       + IPC_DENIES + canvas_denies(denied_ports() if ports is None else ports),
+                                       + IPC_DENIES + canvas_denies(denied_ports() if ports is None else ports)
+                                       + list(grants.extra),
     }
 
 

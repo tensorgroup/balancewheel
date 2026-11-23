@@ -175,7 +175,7 @@ creds() {
     py - "$RUNTIME" <<'PY'
 import os, sys
 from seats import adapters
-for real, name, refreshes in adapters.SEAT_ADAPTERS[sys.argv[1]].credentials:
+for real, name, refreshes in adapters.SEAT_ADAPTERS[sys.argv[1]].credentials():
     try:
         st = os.lstat(real)
         print(f"{name}: inode {st.st_ino} mtime {int(st.st_mtime)} refreshes={refreshes}")

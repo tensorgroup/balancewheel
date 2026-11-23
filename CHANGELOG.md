@@ -31,19 +31,19 @@ not against the prose.
 - **Seat adapters** (`seats/adapters.py`), separate from the lead adapters so a seat change never resets a
   lead key. Codex, Claude Code, pi, Kimi Code, and agy. A Claude Code seat needs `CLAUDE_CODE_OAUTH_TOKEN`
   (from `claude setup-token`) in the env. A pi seat on OpenRouter needs `OPENROUTER_API_KEY` in the env.
-  An agy seat runs on the real home, because its keychain login does not reach a private home. The
-  adapter tuple gains `state_dirs`.
+  An agy seat runs on the real home, because its keychain login does not reach a private home, and
+  `--gemini_dir` moves its config and state into the seat home. The adapter tuple gains `home_argv`
+  (flags after the command name) and `keychain` (the login is in the keychain); `credentials` is a
+  callable, read at call time.
 - **`seat_grants(..., credentials=...)`** (`seats/grants.py`). A login file that a seat adapter declares as
   refreshing is readable and writable at its real path, as one file only. bw refuses a credential that is a
   symlink, is not a regular file, or lies in bw state, the target, a code path, or the seat scratch root.
-- **`seat_grants(..., state_dirs=...)`** (`seats/grants.py`). A CLI state dir under the user's home that a
-  seat adapter declares (agy only) is writable; the code names in it stay read-only. bw refuses a dir that
-  is a symlink, is missing, is the home itself, lies outside the home, overlaps bw state, the seat home,
-  the seat scratch root, or the target, lies under a code path, or overlaps a secret path.
-- **agy lead session stores are read-denied to seats.** `conversations`, `conversation_summaries.db`, and
-  `history.jsonl` under `~/.gemini/antigravity-cli/` join the lead session stores. The agy seat keeps
-  them, because they lie in its declared state dir. Its memory dirs (`knowledge`, `brain`, `implicit`,
-  `annotations`) stay read-only.
+- **`seat_grants(..., keychain=..., deny_read=...)`** (`seats/grants.py`). `keychain` leaves the keychain
+  services reachable for a runtime whose login is there (agy). `deny_read` adds read denies (the seat
+  attack names the production state dir). There is no `state_dirs`: no seat writes a dir outside its home.
+- **agy lead session stores are read-denied to seats, the agy seat included.** `conversations`,
+  `conversation_summaries.db`, `history.jsonl`, and `brain` under `~/.gemini/antigravity-cli/` join the
+  lead session stores.
 - **Seat verification keys and passes per seat id** (`seats/verify.py`, `state_dir/seat-verify.json`). The
   last failed probe per seat goes to `state_dir/seats/failures.json`. A later failure under the same key
   revokes the pass. bw now writes `state_dir/seats.json`.
@@ -54,6 +54,19 @@ not against the prose.
 
 ### Fixed
 
+- **Seat containment** (`seats/grants.py`, `lead/sandbox.py`). A seat can no longer rename the parent
+  of a code name (a literal write deny on each dir node from the seat home down). Seats cannot connect
+  to an SSH or GPG agent socket, and, except agy, cannot ask the keychain. `~/.git-credentials`,
+  `~/.config/git/credentials`, `~/.npmrc`, `~/.pypirc`, `~/.kimi-code/oauth`, and agy's
+  `antigravity-oauth-token` are secrets; the global git config is granted as files only. The prompt
+  histories, session indexes, and file snapshots of the lead runtimes are lead stores, also under a moved
+  `CODEX_HOME` or `KIMI_CODE_HOME`. A target inside a secret path, or a directory outside its own git
+  worktree, is refused. nono denies a secret inside any read grant. The codex code names gain
+  `AGENTS.override.md` and the pi code names gain `APPEND_SYSTEM.md` (`lead/codepaths.py`: pi and Kimi
+  leads re-verify).
+- **The agy seat writes nothing under the real `~/.gemini`.** It runs on `<seat home>/gemini`
+  (`--gemini_dir`), so it can run shell commands (agy rewrites `bin/agentapi` there), it reads no agy lead
+  conversation, and an agy lead session no longer changes the agy seat key.
 - **bw's git calls blank every filter driver the repo config names** (`lead/handoff.py`). A clean filter
   named in `.git/info/attributes` used to run on a worktree diff. Git output with non-UTF-8 bytes no
   longer raises.

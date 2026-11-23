@@ -74,7 +74,7 @@ class SeatVerify(unittest.TestCase):
             self.assertIn(f, k)
         self.assertEqual((k["seat"], k["runtime"], k["model"], k["effort"]), ("astra", "codex", "gpt-6-astra", "xhigh"))
         home = verify.seat_home(self.state, "astra")
-        self.assertEqual(sorted(k["hook_files"]), sorted(os.path.join(home, n) for n in ("config.toml", "AGENTS.md",
+        self.assertEqual(sorted(k["hook_files"]), sorted(os.path.join(home, n) for n in ("config.toml", "AGENTS.md", "AGENTS.override.md",
                          "prompts", "hooks.json", "skills", "rules")))
 
     def test_seat_grants_in_the_seat_key_not_in_lead_sandbox(self):

@@ -7,4 +7,4 @@ refresh stay writable.
 """
 
 KIMI_CODE = ["bin", "config.toml", "tui.toml", "mcp.json", "AGENTS.md", "skills", "plugins", "hooks", "agents"]
-PI_CODE = ["extensions", "settings.json", "models.json", "skills", "prompts", "themes", "AGENTS.md", "SYSTEM.md"]
+PI_CODE = ["extensions", "settings.json", "models.json", "skills", "prompts", "themes", "AGENTS.md", "SYSTEM.md", "APPEND_SYSTEM.md"]

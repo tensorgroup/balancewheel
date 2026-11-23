@@ -26,7 +26,10 @@ and the result that Seatbelt sandboxes do not nest (see Seat runtimes under `bw 
 wrappers), and the seat login outcomes are recorded; updated 2026-11-23 a third time after the first
 live seat attack on the pi seat: the git config read, the toolchain reads (Volta and pyenv among
 them), the cargo token denies, and the `--approve` control; updated 2026-11-23 a fourth time after
-the live attack on the codex and agy seats: the codex install read, the codex CA bundle, the zsh denial line, and the agy tool step shape.*
+the live attack on the codex and agy seats: the codex install read, the codex CA bundle, the zsh denial line, and the agy tool step shape;
+updated 2026-11-23 a fifth time after the seat review fixes: the agy seat moves to its own gemini dir in the seat
+home (`--gemini_dir`), seats lose the agent sockets and the keychain, and the parent of each code
+name is rename-proof (see Seat runtimes under `bw seat`).*
 
 ## The cast
 
@@ -223,10 +226,10 @@ Login outcomes, checked 2026-11-23:
   `claude setup-token` once and export `CLAUDE_CODE_OAUTH_TOKEN` in the shell that runs `bw`.
   Without it, the Claude seat is absent with a "no login" reason.
 - **Codex seat.** It uses the real `~/.codex/auth.json`, granted read and write as that one file only.
-- **agy seat.** It keeps the real home, because its login does not carry over. Only its own
-  `~/.gemini/antigravity-cli/` folder is writable. Its memory dirs (knowledge, brain, implicit,
-  annotations) are read-only. Residual risk: it can edit agy conversation files. When the lead is
-  agy, the panel leaves the agy seat out.
+- **agy seat.** It keeps the real home, because its keychain login does not carry over to a private
+  home. The hidden flag `--gemini_dir` moves its config and state into `<seat home>/gemini`, and the
+  keychain login still loads. It writes nothing under the real `~/.gemini`, and it reads no agy lead
+  session store. Its code names and memory dirs in its own dir stay read-only.
 - **pi seat.** It needs `OPENROUTER_API_KEY` in the environment (OpenRouter only for now).
 
 `bw start` checks seats in the background after the lead opens (`bw: checking seats in the
@@ -399,6 +402,30 @@ denial, with the same rule that the line names the probe's target.
 When a probe's tool stops before its write, the seat attack reports the probe as skipped, never as
 passed, and `bw seat verify` says that the tool could not start under the sandbox.
 
+**What else a seat profile denies (seat review fixes, 2026-11-23).** These rules live in
+`seats/grants.py`, so a change to them resets seat keys only, never a lead key.
+- No connect to an agent socket: launchd's per-user socket dirs (`/private/tmp/com.apple.launchd.*`),
+  the `SSH_AUTH_SOCK` path, and any socket under a secret path (`~/.ssh`, `~/.gnupg`). Checked with a
+  local socket: the connect fails with "Operation not permitted".
+- No keychain: no lookup of the keychain services and no read of `~/Library/Keychains`. The agy seat
+  is the exception (`keychain` in its adapter), because its login is in the keychain.
+- No rename of a code name's parent: each dir node from the seat home down to a code path has a
+  literal write deny. Seatbelt checks the renamed path itself, so a deny on the code names alone does
+  not stop `mv <home>/.claude elsewhere`.
+- More secrets: `~/.git-credentials`, `~/.config/git/credentials`, `~/.npmrc`, `~/.pypirc`,
+  `~/.kimi-code/oauth`, and agy's `antigravity-oauth-token`. The global git config is granted as files
+  only (`~/.gitconfig`, `~/.config/git/config`, `ignore`, `attributes`), never as the dir.
+- More lead stores: the prompt histories (`history.jsonl`, `user-history`), the session indexes, the
+  file snapshots, `~/.gemini/history`, and agy's `brain/`. A secret or store under a `CODEX_HOME` or
+  `KIMI_CODE_HOME` that the user moved is denied too.
+- A target inside a secret path is refused, and a directory outside its own git worktree (a planted
+  `core.worktree`) is refused.
+
+Known limit: the codex seat on the `sandbox-exec` backend (a machine without nono) failed at start
+before the metadata fix ("failed to canonicalize CODEX_HOME"), because realpath could not stat the
+read-denied state dir. The metadata reads above should end that; no codex run on `sandbox-exec` has
+confirmed it.
+
 **codex.** `codex exec resume` has no `-s`, `-C`, or `-p` flag. A resume therefore cannot set the
 sandbox with `-s`, and it cannot set the target with `-C`: run it from the target directory. The flag
 `--dangerously-bypass-approvals-and-sandbox` exists on both paths, so one flag sets the same state
@@ -446,35 +473,37 @@ usage shapes before the kimi fixtures are final. `--auto` is "Never Ask" mode; `
 for risky actions. Kimi Code ignores its own deny rules in `-p` mode.
 
 **agy.** The event key is `event`, not `type`. `--effort` exists (`low` to `max`), so the agy
-adapter can take an effort flag. agy has no documented config-dir variable. The binary holds the name
-`ANTIGRAVITY_CONFIG_REL_DIR`, but that variable was not tested. A
-private `HOME` sends agy to a browser login. So agy cannot have a seat-owned config dir on 1.5.13:
-it runs on the real `~/.gemini` with backend `sandbox-exec`, and its writes go to
-`~/.gemini/antigravity-cli/`. That conflicts with the rule that a seat never writes a lead runtime's
-home, so only that folder is writable (see Seat wrappers). Project hooks in `.agents/hooks.json` load after the
-user trusts the folder. Directory rules (`GEMINI.md`, `AGENTS.md`) load as prompt text, not as code.
+adapter can take an effort flag. agy has no documented config-dir variable. A private `HOME` sends
+agy to a browser login. Project hooks in `.agents/hooks.json` load after the user trusts the folder.
+Directory rules (`GEMINI.md`, `AGENTS.md`) load as prompt text, not as code.
+
+**agy seat-owned dir (spike, 2026-11-23, agy 1.5.15).** The binary takes hidden flags that
+`agy --help` does not list. `--gemini_dir=<absolute dir>` moves the whole `~/.gemini` tree:
+`config/`, and `antigravity-cli/` with its conversations, logs, and token. The login still loads from
+the keychain through the real `HOME` ("keyringAuth: loaded token"). A "reply OK" run under the seat
+sandbox returned `SUCCESS`. `--app_data_dir` takes only a path relative to the gemini dir, and the
+env name `ANTIGRAVITY_GEMINI_DIR` had no effect. So the agy seat passes `--gemini_dir=<seat
+home>/gemini` (the adapter's `home_argv`). The keychain save fails in the sandbox, so agy keeps the
+refreshed token in `<seat home>/gemini/antigravity-cli/antigravity-oauth-token`; it then tries to clear
+the keychain item, and the sandbox stops that too. The code names that stay read-only in that dir:
+`settings.json`, `GEMINI.md`, `skills`, `policies`, `config/mcp_config.json`, and, in
+`antigravity-cli/`, `settings.json`, `GEMINI.md`, `extensions`, `updater`, and the memory dirs
+`knowledge`, `implicit`, and `annotations`. agy logs a failed write of `mcp_config.json` and of
+`implicit/` and goes on. `bin`, `builtin`, and `brain` are writable: agy rewrites `bin/agentapi`
+before each `run_command`, so a read-only `bin` stops every shell command. A file there runs only in
+the seat's own next run, under the same sandbox. agy's SQLite resolves the real path of its dir, and
+that needs a metadata read of each dir from bw's state dir down to the seat home. So every seat
+profile allows `file-read-metadata` (not a listing) on those nodes, and on the seat scratch root.
 
 Checked again on agy 1.5.15 (2026-11-23), with no model call:
 - A run with `HOME` set to an empty seat home returned a `result` event with `status` `ERROR` and
   printed a login URL on stderr. The keychain login does not carry over to a private `HOME`.
-- So the agy seat is the one exception to "a seat writes only its own home". It keeps the real
-  `HOME`. It writes only its state dir, `~/.gemini/antigravity-cli/`, which the adapter declares in
-  `state_dirs`. The code names in that dir (`settings.json`, `bin`, `builtin`, `updater`, and more)
-  stay read-only. The memory dirs `knowledge`, `brain`, `implicit`, and `annotations` also stay
-  read-only, because later sessions read them as prompt text, lead sessions included.
-- The agy seat must write `conversations/`, `conversation_summaries.db`, and `history.jsonl` for its
-  own resume. These hold the agy lead's sessions too. Residual risk: an agy seat can read and edit
-  an agy lead's conversation. Other seats cannot read these three paths: they are lead session
-  stores, and every other seat profile denies reads of them.
-- No run has confirmed that agy still works with the memory dirs read-only. The seat attack
-  attack must confirm it, on a fresh run and on a resume.
 - The first live seat attack (2026-11-23) found these facts. A tool step has `step_type` `tool`,
   and its output is in `tool_info.output`. A failed step has `state` `ERROR` and
   `tool_info.error.message`; the seat adapter does not count that message as a tool result,
   because nothing ran. Each `run_command` call first writes the shim `bin/agentapi` in the state
-  dir. `bin` is read-only for the seat, so every `run_command` fails ("failed to write agentapi
-  script") and the seat can run no shell command. The file tools (`read_file`, `write_file`) still
-  run. agy logs a failed `mkdir` under `brain/` and goes on; the resume reached the model.
+  dir. With `bin` read-only in the real `~/.gemini`, every `run_command` failed ("failed to write
+  agentapi script"). The seat-owned dir above ends that: its `bin` is the seat's own.
 - `--model <variant id> --effort <other level>` fails before the model call: "conflicts with
   --effort". The help text says `--model` also takes a base model name, and `--effort` then picks the
   variant. The config takes only a model id for agy, so the seat adapter passes no `--effort`.

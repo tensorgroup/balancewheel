@@ -9,8 +9,7 @@ import shutil
 import stat
 import sys
 
-from lead.sandbox import (Grants, SECRET_READS, _inside, _real, check_path, git_config_reads,
-                          refuse_overlap)
+from lead.sandbox import Grants, _inside, _real, check_path, git_config_reads, refuse_overlap, secret_paths
 
 # Language toolchains under the home that a seat reads, so it can run the repo's tools: a version
 # manager's shims load their interpreters from here, and nono denies reads under the home by default.
@@ -19,10 +18,19 @@ from lead.sandbox import (Grants, SECRET_READS, _inside, _real, check_path, git_
 # denied on both backends (SECRET_READS wins). A name that resolves into a secret path, holds the home,
 # or overlaps bw's paths, the seat's writes, or a lead session store is not granted.
 SEAT_TOOLCHAIN_READS = [".pyenv", ".volta", ".nvm", ".rbenv", ".cargo", ".rustup", ".local/bin", ".local/lib"]
-# Session stores of the lead runtimes (home-relative): a seat never reads a lead's transcripts.
-LEAD_SESSION_STORES = [".claude/projects", ".codex/sessions", ".pi/agent/sessions", ".kimi-code/sessions",
-                       ".gemini/tmp", ".gemini/antigravity-cli/conversations",
+# Session stores of the lead runtimes (home-relative): a seat never reads a lead's transcripts, prompt
+# history, or file snapshots. The history names were seen on a 2026-11 install.
+LEAD_SESSION_STORES = [".claude/projects", ".claude/sessions", ".claude/history.jsonl", ".claude/file-history",
+                       ".codex/sessions", ".codex/history.jsonl", ".codex/session_index.jsonl",
+                       ".pi/agent/sessions", ".kimi-code/sessions", ".kimi-code/user-history",
+                       ".kimi-code/session_index.jsonl", ".kimi-code/file-history", ".gemini/tmp", ".gemini/history",
+                       ".gemini/antigravity-cli/conversations", ".gemini/antigravity-cli/brain",
                        ".gemini/antigravity-cli/conversation_summaries.db", ".gemini/antigravity-cli/history.jsonl"]
+# Stores under a runtime home that an env var moves: (env name, names under that dir).
+STORE_ENV_HOMES = [("CODEX_HOME", ("sessions", "history.jsonl", "session_index.jsonl")),
+                   ("KIMI_CODE_HOME", ("sessions", "user-history", "session_index.jsonl", "file-history"))]
+# The keychain's services: a seat whose login is not in the keychain never asks them.
+KEYCHAIN_SERVICES = ("com.apple.SecurityServer", "com.apple.securityd", "com.apple.securityd.xpc")
 # The env a seat gets is an allowlist: these names, every LC_* name, and the adapter's env_keys.
 SEAT_ENV_ALLOW = ("PATH", "HOME", "TMPDIR", "LANG", "TERM")
 SEAT_ENV_PREFIX = "LC_"
@@ -66,8 +74,7 @@ def seat_scratch_root():
 def _tool_read_ok(real, user_home, forbidden):
     """False when a tool read's real path lies inside a secret path, holds the home, or overlaps one
     of `forbidden` (bw's paths, the seat's writes, the lead session stores)."""
-    secrets = [os.path.realpath(os.path.join(user_home, s)) for s in SECRET_READS]
-    if _inside(os.path.realpath(user_home), [real]) or _inside(real, secrets):
+    if _inside(os.path.realpath(user_home), [real]) or _inside(real, secret_paths(user_home)):
         return False
     return not any(_inside(real, [f]) or _inside(f, [real]) for f in forbidden)
 
@@ -138,28 +145,55 @@ def _regular_file(f):
     return _real(given)
 
 
-def _state_dir(d, user_home, bw_paths, code):
-    """The real path of a declared state dir, or ValueError. It must be a real dir strictly under the
-    user's home, overlap none of `bw_paths` (bw state, seat scratch, the target, the seat home), lie
-    under no code path, and hold or lie under no secret path."""
-    given = os.path.abspath(os.path.expanduser(d))
-    if os.path.islink(given) or not os.path.isdir(given):
-        raise ValueError(f"refusing a seat state dir that is not a real directory: {given}")
-    real, home = _real(given), os.path.realpath(user_home)
-    if real == home or not _inside(real, [home]):
-        raise ValueError(f"refusing a seat state dir that is not strictly under the home {home}: {real}")
-    refuse_overlap(real, bw_paths)
-    if _inside(real, code):
-        raise ValueError(f"refusing a seat state dir under a code path: {real}")
-    for s in SECRET_READS:
-        secret = os.path.realpath(os.path.join(user_home, s))
-        if _inside(secret, [real]) or _inside(real, [secret]):
-            raise ValueError(f"refusing a seat state dir that overlaps the secret path {secret}: {real}")
-    return real
+def rename_nodes(roots, code):
+    """Each dir node from a writable root down to the parent of each code path under it, the root
+    included. A literal write deny on each one stops a rename of a code path's parent (Seatbelt checks
+    the renamed path itself, so a deny on the children alone does not stop `mv parent elsewhere`)."""
+    out = []
+    for c in code:
+        for r in roots:
+            if c == r or not _inside(c, [r]):
+                continue
+            node = r
+            out.append(node)
+            rel = os.path.relpath(os.path.dirname(c), r)
+            for part in ([] if rel == "." else rel.split("/")):
+                node = os.path.join(node, part)
+                out.append(node)
+    return list(dict.fromkeys(out))
 
 
-def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_files=(), credentials=(), state_dirs=(),
-                installs=()):
+def lead_store_paths(user_home):
+    """LEAD_SESSION_STORES under the home, plus the stores under a runtime home that CODEX_HOME or
+    KIMI_CODE_HOME moves (the adapters honor both), as real paths."""
+    out = [os.path.join(user_home, s) for s in LEAD_SESSION_STORES]
+    for env, names in STORE_ENV_HOMES:
+        moved = os.environ.get(env)
+        if moved:
+            out += [os.path.join(os.path.expanduser(moved), n) for n in names]
+    return list(dict.fromkeys(os.path.realpath(p) for p in out))
+
+
+def ipc_denies(user_home, keychain=False):
+    """Seat-only Seatbelt rules: no connect to an SSH or GPG agent socket (launchd's per-user socket
+    dirs, the SSH_AUTH_SOCK path, and any socket under a secret path), and, unless the runtime's login
+    lives in the keychain (`keychain`), no keychain service lookup and no read of the keychain files."""
+    rules = ['(deny network-outbound (remote unix-socket (regex #"^/private/tmp/com\\.apple\\.launchd\\.")))']
+    sock = os.environ.get("SSH_AUTH_SOCK")
+    if sock and os.path.isabs(sock):
+        for p in dict.fromkeys([os.path.abspath(sock), os.path.realpath(sock)]):
+            rules.append(f'(deny network-outbound (remote unix-socket (literal "{check_path(p)}")))')
+    rules += [f'(deny network-outbound (remote unix-socket (subpath "{check_path(p)}")))'
+              for p in secret_paths(user_home)]
+    if not keychain:
+        rules.append("(deny mach-lookup " + " ".join(f'(global-name "{n}")' for n in KEYCHAIN_SERVICES) + ")")
+        keychains = os.path.realpath(os.path.join(user_home, "Library", "Keychains"))
+        rules.append(f'(deny file-read* (subpath "{check_path(keychains)}"))')
+    return rules
+
+
+def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_files=(), credentials=(), installs=(),
+                keychain=False, deny_read=()):
     """Ordered write rules and read grants for a review seat on `target` (a lead.projects.Project).
     The seat writes only its own home (minus the runtime's code-loading names) and the credential
     files it refreshes. It reads the target, its git dir, and the user's global git config, and nothing
@@ -167,11 +201,12 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
     `credentials`: the real login files the adapter declares as refreshing (ruling C-cred). Each one
     is readable and writable at its real path as one literal file, even under a secret read deny.
     Pass only the adapter's declared credentials here, never a generic write file.
-    `state_dirs`: the CLI's own state dirs under the user's home, for a runtime that cannot run on a
-    private home (agy: ruling S-agy). Each one is writable as a subpath; the code names in
-    `runtime_grants.deny_write` stay read-only inside it. Pass only the adapter's declared dirs.
     `installs`: the commands whose install a seat reads, read only, as tool reads (`_install_reads`):
-    a CLI linked into PATH from a package dir under the home cannot start when nono denies that dir."""
+    a CLI linked into PATH from a package dir under the home cannot start when nono denies that dir.
+    `keychain`: the runtime's login lives in the keychain (agy), so the keychain stays reachable.
+    `deny_read`: more paths the seat never reads (the attack passes the production state dir).
+    Every dir node from the seat home down to each code path is write-denied as a literal, so no
+    rename of a code path's parent gets around the code denies."""
     state, home, own_scratch = _real(state_dir), _real(seat_home), _real(scratch)
     scratch_root = seat_scratch_root()
     if not own_scratch.startswith(scratch_root + "/"):
@@ -183,17 +218,18 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
     # The target is read-only: it overlaps neither bw's state nor anything the seat writes.
     for t in (target.worktree, target.common_dir):
         refuse_overlap(t, [state, home, own_scratch] + writes)
-    # A secret under the target would be readable: the profile skips secret denies inside read grants.
+    # A secret under the target, or a target inside a secret, would be readable: the profile skips
+    # secret denies inside read grants.
     user_home = os.path.expanduser("~")
-    for s in SECRET_READS:
-        secret = os.path.realpath(os.path.join(user_home, s))
-        if _inside(secret, [_real(target.worktree), _real(target.common_dir)]):
-            raise ValueError(f"refusing a seat target that contains the secret path {secret}")
+    targets = [_real(target.worktree), _real(target.common_dir)]
+    for secret in secret_paths(user_home):
+        if _inside(secret, targets) or _inside(targets[0], [secret]) or _inside(targets[1], [secret]):
+            raise ValueError(f"refusing a seat target that overlaps the secret path {secret}")
     code = [_real(p) for p in runtime_grants.deny_write]
-    bw_paths = [state, scratch_root, _real(target.worktree), _real(target.common_dir)]
-    dirs = [_state_dir(d, user_home, bw_paths + [home], code) for d in state_dirs]
-    rules = [("allow", "subpath", p) for p in [home] + writes + dirs]
+    bw_paths = [state, scratch_root] + targets
+    rules = [("allow", "subpath", p) for p in [home] + writes]
     rules += [("deny", "subpath", p) for p in code]  # after the allows: a later rule wins
+    rules += [("deny", "literal", check_path(p)) for p in rename_nodes([home] + writes, code)]
     for f in write_files:
         real = _regular_file(f)
         if not _inside(real, [home]) or _inside(real, code):
@@ -210,11 +246,28 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
     reads = ([_real(target.worktree), _real(target.common_dir)] + [_real(p) for p in runtime_grants.read]
              + git_config_reads())  # a review seat runs git log and git diff
     # Denied whether or not a store exists yet: a lead may create it while the seat runs.
-    stores = [os.path.realpath(os.path.join(user_home, s)) for s in LEAD_SESSION_STORES]
-    stores = [check_path(p) for p in stores if not _inside(p, [home] + writes + dirs)]
-    denied = [state, scratch_root] + stores
-    forbidden_reads = bw_paths + [home] + writes + dirs + stores
+    stores = [check_path(p) for p in lead_store_paths(user_home) if not _inside(p, [home] + writes)]
+    denied = [state, scratch_root] + stores + [_real(p) for p in deny_read]
+    forbidden_reads = bw_paths + [home] + writes + stores
     tools = _toolchain_reads(user_home, forbidden_reads)
     tools += [p for p in _install_reads(installs, user_home, forbidden_reads) if p not in tools]
     # A credential inside a secret dir is read again after the secret deny.
-    return Grants(rules, reads, denied, [home, own_scratch] + creds, tools)
+    return Grants(rules, reads, denied, [home, own_scratch] + creds, tools,
+                  ipc_denies(user_home, keychain) + _path_metadata([(state, home), (scratch_root, own_scratch)]))
+
+
+def _path_metadata(pairs):
+    """Metadata reads (stat, not a listing or content) of each dir node from a read-denied root down to
+    the parent of a dir the seat re-reads. realpath() of the seat home stats each node on the way; a
+    CLI that canonicalizes its home or its database path (agy's SQLite, codex's CODEX_HOME) fails
+    without it."""
+    nodes = []
+    for root, leaf in pairs:
+        node = root
+        nodes.append(node)
+        rel = os.path.relpath(os.path.dirname(leaf), root)
+        for part in ([] if rel == "." else rel.split("/")):
+            node = os.path.join(node, part)
+            nodes.append(node)
+    nodes = list(dict.fromkeys(nodes))
+    return ["(allow file-read-metadata " + " ".join(f'(literal "{check_path(n)}")' for n in nodes) + ")"]

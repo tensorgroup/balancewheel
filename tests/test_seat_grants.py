@@ -76,19 +76,6 @@ class SeatGrants(unittest.TestCase):
         self.assertNotIn(self.state_link, g.deny_read)
         self.assertEqual(list(g.reread), [self.home, self.scratch])
 
-    def test_git_global_config_readable_through_its_link(self):
-        # nono denies reads under the home by default; git dies when ~/.gitconfig is unreadable
-        # ("fatal: unable to access"), so a seat could run no git command. Read only, as for a lead.
-        fake_home = self.root / "user"; dots = fake_home / "dots"; dots.mkdir(parents=True)
-        (dots / ".gitconfig").write_text("[user]\n")
-        os.symlink("dots/.gitconfig", fake_home / ".gitconfig")
-        (fake_home / ".config" / "git").mkdir(parents=True)
-        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
-            g = self.grants()
-        for p in (str(dots / ".gitconfig"), str(fake_home / ".gitconfig"), str(fake_home / ".config" / "git")):
-            self.assertIn(p, g.read)
-        self.assertNotIn(str(fake_home / ".gitconfig"), [r[2] for r in g.rules])  # never a write grant
-
     def test_toolchain_dirs_read_only_existing_real_paths(self):
         fake_home = self.root / "user"
         for rel in (".pyenv", ".cargo", ".local/lib", "tools/rbenv"):
@@ -219,59 +206,97 @@ class SeatGrants(unittest.TestCase):
             with self.assertRaises(ValueError, msg=p):
                 self.grants(rt, credentials=[p])
 
-    def test_declared_state_dir_writable_code_names_denied(self):  # ruling S-agy
-        fake_home = self.root / "user"; agy = fake_home / ".gemini" / "agy-state"; agy.mkdir(parents=True)
-        rt = sandbox.RuntimeGrants([], [], {}, False, [str(agy / "settings.json")])
-        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
-            g = self.grants(rt, state_dirs=[str(agy)])
-        allow, deny = ("allow", "subpath", str(agy)), ("deny", "subpath", str(agy / "settings.json"))
-        self.assertIn(allow, g.rules)
-        self.assertLess(g.rules.index(allow), g.rules.index(deny))  # the code deny comes after the allow
-        self.assertFalse(any(r[2] == str(fake_home / ".gemini") for r in g.rules))
-
-    def test_agy_lead_stores_read_denied_except_for_the_agy_seat(self):
+    def test_agy_seat_writes_its_own_gemini_dir_and_reads_no_lead_store(self):
         from seats import adapters
         fake_home = self.root / "user"; (fake_home / ".gemini" / "antigravity-cli").mkdir(parents=True)
         agy_stores = [".gemini/antigravity-cli/conversations", ".gemini/antigravity-cli/conversation_summaries.db",
-                      ".gemini/antigravity-cli/history.jsonl"]
+                      ".gemini/antigravity-cli/history.jsonl", ".gemini/antigravity-cli/brain"]
         with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
-            for name in ("codex", "claude-code"):
-                g = self.grants(adapters.SEAT_ADAPTERS[name].grants({"model": "m"}, self.home))
-                for s in agy_stores:
-                    self.assertIn(str(fake_home / s), g.deny_read, (name, s))
+            for name in ("codex", "claude-code", "agy"):
+                ad = adapters.SEAT_ADAPTERS[name]
+                g = self.grants(ad.grants({"model": "m"}, self.home), keychain=ad.keychain)
+                for st in agy_stores:  # every seat, the agy seat included, reads no agy lead store
+                    self.assertIn(str(fake_home / st), g.deny_read, (name, st))
+                real = str(fake_home / ".gemini")
+                self.assertFalse(any(r[2] == real or r[2].startswith(real + "/") for r in g.rules), name)
             agy = adapters.SEAT_ADAPTERS["agy"]
-            state = adapters._agy_state()
-            g = self.grants(agy.grants({"model": "m"}, self.home), state_dirs=[state])
+            g = self.grants(agy.grants({"model": "m"}, self.home), keychain=True)
             profile = sandbox.seatbelt_profile(g, self.scratch)
-        for s in agy_stores:  # inside its own state dir: the agy seat reads and writes them
-            self.assertNotIn(str(fake_home / s), g.deny_read)
-            self.assertNotIn(f'(deny file-read* (subpath "{fake_home / s}"))', profile)
-        self.assertIn(str(fake_home / ".gemini" / "tmp"), g.deny_read)
-        allow = f'(allow file-write* (subpath "{state}"))'
-        self.assertIn(allow, profile)
-        for n in adapters.AGY_CODE:  # knowledge, brain, implicit, annotations included
-            deny = f'(deny file-write* (subpath "{os.path.join(state, n)}"))'
+        gemini = os.path.join(self.home, "gemini")
+        allow = f'(allow file-write* (subpath "{self.home}"))'
+        for n in adapters.AGY_CODE:  # the code names in the seat's own gemini dir stay read-only
+            deny = f'(deny file-write* (subpath "{os.path.join(gemini, n)}"))'
             self.assertIn(deny, profile, n)
             self.assertLess(profile.index(allow), profile.index(deny))
 
-    def test_state_dir_refused_outside_home_in_bw_paths_or_holding_secrets(self):
-        fake_home = self.root  # bw state, the target, and the seat home all lie under it
-        (fake_home / ".gemini" / "s").mkdir(parents=True)
-        outside = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, outside, True)
-        link = fake_home / "link"; os.symlink(self.other, link)
-        code_dir = fake_home / "code"; (code_dir / "sub").mkdir(parents=True)
-        os.makedirs(os.path.join(self.state, "x"))
-        rt = sandbox.RuntimeGrants([], [], {}, False, [str(code_dir)])
-        bad = [str(fake_home), str(fake_home / ".gemini"),  # the home itself; a dir that holds a secret path
-               outside, self.state, os.path.join(self.state, "x"), self.home, self.scratch,
-               self.project.worktree, os.path.join(self.project.worktree, ".git"),
-               str(link), str(fake_home / "absent"), str(code_dir / "sub")]
+    def test_parent_nodes_of_code_paths_literal_denied(self):
+        # Seatbelt checks the renamed path itself: a deny on the code names alone does not stop
+        # `mv <home>/.claude elsewhere`, which takes every code name with it.
+        from seats import adapters
+        claude = adapters.SEAT_ADAPTERS["claude-code"].grants({"model": "m"}, self.home)
+        g = self.grants(claude)
+        for node in (self.home, os.path.join(self.home, ".claude")):
+            self.assertIn(("deny", "literal", node), g.rules)
+            self.assertGreater(g.rules.index(("deny", "literal", node)), g.rules.index(("allow", "subpath", self.home)))
+        self.assertEqual(grants.rename_nodes(["/h"], ["/h/a/b/c", "/h/d", "/x/y"]), ["/h", "/h/a", "/h/a/b"])
+
+    def test_git_config_granted_as_files_only(self):
+        # A dir grant on ~/.config/git would reach ~/.config/git/credentials (git's credential store).
+        fake_home = self.root / "user"; dots = fake_home / "dots"; (dots / "git").mkdir(parents=True)
+        (dots / ".gitconfig").write_text("[user]\n")
+        os.symlink("dots/.gitconfig", fake_home / ".gitconfig")
+        (fake_home / ".config").mkdir()
+        os.symlink("../dots/git", fake_home / ".config" / "git")
+        (dots / "git" / "ignore").write_text("*.o\n"); (dots / "git" / "credentials").write_text("tok\n")
         with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
-            for p in bad:
-                with self.assertRaises(ValueError, msg=p):
-                    self.grants(rt, state_dirs=[p])
-            for good in (str(fake_home / ".gemini" / "s"), self.other):  # plain dirs under the home
-                self.grants(rt, state_dirs=[good])
+            reads = sandbox.git_config_reads()
+            self.assertIn(str(dots / "git" / "credentials"), sandbox.secret_paths())
+        self.assertEqual(sorted(reads), sorted([str(dots / ".gitconfig"), str(fake_home / ".gitconfig"),
+                                                str(dots / "git" / "ignore"), str(fake_home / ".config" / "git")]))
+        self.assertNotIn(str(dots / "git"), reads)
+
+    def test_secrets_and_stores_follow_moved_runtime_homes(self):
+        moved = self.root / "codex-home"; kimi = self.root / "kimi-home"
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(moved), "KIMI_CODE_HOME": str(kimi)}):
+            secrets = sandbox.secret_paths()
+            g = self.grants()
+        self.assertIn(str(moved / "auth.json"), secrets)
+        self.assertIn(str(kimi / "credentials"), secrets)
+        for p in (moved / "sessions", moved / "history.jsonl", kimi / "sessions", kimi / "user-history"):
+            self.assertIn(str(p), g.deny_read)
+        for name in (".git-credentials", ".config/git/credentials", ".npmrc", ".pypirc",
+                     ".gemini/antigravity-cli/antigravity-oauth-token", ".kimi-code/oauth"):
+            self.assertIn(name, sandbox.SECRET_READS)
+
+    def test_target_inside_a_secret_refused(self):
+        fake_home = self.root / "user"
+        project = self.repo_at(fake_home / ".aws" / "repo")
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            with self.assertRaises(ValueError):
+                grants.seat_grants(project, self.home, self.none, self.state, self.scratch)
+
+    def test_agent_sockets_and_keychain_denied_unless_keychain_login(self):
+        with mock.patch.dict(os.environ, {"SSH_AUTH_SOCK": "/private/tmp/agent-test/sock"}):
+            g = self.grants()
+            kc = self.grants(keychain=True)
+        extra = "".join(g.extra)
+        self.assertIn('(remote unix-socket (literal "/private/tmp/agent-test/sock"))', extra)
+        self.assertIn('(regex #"^/private/tmp/com\\.apple\\.launchd\\.")', extra)
+        self.assertIn(f'(remote unix-socket (subpath "{os.path.realpath(os.path.expanduser("~/.ssh"))}"))', extra)
+        self.assertIn('(global-name "com.apple.SecurityServer")', extra)
+        self.assertNotIn("mach-lookup", "".join(kc.extra))
+        self.assertIn("unix-socket", "".join(kc.extra))  # agent sockets stay denied for a keychain login
+        self.assertTrue(sandbox.seatbelt_profile(g, self.scratch).endswith(g.extra[-1]))
+
+    def test_extra_deny_reads_and_state_node_metadata(self):
+        g = self.grants(deny_read=[self.other])
+        self.assertIn(self.other, g.deny_read)
+        meta = g.extra[-1]
+        self.assertTrue(meta.startswith("(allow file-read-metadata"))
+        for node in (self.state, os.path.join(self.state, "seats"), os.path.join(self.state, "seats", "homes"),
+                     grants.seat_scratch_root()):
+            self.assertIn(f'(literal "{node}")', meta)
+        self.assertNotIn(f'(literal "{self.home}")', meta)
 
     def test_target_overlapping_a_seat_write_grant_refused(self):
         inside_home = self.repo_at(os.path.join(self.home, "repo"))
@@ -406,6 +431,54 @@ class SeatEscapesUnderSeatbelt(unittest.TestCase):
             self.assertNotIn("ssh-key", r.stdout)
         self.assertFalse((fake_home / ".pyenv" / "y").exists())
         self.assertFalse((fake_home / ".cargo" / "z").exists())
+
+    def test_code_parent_rename_denied(self):
+        (self.home / ".claude" / "hooks").mkdir(parents=True)
+        rt = sandbox.RuntimeGrants([], [], {}, True, [str(self.home / ".claude" / "hooks"), str(self.home / "hooks")])
+        r = self.sh_rt(f"mv {self.home}/.claude {self.home}/moved; mv {self.home} {self.home}-moved;"
+                       f" mv {self.home}/hooks {self.home}/h2", rt)
+        self.assertTrue((self.home / ".claude" / "hooks").is_dir(), r.stderr)
+        self.assertFalse((self.home / "moved").exists())
+        self.assertTrue((self.home / "hooks").is_dir())
+        self.assertIn("Operation not permitted", r.stderr)
+
+    def sh_rt(self, script, rt):
+        project = resolve_project(str(self.repo), {"projects": {}, "default_profile": "d"})
+        g = grants.seat_grants(project, str(self.home), rt, str(self.state), self.scratch)
+        argv, cleanup = sandbox.wrap(["/bin/sh", "-c", script], g, self.backend, str(self.home), self.scratch, {},
+                                     allow_cwd=False)
+        try:
+            return subprocess.run(argv, cwd=str(self.repo), capture_output=True, text=True)
+        finally:
+            cleanup()
+
+    def test_ssh_agent_socket_connect_denied(self):
+        import socket, threading
+        d = os.path.realpath(tempfile.mkdtemp(dir="/tmp", prefix="bwsock.")); self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "agent.sock")
+        srv = socket.socket(socket.AF_UNIX); srv.bind(path); srv.listen(4); self.addCleanup(srv.close)
+        def serve():
+            try:
+                for _ in range(4):
+                    srv.accept()
+            except OSError:  # closed at cleanup
+                pass
+        threading.Thread(target=serve, daemon=True).start()
+        probe = ("import socket,sys\ns=socket.socket(socket.AF_UNIX)\ntry:\n    s.connect(sys.argv[1]); print('connected')\n"
+                 "except OSError as e: print(e.strerror)")
+        control = subprocess.run(["/usr/bin/python3", "-c", probe, path], capture_output=True, text=True)
+        self.assertIn("connected", control.stdout)  # the socket works outside the sandbox
+        with mock.patch.dict(os.environ, {"SSH_AUTH_SOCK": path}):
+            r = self.sh(f"/usr/bin/python3 -c \"{probe}\" {path}")
+        self.assertNotIn("connected", r.stdout, r.stderr)
+        self.assertIn("not permitted", r.stdout)
+
+    def test_seat_home_ancestors_stat_but_not_list(self):
+        r = self.sh(f"cd {self.home} && pwd -P; /usr/bin/python3 -c 'import os,sys; os.stat(sys.argv[1]); print(\"stat ok\")'"
+                    f" {self.state}/seats; ls {self.state}/seats")
+        self.assertIn(str(self.home), r.stdout, r.stderr)
+        self.assertIn("stat ok", r.stdout)
+        self.assertNotIn("homes", r.stdout.replace(str(self.home), ""))
 
     def test_bw_state_and_other_seat_scratch_unreadable(self):
         r = self.sh(f"cat {self.state}/inbox.jsonl; cat {self.other}/brief; ls {self.state}")

@@ -22,27 +22,33 @@ from lead.sandbox import RuntimeGrants
 SeatAdapter = namedtuple("SeatAdapter",
     "argv resume_argv session_id usage_limit usage answer errors grants home_env credentials "
     "hook_files project_code inner_sandbox backend version_argv prompt_via ignore_flags env_keys tool_results "
-    "state_dirs control_flags installs")
-SeatAdapter.__new__.__defaults__ = ([], [])  # control_flags, installs
+    "control_flags installs home_argv keychain")
+SeatAdapter.__new__.__defaults__ = ([], [], lambda seat_home: [], False)  # control_flags, installs, home_argv, keychain
 # project_code(target, argv=()): the hostile project files present that `argv` would load. A file the
 # argv's ignore flags neutralize is not reported (ruling H-ignore); with no argv, every present file
 # is reported (fail closed).
-# state_dirs: the CLI's own state dirs under the user's home that the seat writes, for a runtime that
-# cannot run on a private home (agy). They go to seats.grants.seat_grants(..., state_dirs=...).
+# credentials(): (real login file, name in the seat home, refreshes) for each login file, read at call
+# time (an env var such as CODEX_HOME may move it).
 # control_flags: flags the hostile-repo positive control adds after it drops the ignore flags, for a
 # CLI that loads no project file by default without them (pi trusts project files only with --approve).
 # installs: commands whose install the seat reads, read only (seats.grants.seat_grants(..., installs=...)),
 # for a CLI linked into PATH from a package dir under the home that nono would deny (codex standalone).
+# home_argv(seat_home): flags bw puts right after the command name, for a CLI whose config dir moves by
+# a flag only (agy's --gemini_dir). keychain: the login lives in the macOS keychain, so the seat sandbox
+# leaves the keychain services reachable (seats.grants.ipc_denies).
 
 TOP_EFFORT = {"codex": "max", "pi": "xhigh", "kimi": "max"}
 # Seat-only code lists (R17): names under a runtime's config dir that load as code. A seat's grants
 # deny writes to them inside the seat home (R14); the seat key manifests them.
 CLAUDE_CODE = ["settings.json", "settings.local.json", "CLAUDE.md", "hooks", "agents", "commands", "plugins", "skills", ".mcp.json"]
-CODEX_CODE = ["config.toml", "AGENTS.md", "prompts", "hooks.json", "skills", "rules"]
-# agy's names are relative to its state dir under the real home (see the agy section below). The
-# last four are persistent memory that later sessions read as prompt text, lead sessions included.
-AGY_CODE = ["settings.json", "GEMINI.md", "extensions", "bin", "builtin", "updater",
-            "knowledge", "brain", "implicit", "annotations"]
+CODEX_CODE = ["config.toml", "AGENTS.md", "AGENTS.override.md", "prompts", "hooks.json", "skills", "rules"]
+# agy's names are relative to the seat's own gemini dir (see the agy section below). The last three of
+# the CLI dir are persistent memory that later sessions read as prompt text. `bin`, `builtin`, and
+# `brain` are not here: agy rewrites them on every run, inside the seat's own dir.
+AGY_CODE = ["settings.json", "GEMINI.md", "skills", "policies", "config/mcp_config.json",
+            "antigravity-cli/settings.json", "antigravity-cli/GEMINI.md", "antigravity-cli/extensions",
+            "antigravity-cli/updater", "antigravity-cli/knowledge", "antigravity-cli/implicit",
+            "antigravity-cli/annotations"]
 # Quota and usage wording only (moderator's call, plan panel: R21). A bare 429 or "rate limit" with no quota
 # word is a transient error, not a cap.
 USAGE_LIMIT = re.compile(r"usage limit|quota (exceeded|exhausted|reached)|exceeded your (current )?quota|"
@@ -109,13 +115,16 @@ def _resume(new_argv, resume_argv):
                                                 else new_argv(seat, input_path, deep))
 
 
-# The denied code names that are dirs, per runtime, relative to the seat home. bw makes each one
-# empty before a run: a CLI that tries to create a missing one at start would fail on the deny.
+# The dirs bw makes before a run, per runtime, relative to the seat home: the denied code names that
+# are dirs, and the parent of each denied code file that the CLI would make at start. A CLI that tries
+# to create a missing one at start would fail on the deny (a parent node is write-denied as a literal).
 CODE_DIRS = {"codex": ["prompts", "skills", "rules"],
              "claude-code": [".claude/hooks", ".claude/agents", ".claude/commands", ".claude/plugins", ".claude/skills"],
              "pi": ["extensions", "skills", "prompts", "themes"],
              "kimi": ["bin", "skills", "plugins", "hooks", "agents"],
-             "agy": []}  # agy writes its real state dir, where its code dirs already exist
+             "agy": ["gemini/config", "gemini/skills", "gemini/policies", "gemini/antigravity-cli/extensions",
+                     "gemini/antigravity-cli/updater", "gemini/antigravity-cli/knowledge",
+                     "gemini/antigravity-cli/implicit", "gemini/antigravity-cli/annotations"]}
 
 
 def make_code_dirs(runtime, seat_home):
@@ -255,7 +264,7 @@ CODEX = SeatAdapter(
     errors=_codex_errors,
     grants=lambda seat, seat_home: _grants(seat_home, seat_home, CODEX_CODE, {"CODEX_HOME": seat_home}),
     home_env=_codex_home_env,
-    credentials=[(_codex_login(), "auth.json", True)],  # auth.json holds a refresh token (R11)
+    credentials=lambda: [(_codex_login(), "auth.json", True)],  # auth.json holds a refresh token (R11)
     hook_files=lambda seat_home: [os.path.join(seat_home, n) for n in CODEX_CODE],
     project_code=lambda target, argv=(): _present(target, CODEX_PROJECT_CODE),
     inner_sandbox=CODEX_INNER,
@@ -265,7 +274,6 @@ CODEX = SeatAdapter(
     ignore_flags=[],  # no flag makes codex skip project config
     env_keys=CODEX_CA_ENV,
     tool_results=_codex_tool_results,
-    state_dirs=[],
     installs=["codex"],  # ~/.local/bin/codex links into the package dir under ~/.codex/packages
 )
 
@@ -427,7 +435,7 @@ CLAUDE = SeatAdapter(
     errors=_claude_errors,
     grants=lambda seat, seat_home: _grants(seat_home, os.path.join(seat_home, ".claude"), CLAUDE_CODE, {}),
     home_env=lambda seat_home: {},
-    credentials=[],
+    credentials=lambda: [],
     hook_files=lambda seat_home: [os.path.join(seat_home, ".claude", n) for n in CLAUDE_CODE],
     project_code=_claude_project_code,
     inner_sandbox=[],
@@ -437,7 +445,6 @@ CLAUDE = SeatAdapter(
     ignore_flags=CLAUDE_IGNORE,
     env_keys=[LOGIN_ENV["claude-code"]],
     tool_results=_claude_tool_results,
-    state_dirs=[],
 )
 
 # ---- pi: `pi -p --mode json`, the input on stdin ----
@@ -521,7 +528,7 @@ PI = SeatAdapter(
                                                  private_home=False,
                                                  deny_write=[os.path.join(seat_home, n) for n in PI_CODE]),
     home_env=lambda seat_home: {"PI_CODING_AGENT_DIR": seat_home},
-    credentials=[],  # an API key in the env; auth.json is for OAuth providers only
+    credentials=lambda: [],  # an API key in the env; auth.json is for OAuth providers only
     hook_files=lambda seat_home: [os.path.join(seat_home, n) for n in PI_CODE],
     # PI_IGNORE covers every .pi/ name (ruling H-ignore) only when all its flags are on the argv.
     project_code=lambda target, argv=(): ([] if all(f in argv for f in PI_IGNORE)
@@ -533,7 +540,6 @@ PI = SeatAdapter(
     ignore_flags=PI_IGNORE,
     env_keys=[LOGIN_ENV["pi"]],
     tool_results=_pi_tool_results,
-    state_dirs=[],
     # pi -p loads no project-local file unless trusted (pi 1.6.0): checked 2026-11-23, the extension
     # loaded with --approve and did not load with neither flag.
     control_flags=["--approve"],
@@ -602,7 +608,7 @@ KIMI = SeatAdapter(
     errors=_kimi_errors,
     grants=lambda seat, seat_home: _grants(seat_home, seat_home, KIMI_CODE, {"KIMI_CODE_HOME": seat_home}),
     home_env=lambda seat_home: {"KIMI_CODE_HOME": seat_home},
-    credentials=_kimi_logins(os.environ.get("KIMI_CODE_HOME") or os.path.expanduser("~/.kimi-code")),
+    credentials=lambda: _kimi_logins(os.environ.get("KIMI_CODE_HOME") or os.path.expanduser("~/.kimi-code")),
     hook_files=lambda seat_home: [os.path.join(seat_home, n) for n in KIMI_CODE],
     project_code=lambda target, argv=(): _present(target, KIMI_PROJECT_CODE),
     inner_sandbox=[],
@@ -612,14 +618,16 @@ KIMI = SeatAdapter(
     ignore_flags=[],  # no flag makes kimi skip project config
     env_keys=[],
     tool_results=lambda stdout_lines: [_text(ev.get("content")) for ev in _kimi_role(stdout_lines, "tool")],
-    state_dirs=[],
 )
 
 
 # ---- agy: `agy -p <file instruction> --output-format stream-json` ----
 # agy keeps its login in the macOS keychain, which it finds through $HOME. A private HOME sends it to
-# a browser login (checked 2026-11-23, ruling S-agy). So agy keeps the real HOME, and it writes only
-# its own state dir, which `state_dirs` declares; the AGY_CODE names in that dir stay read-only.
+# a browser login (checked 2026-11-23, ruling S-agy). So agy keeps the real HOME, and the hidden flag
+# --gemini_dir moves its whole config and state dir (~/.gemini) into the seat home: the login still
+# loads from the keychain (checked 2026-11-23, agy 1.5.15). The seat writes nothing under the real
+# ~/.gemini; the AGY_CODE names in its own dir stay read-only. In the sandbox the keychain save fails,
+# so agy keeps a refreshed token in its own dir (`antigravity-cli/antigravity-oauth-token`).
 # Its vendor sandbox stays off (no --sandbox): Seatbelt profiles do not nest. No effort flag:
 # --effort conflicts with a model id that names a variant (observed), and the config takes only
 # model ids for agy. The event key is `event`, not `type`. A tool step has step_type `tool` and its
@@ -632,16 +640,11 @@ AGY_TEXT_STEPS = {"user_input", "agent_response"}
 AGY_OK = "SUCCESS"
 
 
-def _agy_state():
-    return os.path.join(os.path.expanduser("~"), ".gemini", "antigravity-cli")
+AGY_GEMINI_DIR = "gemini"  # the seat's own gemini dir, relative to the seat home
 
 
-def _agy_config():
-    """Paths outside the state dir that agy loads as code or policy; already read-only, but in the
-    seat key, so the key changes when they change."""
-    gemini = os.path.join(os.path.expanduser("~"), ".gemini")
-    return [os.path.join(gemini, "settings.json"), os.path.join(gemini, "config", "mcp_config.json"),
-            os.path.join(gemini, "skills"), os.path.join(gemini, "policies")]
+def _agy_gemini(seat_home):
+    return os.path.join(seat_home, AGY_GEMINI_DIR)
 
 
 def _agy_argv(seat, input_path, deep):
@@ -710,10 +713,10 @@ AGY = SeatAdapter(
     answer=_agy_answer,
     errors=_agy_errors,
     grants=lambda seat, seat_home: RuntimeGrants(read=[], write=[seat_home], env={}, private_home=False,
-                                                 deny_write=[os.path.join(_agy_state(), n) for n in AGY_CODE]),
+                                                 deny_write=[os.path.join(_agy_gemini(seat_home), n) for n in AGY_CODE]),
     home_env=lambda seat_home: {},
-    credentials=[],  # the login is in the keychain
-    hook_files=lambda seat_home: [os.path.join(_agy_state(), n) for n in AGY_CODE] + _agy_config(),
+    credentials=lambda: [],  # the login is in the keychain
+    hook_files=lambda seat_home: [os.path.join(_agy_gemini(seat_home), n) for n in AGY_CODE],
     project_code=lambda target, argv=(): _present(target, AGY_PROJECT_CODE),
     inner_sandbox=[],  # vendor sandbox off: omit --sandbox
     backend="sandbox-exec",
@@ -722,7 +725,8 @@ AGY = SeatAdapter(
     ignore_flags=[],  # no flag makes agy skip project config
     env_keys=[],
     tool_results=_agy_tool_results,
-    state_dirs=[_agy_state()],
+    home_argv=lambda seat_home: [f"--gemini_dir={_agy_gemini(seat_home)}"],
+    keychain=True,
 )
 
 SEAT_ADAPTERS = {"codex": CODEX, "claude-code": CLAUDE, "pi": PI, "kimi": KIMI, "agy": AGY}

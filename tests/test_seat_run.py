@@ -96,17 +96,10 @@ class SeatRun(unittest.TestCase):
         p = mock.patch.dict(os.environ, env, clear=True)
         p.start()
         self.addCleanup(p.stop)
-        # Login files and agy's state dir live under the temp HOME, not the real one.
+        # Login files live under the temp HOME, not the real one (credentials are read at call time).
         auth = os.path.join(self.home, ".codex", "auth.json")
         os.makedirs(os.path.dirname(auth))
         Path(auth).write_text("{}")
-        agy_state = os.path.join(self.home, ".gemini", "antigravity-cli")
-        os.makedirs(agy_state)
-        p = mock.patch.dict(adapters.SEAT_ADAPTERS, {
-            "codex": adapters.CODEX._replace(credentials=[(auth, "auth.json", True)]),
-            "agy": adapters.AGY._replace(state_dirs=[agy_state])})
-        p.start()
-        self.addCleanup(p.stop)
         self.config = load_config(str(EXAMPLE))
         self.wt = os.path.join(root, "wt")
         make_repo(self.wt)
@@ -413,6 +406,37 @@ class SeatRun(unittest.TestCase):
         self.assertEqual(r.rc, 0)
         self.assertEqual(self.fake.stdin, "reply ok")
         self.assertNotIn("--safe-mode", self.fake.argv)
+
+    def test_agy_runs_on_its_own_gemini_dir(self):
+        # --gemini_dir moves agy's config and state into the seat home; the keychain login still loads.
+        self.assertTrue(self.seat("gem").ok)
+        home = os.path.join(self.state, "seats", "homes", "gem")
+        i = self.fake.argv.index("agy")
+        self.assertEqual(self.fake.argv[i + 1], f"--gemini_dir={home}/gemini")
+        argv = run.control_argv(self.config["seats"]["gem"])
+        self.assertEqual(argv[:2], ["agy", f"--gemini_dir={run.HOME_PLACEHOLDER}/gemini"])
+        verify.issue_token(self.state, "gem", time.time(), 600)
+        run.exec_sandboxed(self.config, self.state, "gem", self.wt, argv, run=self.fake, input_text="reply ok")
+        self.assertIn(f"--gemini_dir={home}/gemini", self.fake.argv)
+        self.assertEqual(run.control_argv(self.config["seats"]["astra"])[:2], ["codex", "exec"])  # no home flag
+
+    def test_dir_outside_its_worktree_refused(self):
+        # A planted core.worktree aims git at another tree: the seat would read a dir it was not given.
+        other = os.path.join(os.path.dirname(self.wt), "other")
+        os.makedirs(other)
+        git(self.wt, "config", "core.worktree", other)
+        r = self.seat()
+        self.assertFalse(r.ran)
+        self.assertIn("not inside its git worktree", r.reason)
+
+    def test_deny_read_env_adds_denies(self):
+        extra = os.path.join(os.path.dirname(self.wt), "prod-state")
+        real = grants.seat_grants
+        with mock.patch.dict(os.environ, {run.DENY_READ_ENV: f"{extra}{os.pathsep}relative"}), \
+                mock.patch.object(grants, "seat_grants", side_effect=real) as spy:
+            self.assertTrue(self.seat().ok)
+        self.assertEqual(spy.call_args.kwargs["deny_read"], [extra])
+        self.assertNotIn(run.DENY_READ_ENV, self.fake.env)  # bw drops BW_* from the seat env
 
     def test_seat_reads_the_install_its_adapter_names(self):
         # codex links into PATH from a package dir under the home; under nono the seat must read it.

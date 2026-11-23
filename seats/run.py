@@ -34,6 +34,9 @@ READING_RULE = ("## Reading rule\n\nOpen a file only to verify a claim, follow a
                 "names. Do not survey the repository.")
 TASK_HEADING = "## Task"
 SANDBOX_ERROR_PREFIXES = ("sandbox-exec:", "nono")
+# More paths no seat reads, os.pathsep-separated: the attack names the production state dir here, as
+# its own runs use an isolated state dir. bw drops every BW_* name from the seat's env.
+DENY_READ_ENV = "BW_SEAT_DENY_READ"
 ROW_OPTIONAL = ("session_id", "stand_in_for", "tokens_in", "tokens_out", "cost_usd")
 
 
@@ -129,6 +132,17 @@ def _input_text(prompt, brief_text):
     return f"{brief_text.rstrip()}\n\n{READING_RULE}\n\n{TASK_HEADING}\n\n{prompt}"
 
 
+def _extra_deny_reads():
+    """The absolute paths in DENY_READ_ENV; a relative entry is skipped. They only add read denies."""
+    raw = os.environ.get(DENY_READ_ENV, "")
+    return [p for p in raw.split(os.pathsep) if os.path.isabs(p)]
+
+
+def with_home(adapter, argv, home):
+    """`argv` with the adapter's home flags right after the command name."""
+    return argv[:1] + list(adapter.home_argv(home)) + argv[1:]
+
+
 def _contained(config, state, seat, project, home, scratch, argv):
     """Step 7: the seat's grants, env, and sandbox wrap for `argv`. Returns (full argv, cleanup, env).
     Raises ValueError when a grant is refused. `run_seat` and `exec_sandboxed` share it, so a plain
@@ -142,8 +156,9 @@ def _contained(config, state, seat, project, home, scratch, argv):
     env.update({"TMPDIR": scratch, "NODE_COMPILE_CACHE": scratch})
     env.update(adapter.home_env(home))
     seat_grants = grants.seat_grants(project, home, rg, state, scratch,
-                                      credentials=[p for p, _, refreshes in adapter.credentials if refreshes],
-                                      state_dirs=adapter.state_dirs, installs=adapter.installs)
+                                      credentials=[p for p, _, refreshes in adapter.credentials() if refreshes],
+                                      installs=adapter.installs, keychain=adapter.keychain,
+                                      deny_read=_extra_deny_reads())
     full, cleanup = sandbox.wrap(argv, seat_grants, backend, home_dir, scratch, {}, sandbox.denied_ports(config),
                                  allow_cwd=False)
     return full, cleanup, env
@@ -214,6 +229,8 @@ class _Run:
         except ValueError:
             return self.refuse("refused: not a git worktree")
         wt = project.worktree
+        if not sandbox._inside(self.where, [os.path.realpath(wt)]):  # a planted core.worktree aims elsewhere
+            return self.refuse("refused: the directory is not inside its git worktree")
         try:
             with sessions.run_lock(self.state, self.seat, wt):
                 return self.home(project)
@@ -225,7 +242,7 @@ class _Run:
         wt = project.worktree
         try:
             home = safe_home(self.state, self.seat)
-            _link_credentials(home, self.adapter.credentials)
+            _link_credentials(home, self.adapter.credentials())
             adapters.make_code_dirs(self.runtime, home)  # again: an attack run skips the seat key
         except (Tampered, OSError) as e:
             return self.refuse(f"sandbox: seat home tampered: {safe(e)}", wt)
@@ -265,8 +282,8 @@ class _Run:
         input_path = os.path.join(scratch, "input.md")
         _write_private(input_path, text)
         deep = self.opts["deep"]
-        argv = (self.adapter.resume_argv(self.s, sid, input_path, deep) if sid
-                else self.adapter.argv(self.s, input_path, deep))
+        argv = with_home(self.adapter, self.adapter.resume_argv(self.s, sid, input_path, deep) if sid
+                         else self.adapter.argv(self.s, input_path, deep), home)
         hostile = self.adapter.project_code(wt, argv)  # only files this argv's ignore flags do not cover
         if hostile:
             name = safe(os.path.relpath(hostile[0], wt))
@@ -365,6 +382,7 @@ def run_seat(config, state, seat, prompt, *, target=None, brief=False, brief_fil
 # ---- for the attack only (tests/attack/seat_readonly.sh) ----
 
 INPUT_PLACEHOLDER = "{input}"  # in an exec argv: the path of the input file in the scratch dir
+HOME_PLACEHOLDER = "{home}"  # in an exec argv: the seat home
 
 
 # Seat CLI flags that take a value: the word after one is a value, not a flag position.
@@ -406,10 +424,11 @@ def _without(argv, flags):
 
 def control_argv(seat_cfg) -> list:
     """The seat's own new-session argv without its ignore flags, plus the adapter's control flags:
-    the hostile-repo positive control. INPUT_PLACEHOLDER stands for the input file."""
+    the hostile-repo positive control. INPUT_PLACEHOLDER stands for the input file, HOME_PLACEHOLDER
+    for the seat home (in the adapter's home flags)."""
     adapter = adapters.SEAT_ADAPTERS[seat_cfg["runtime"]]
-    return (_without(adapter.argv(seat_cfg, INPUT_PLACEHOLDER, False), list(adapter.ignore_flags))
-            + list(adapter.control_flags))
+    argv = with_home(adapter, adapter.argv(seat_cfg, INPUT_PLACEHOLDER, False), HOME_PLACEHOLDER)
+    return _without(argv, list(adapter.ignore_flags)) + list(adapter.control_flags)
 
 
 def exec_sandboxed(config, state, seat, target, argv, run=proc.run, input_text=None, now=time.time) -> proc.Result:
@@ -427,7 +446,7 @@ def exec_sandboxed(config, state, seat, target, argv, run=proc.run, input_text=N
         return proc.Result(REFUSED, "", "refused: not a git worktree", False)
     try:
         home = safe_home(state, seat)
-        _link_credentials(home, adapter.credentials)
+        _link_credentials(home, adapter.credentials())
         adapters.make_code_dirs(runtime, home)
         scratch = tempfile.mkdtemp(prefix=f"{seat}-", dir=grants.seat_scratch_root())
     except (Tampered, OSError, ValueError) as e:
@@ -435,7 +454,7 @@ def exec_sandboxed(config, state, seat, target, argv, run=proc.run, input_text=N
     try:
         input_path = os.path.join(scratch, "input.md")
         _write_private(input_path, input_text or "")
-        argv = [a.replace(INPUT_PLACEHOLDER, input_path) for a in argv]
+        argv = [a.replace(INPUT_PLACEHOLDER, input_path).replace(HOME_PLACEHOLDER, home) for a in argv]
         try:
             full, cleanup, env = _contained(config, state, seat, project, home, scratch, argv)
         except ValueError as e:
