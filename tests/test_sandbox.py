@@ -527,6 +527,36 @@ class SeatGrants(unittest.TestCase):
             with self.assertRaises(ValueError, msg=p):
                 self.grants(rt, write_files=[p])
 
+    def test_declared_credential_literal_read_and_write(self):  # ruling C-cred
+        fake_home = self.root / "user"; (fake_home / ".codex").mkdir(parents=True)
+        auth = fake_home / ".codex" / "auth.json"; auth.write_text("{}")
+        (fake_home / ".codex" / "config.toml").write_text("")
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            g = self.grants(credentials=[str(auth)])
+        self.assertIn(("allow", "literal", str(auth)), g.rules)
+        self.assertIn(str(auth), g.reread)
+        self.assertNotIn(("allow", "literal", str(fake_home / ".codex" / "config.toml")), g.rules)
+        self.assertFalse(any(r[2] == str(fake_home / ".codex") for r in g.rules))
+
+    def test_undeclared_write_file_outside_home_still_refused(self):
+        outside = os.path.join(self.other, "auth.json"); Path(outside).write_text("{}")
+        with self.assertRaises(ValueError):
+            self.grants(write_files=[outside])
+        self.grants(credentials=[outside])  # the same file as a declared credential is allowed
+
+    def test_credential_refused_in_state_target_code_scratch_or_as_link(self):
+        in_state = os.path.join(self.state, "auth.json"); Path(in_state).write_text("{}")
+        in_target = os.path.join(self.project.worktree, "f")
+        in_scratch = os.path.join(self.scratch, "auth.json"); Path(in_scratch).write_text("{}")
+        hooks = os.path.join(self.home, "hooks"); os.mkdir(hooks)
+        under_code = os.path.join(hooks, "auth.json"); Path(under_code).write_text("{}")
+        good = os.path.join(self.other, "auth.json"); Path(good).write_text("{}")
+        link = os.path.join(self.other, "link.json"); os.symlink(good, link)
+        rt = sandbox.RuntimeGrants([], [], {}, False, [hooks])
+        for p in (in_state, in_target, in_scratch, under_code, link, self.other, os.path.join(self.other, "absent")):
+            with self.assertRaises(ValueError, msg=p):
+                self.grants(rt, credentials=[p])
+
     def test_target_overlapping_a_seat_write_grant_refused(self):
         inside_home = self.repo_at(os.path.join(self.home, "repo"))
         with self.assertRaises(ValueError):
@@ -605,12 +635,14 @@ class SeatEscapesUnderSeatbelt(unittest.TestCase):
         shutil.rmtree(self.scratch, ignore_errors=True); shutil.rmtree(self.other, ignore_errors=True)
         self.tmp.cleanup()
 
-    def sh(self, script):
+    def sh(self, script, credentials=(), user_home=None):
+        """`user_home`: the home the profile is built for (secret denies); the backend still runs with the real HOME."""
         rt = sandbox.RuntimeGrants([], [], {}, True, [str(self.home / "hooks")])
         project = resolve_project(str(self.repo), {"projects": {}, "default_profile": "d"})
-        g = sandbox.seat_grants(project, str(self.home), rt, str(self.state), self.scratch)
-        argv, cleanup = sandbox.wrap(["/bin/sh", "-c", script], g, self.backend, str(self.home), self.scratch, {},
-                                     allow_cwd=False)
+        with mock.patch.dict(os.environ, {"HOME": user_home} if user_home else {}):
+            g = sandbox.seat_grants(project, str(self.home), rt, str(self.state), self.scratch, credentials=credentials)
+            argv, cleanup = sandbox.wrap(["/bin/sh", "-c", script], g, self.backend, str(self.home), self.scratch, {},
+                                         allow_cwd=False)
         try:
             return subprocess.run(argv, cwd=str(self.repo), capture_output=True, text=True)
         finally:
@@ -627,6 +659,20 @@ class SeatEscapesUnderSeatbelt(unittest.TestCase):
                     f" cat {self.home}/session {self.scratch}/out")
         self.assertEqual(r.stdout.splitlines(), ["a", "b"], r.stderr)
         self.assertFalse((self.home / "hooks" / "h").exists())
+
+    def test_declared_credential_read_and_refreshed_sibling_denied(self):  # ruling C-cred
+        fake_home = Path(os.path.realpath(self.tmp.name)) / "user"; codex = fake_home / ".codex"; codex.mkdir(parents=True)
+        auth = codex / "auth.json"; auth.write_text("old-login\n")
+        sibling = codex / "config.toml"; sibling.write_text("cfg\n")
+        script = f"cat {auth}; echo new-login > {auth}; echo bad > {sibling}; echo bad > {codex}/planted"
+        control = self.sh(f"cat {auth}", user_home=str(fake_home))  # undeclared: the secret deny holds
+        r = self.sh(script, credentials=[str(auth)], user_home=str(fake_home))
+        if self.backend == "sandbox-exec":  # nono's secret denies follow the real HOME, not this fake one
+            self.assertNotIn("old-login", control.stdout)
+        self.assertIn("old-login", r.stdout, r.stderr)
+        self.assertEqual(auth.read_text(), "new-login\n")
+        self.assertEqual(sibling.read_text(), "cfg\n")
+        self.assertFalse((codex / "planted").exists())
 
     def test_bw_state_and_other_seat_scratch_unreadable(self):
         r = self.sh(f"cat {self.state}/inbox.jsonl; cat {self.other}/brief; ls {self.state}")

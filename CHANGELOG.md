@@ -25,6 +25,9 @@ not against the prose.
 - **Seat adapters** (`seats/adapters.py`), separate from the lead adapters so a seat change never resets a
   lead key. Codex and Claude Code first. A Claude Code seat needs `CLAUDE_CODE_OAUTH_TOKEN` (from
   `claude setup-token`) in the env.
+- **`seat_grants(..., credentials=...)`** (`lead/sandbox.py`). A login file that a seat adapter declares as
+  refreshing is readable and writable at its real path, as one file only. bw refuses a credential that is a
+  symlink, is not a regular file, or lies in bw state, the target, a code path, or the seat scratch root.
 
 ### Fixed
 

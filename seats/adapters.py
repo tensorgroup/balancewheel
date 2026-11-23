@@ -30,7 +30,10 @@ AGY_CODE = ["settings.json", "GEMINI.md", "extensions"]
 # Quota and usage wording only (moderator's call, plan panel: R21). A bare 429 or "rate limit" with no quota
 # word is a transient error, not a cap.
 USAGE_LIMIT = re.compile(r"usage limit|quota (exceeded|exhausted|reached)|exceeded your (current )?quota|"
-                         r"hit your .{0,40}(usage|quota|plan) limit|out of (credits|quota)", re.I)
+                         r"hit your .{0,40}(usage|quota|plan) limit|out of (credits|quota)|hit your limit|"
+                         r"limit reached", re.I)
+# A session id goes on argv only when it has this shape; any other id starts a new session.
+SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
 FILE_INSTRUCTION = "Read the file {path} and follow it. It holds your brief and your task."
 # Runtimes whose login is an env token; without it the seat cannot run.
 LOGIN_ENV = {"claude-code": "CLAUDE_CODE_OAUTH_TOKEN"}
@@ -50,7 +53,7 @@ def json_lines(lines) -> list:
     for line in lines:
         try:
             obj = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         if isinstance(obj, dict):
             out.append(obj)
@@ -68,6 +71,49 @@ def login_missing(runtime, environ) -> Optional[str]:
     if key and not environ.get(key):
         return LOGIN_HINT[runtime]
     return None
+
+
+def _num(x):
+    """A token or cost count; anything that is not a plain number counts as 0."""
+    return x if isinstance(x, (int, float)) and not isinstance(x, bool) else 0
+
+
+def _str(x):
+    return x if isinstance(x, str) else ""
+
+
+def valid_session(sid) -> bool:
+    return isinstance(sid, str) and SESSION_ID.fullmatch(sid) is not None
+
+
+def _resume(new_argv, resume_argv):
+    """resume_argv(seat, sid, input_path, deep), or a new session when the id is not safe for argv."""
+    return lambda seat, sid, input_path, deep: (resume_argv(seat, sid, input_path, deep) if valid_session(sid)
+                                                else new_argv(seat, input_path, deep))
+
+
+# The denied code names that are dirs, per runtime, relative to the seat home. bw makes each one
+# empty before a run: a CLI that tries to create a missing one at start would fail on the deny.
+CODE_DIRS = {"codex": ["prompts", "skills", "rules"],
+             "claude-code": [".claude/hooks", ".claude/agents", ".claude/commands", ".claude/plugins", ".claude/skills"]}
+
+
+def make_code_dirs(runtime, seat_home):
+    """Create each CODE_DIRS entry under `seat_home`, never through a symlink (O_NOFOLLOW at each
+    step). Raises OSError when a component is a symlink or not a dir: the seat home was tampered with."""
+    for rel in CODE_DIRS.get(runtime, []):
+        fd = os.open(seat_home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            for part in rel.split("/"):
+                try:
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = nxt
+        finally:
+            os.close(fd)
 
 
 def _present(target, rels):
@@ -99,7 +145,7 @@ def _codex_flags(seat, deep):
 
 def _codex_session(stdout_lines, stderr_lines):
     for ev in json_lines(stdout_lines):
-        if ev.get("type") == "thread.started" and isinstance(ev.get("thread_id"), str):
+        if ev.get("type") == "thread.started" and valid_session(ev.get("thread_id")):
             return ev["thread_id"]
     return None
 
@@ -120,20 +166,20 @@ def _codex_usage(stdout_lines):
              if ev.get("type") == "turn.completed" and isinstance(ev.get("usage"), dict)]
     if not turns:
         return {}
-    return {"tokens_in": sum(int(u.get("input_tokens") or 0) for u in turns),
-            "tokens_out": sum(int(u.get("output_tokens") or 0) for u in turns)}
+    return {"tokens_in": sum(_num(u.get("input_tokens")) for u in turns),
+            "tokens_out": sum(_num(u.get("output_tokens")) for u in turns)}
 
 
 def _codex_errors(stdout_lines, stderr_lines):
     errs = []
     for ev in json_lines(stdout_lines):
-        if ev.get("type") == "error" and ev.get("message"):
-            errs.append(str(ev["message"]))
+        if ev.get("type") == "error" and _str(ev.get("message")):
+            errs.append(ev["message"])
         elif ev.get("type") == "turn.failed":
             err = ev.get("error")
-            msg = err.get("message") if isinstance(err, dict) else err
+            msg = _str(err.get("message") if isinstance(err, dict) else err)
             if msg:
-                errs.append(str(msg))
+                errs.append(msg)
     in_transcript = False
     for line in stderr_lines:
         s = line.strip()
@@ -151,10 +197,11 @@ def _codex_tool_results(stdout_lines):
         if not isinstance(item, dict):
             continue
         if item.get("type") == "command_execution":
-            out.append(str(item.get("aggregated_output") or ""))
+            out.append(_str(item.get("aggregated_output")))
         elif item.get("type") == "file_change":
-            paths = [c.get("path", "") for c in item.get("changes") or [] if isinstance(c, dict)]
-            out.append(f"file_change {item.get('status', '')}: {', '.join(paths)}")
+            changes = item.get("changes") if isinstance(item.get("changes"), list) else []
+            paths = [c["path"] for c in changes if isinstance(c, dict) and isinstance(c.get("path"), str)]
+            out.append(f"file_change {_str(item.get('status'))}: {', '.join(paths)}")
     return out
 
 
@@ -164,8 +211,9 @@ def _codex_login():
 
 CODEX = SeatAdapter(
     argv=lambda seat, input_path, deep: ["codex", "exec", *_codex_flags(seat, deep), "-"],
-    # `codex exec resume` has no -s, -C, or -p: the target is the process cwd.
-    resume_argv=lambda seat, sid, input_path, deep: ["codex", "exec", "resume", *_codex_flags(seat, deep), sid, "-"],
+    # An unsafe session id starts a new session. `codex exec resume` has no -s, -C, or -p: the target is the process cwd.
+    resume_argv=_resume(lambda seat, input_path, deep: ["codex", "exec", *_codex_flags(seat, deep), "-"],
+                        lambda seat, sid, input_path, deep: ["codex", "exec", "resume", *_codex_flags(seat, deep), sid, "-"]),
     session_id=_codex_session,
     usage_limit=usage_limit,
     usage=_codex_usage,
@@ -195,7 +243,9 @@ CLAUDE_PERMISSION = ["--permission-mode", "bypassPermissions"]
 CLAUDE_IGNORE = ["--safe-mode", "--setting-sources", "user", "--strict-mcp-config"]
 CLAUDE_PROJECT_SETTINGS = [".claude/settings.json", ".claude/settings.local.json"]
 # Settings keys whose values run commands.
-CLAUDE_CODE_KEYS = ("hooks", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper", "statusLine")
+CLAUDE_CODE_KEYS = ("hooks", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper", "statusLine",
+                    "env", "enabledPlugins", "extraKnownMarketplaces")
+CLAUDE_PROJECT_DIRS = [".claude/agents", ".claude/commands", ".claude/skills"]
 
 
 def _claude_argv(seat, input_path, deep):
@@ -207,7 +257,7 @@ def _claude_session(stdout_lines, stderr_lines):
     events = json_lines(stdout_lines)
     for ev in events:
         if (ev.get("type"), ev.get("subtype")) == ("system", "init") or ev.get("type") == "result":
-            if isinstance(ev.get("session_id"), str) and ev["session_id"]:
+            if valid_session(ev.get("session_id")):
                 return ev["session_id"]
     return None
 
@@ -219,9 +269,9 @@ def _claude_result(stdout_lines):
 
 def _claude_answer(stdout_lines):
     res = _claude_result(stdout_lines)
-    if not res or res.get("is_error") or not isinstance(res.get("result"), str):
+    if not res or res.get("is_error"):
         return ""
-    return res["result"]
+    return _str(res.get("result"))
 
 
 def _claude_usage(stdout_lines):
@@ -229,11 +279,12 @@ def _claude_usage(stdout_lines):
     res = _claude_result(stdout_lines)
     if res:
         u = res.get("usage") if isinstance(res.get("usage"), dict) else {}
-        out["tokens_in"] = sum(int(u.get(k) or 0) for k in
+        out["tokens_in"] = sum(_num(u.get(k)) for k in
                                ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
-        out["tokens_out"] = int(u.get("output_tokens") or 0)
-        if res.get("total_cost_usd") is not None:
-            out["cost_usd"] = float(res["total_cost_usd"])
+        out["tokens_out"] = _num(u.get("output_tokens"))
+        cost = res.get("total_cost_usd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            out["cost_usd"] = float(cost)
     limits = [ev["rate_limit_info"] for ev in json_lines(stdout_lines)
               if ev.get("type") == "rate_limit_event" and isinstance(ev.get("rate_limit_info"), dict)]
     if limits:
@@ -245,8 +296,12 @@ def _text(content):
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return "".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
+        return "".join(_str(c.get("text")) for c in content if isinstance(c, dict) and c.get("type") == "text")
     return ""
+
+
+CLAUDE_RATE_LIMIT_ERROR = "rate_limit"
+CLAUDE_LIMIT_LINE = "usage limit reached ({})"
 
 
 def _claude_errors(stdout_lines, stderr_lines):
@@ -255,13 +310,20 @@ def _claude_errors(stdout_lines, stderr_lines):
     errs = []
     for ev in json_lines(stdout_lines):
         if ev.get("type") == "assistant" and ev.get("error"):
+            kind = _str(ev["error"]) or "error"
+            if kind == CLAUDE_RATE_LIMIT_ERROR:  # the CLI's own error kind, not model text
+                errs.append(CLAUDE_LIMIT_LINE.format(kind))
             msg = ev.get("message") if isinstance(ev.get("message"), dict) else {}
             text = _text(msg.get("content"))
-            errs.append(f"{ev['error']}: {text}" if text else str(ev["error"]))
+            errs.append(f"{kind}: {text}" if text else kind)
+        elif ev.get("type") == "rate_limit_event":
+            info = ev.get("rate_limit_info") if isinstance(ev.get("rate_limit_info"), dict) else {}
+            if info.get("status") == "rejected":
+                errs.append(CLAUDE_LIMIT_LINE.format(_str(info.get("rateLimitType")) or "unknown window"))
         elif ev.get("type") == "result" and (ev.get("is_error") or ev.get("subtype") != "success"):
             status = ev.get("api_error_status")
-            text = ev.get("result") if isinstance(ev.get("result"), str) else ev.get("subtype", "error")
-            errs.append(f"{status}: {text}" if status is not None else str(text))
+            text = _str(ev.get("result")) or _str(ev.get("subtype")) or "error"
+            errs.append(f"{status}: {text}" if isinstance(status, (int, str)) else text)
     errs += [line.strip() for line in stderr_lines if line.strip()]
     return errs
 
@@ -289,12 +351,12 @@ def _claude_settings_run_code(path):
 
 def _claude_project_code(target):
     found = [p for p in _present(target, CLAUDE_PROJECT_SETTINGS) if _claude_settings_run_code(p)]
-    return found + _present(target, [".mcp.json"])
+    return found + _present(target, [".mcp.json"] + CLAUDE_PROJECT_DIRS)
 
 
 CLAUDE = SeatAdapter(
     argv=_claude_argv,
-    resume_argv=lambda seat, sid, input_path, deep: _claude_argv(seat, input_path, deep) + ["--resume", sid],
+    resume_argv=_resume(_claude_argv, lambda seat, sid, input_path, deep: _claude_argv(seat, input_path, deep) + ["--resume", sid]),
     session_id=_claude_session,
     usage_limit=usage_limit,
     usage=_claude_usage,

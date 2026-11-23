@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from lead import sandbox
 from seats import adapters
 
 FIXTURES = Path(__file__).parent / "fixtures" / "seats"
@@ -38,6 +39,33 @@ class Shared(unittest.TestCase):
     def test_transient_429_is_not_a_cap(self):  # R21
         self.assertFalse(adapters.usage_limit(["HTTP 429 Too Many Requests", "rate limit hit, retrying"]))
         self.assertTrue(adapters.usage_limit(["You have exceeded your current quota"]))
+
+    def test_limit_wording(self):
+        for line in ["You've hit your limit · resets 3pm", "Claude AI usage limit reached|1900000000"]:
+            self.assertTrue(adapters.usage_limit([line]), line)
+
+    def test_deep_nesting_skipped(self):
+        self.assertEqual(adapters.json_lines(["[" * 200000 + "]" * 200000, '{"a":1}']), [{"a": 1}])
+
+    def test_session_id_shape(self):
+        for good in ["sess-0001", "00000000-0000-4000-8000-000000000001", "a.b:c_d"]:
+            self.assertTrue(adapters.valid_session(good), good)
+        for bad in ["", "-rf", "a b", "a;b", "a\n", None, 5, "--resume"]:
+            self.assertFalse(adapters.valid_session(bad), bad)
+
+    def test_code_dirs_made_without_following_links(self):
+        with tempfile.TemporaryDirectory() as home:
+            for runtime, ad in adapters.SEAT_ADAPTERS.items():
+                adapters.make_code_dirs(runtime, home)
+                adapters.make_code_dirs(runtime, home)  # a second run is fine
+                for rel in adapters.CODE_DIRS[runtime]:
+                    self.assertTrue(os.path.isdir(os.path.join(home, rel)), rel)
+                    self.assertIn(os.path.join(home, rel), ad.grants({"model": "m"}, home).deny_write)
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as elsewhere:
+            os.symlink(elsewhere, os.path.join(home, ".claude"))
+            with self.assertRaises(OSError):
+                adapters.make_code_dirs("claude-code", home)
+            self.assertEqual(os.listdir(elsewhere), [])
 
     def test_file_instruction_is_short(self):
         self.assertIn("/s/input.md", adapters.FILE_INSTRUCTION.format(path="/s/input.md"))
@@ -112,6 +140,28 @@ class Codex(unittest.TestCase):
         self.assertFalse(self.ad.usage_limit(self.ad.errors(out, err)))
         self.assertEqual(self.ad.answer(out), "No significant findings.")
 
+    def test_unsafe_session_id_starts_fresh(self):
+        for bad in ["--x", "a b", ""]:
+            self.assertEqual(self.ad.resume_argv(self.SEAT, bad, "/s/i", False), self.ad.argv(self.SEAT, "/s/i", False))
+        line = json.dumps({"type": "thread.started", "thread_id": "-oops"})
+        self.assertIsNone(self.ad.session_id([line], []))
+
+    def test_hostile_lines(self):
+        lines = [json.dumps({"type": "turn.completed", "usage": {"input_tokens": "lots", "output_tokens": True}}),
+                 json.dumps({"type": "turn.completed", "usage": {"input_tokens": 5, "output_tokens": 2}}),
+                 json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": 5}}),
+                 json.dumps({"type": "item.completed", "item": {"type": "command_execution", "aggregated_output": 7}}),
+                 json.dumps({"type": "item.completed", "item": {"type": "file_change", "status": 1, "changes": "x"}}),
+                 json.dumps({"type": "item.completed", "item": {"type": "file_change", "status": "failed",
+                                                                "changes": [{"path": 3}, {"path": "w1"}, "z"]}}),
+                 json.dumps({"type": "error", "message": {"x": 1}}),
+                 json.dumps({"type": "turn.failed", "error": ["x"]}),
+                 json.dumps({"type": "item.completed", "item": "x"})]
+        self.assertEqual(self.ad.usage(lines), {"tokens_in": 5, "tokens_out": 2})
+        self.assertEqual(self.ad.answer(lines), "")
+        self.assertEqual(self.ad.tool_results(lines), ["", "file_change : ", "file_change failed: w1"])
+        self.assertEqual(self.ad.errors(lines, []), [])
+
     def test_error_line_after_echo_counts(self):
         err = ["user", "check the usage limit path", "codex", "ERROR: You have hit your usage limit."]
         self.assertEqual(self.ad.errors([], err), ["ERROR: You have hit your usage limit."])
@@ -119,7 +169,7 @@ class Codex(unittest.TestCase):
     def test_grants_inside_home(self):
         g = self.ad.grants(self.SEAT, HOME)
         self.assertTrue(g.write)
-        self.assertTrue(all(p.startswith(HOME) for p in g.write))
+        self.assertTrue(all(p == HOME or p.startswith(HOME + "/") for p in g.write))
         self.assertEqual(g.env, {"CODEX_HOME": HOME})
         self.assertTrue(g.private_home)
 
@@ -205,7 +255,7 @@ class ClaudeCode(unittest.TestCase):
     def test_grants_inside_home(self):
         g = self.ad.grants(self.SEAT, HOME)
         self.assertTrue(g.write)
-        self.assertTrue(all(p.startswith(HOME) for p in g.write))
+        self.assertTrue(all(p == HOME or p.startswith(HOME + "/") for p in g.write))
 
     def test_code_paths_in_home_write_denied(self):  # R14
         g = self.ad.grants(self.SEAT, HOME)
@@ -256,6 +306,45 @@ class ClaudeCode(unittest.TestCase):
         self.assertTrue(results[0].startswith("PROBE:g1\n"))
         self.assertIn("Operation not permitted", results[0])
 
+    def test_rejected_rate_limit_is_a_cap(self):
+        rejected = json.dumps({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour"}})
+        allowed = json.dumps({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour"}})
+        self.assertTrue(self.ad.usage_limit(self.ad.errors([rejected], [])))
+        self.assertEqual(self.ad.errors([allowed], []), [])
+
+    def test_rate_limit_error_kind_is_a_cap(self):
+        ev = json.dumps({"type": "assistant", "error": "rate_limit", "is_api_error_message": True,
+                         "message": {"role": "assistant", "content": [{"type": "text", "text": "Try again soon."}]}})
+        self.assertTrue(self.ad.usage_limit(self.ad.errors([ev], [])))
+
+    def test_model_text_is_never_an_error(self):  # an answer that quotes the limit wording
+        ev = json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "The code prints: you've hit your limit, usage limit reached."}]}})
+        res = json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "usage limit reached"})
+        self.assertEqual(self.ad.errors([ev, res], []), [])
+
+    def test_unsafe_session_id_starts_fresh(self):
+        self.assertEqual(self.ad.resume_argv(self.SEAT, "--x", "/s/i", False), self.ad.argv(self.SEAT, "/s/i", False))
+        line = json.dumps({"type": "result", "session_id": "a b"})
+        self.assertIsNone(self.ad.session_id([line], []))
+
+    def test_hostile_lines(self):
+        lines = [json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": ["x"],
+                             "total_cost_usd": "free", "usage": {"input_tokens": "x", "output_tokens": None}}),
+                 json.dumps({"type": "user", "message": {"role": "user", "content": [
+                     {"type": "tool_result", "content": [{"type": "text", "text": 5}, {"type": "text", "text": "ok"}]}]}}),
+                 json.dumps({"type": "rate_limit_event", "rate_limit_info": "x"}),
+                 json.dumps({"type": "assistant", "error": 5, "message": "x"})]
+        self.assertEqual(self.ad.answer(lines), "")
+        self.assertEqual(self.ad.usage(lines), {"tokens_in": 0, "tokens_out": 0})
+        self.assertEqual(self.ad.tool_results(lines), ["ok"])
+        self.assertEqual(self.ad.errors(lines, []), ["error"])
+
+    def test_env_allowlist_drops_claudecode(self):
+        env = sandbox.seat_env({"PATH": "/bin", "CLAUDECODE": "1", "CLAUDE_CONFIG_DIR": "/c",
+                                "CLAUDE_CODE_OAUTH_TOKEN": "t"}, keep=self.ad.env_keys)
+        self.assertEqual(env, {"PATH": "/bin", "CLAUDE_CODE_OAUTH_TOKEN": "t"})
+
     def test_tool_result_errors_are_not_errors(self):  # a tool result that says "usage limit" is not a cap
         line = json.dumps({"type": "user", "message": {"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": "t1", "content": "You have hit your usage limit.", "is_error": True}]}})
@@ -270,6 +359,17 @@ class ClaudeCode(unittest.TestCase):
             Path(d, ".mcp.json").write_text("{}")
             self.assertEqual(self.ad.project_code(d),
                              [os.path.join(d, ".claude", "settings.local.json"), os.path.join(d, ".mcp.json")])
+
+    def test_project_code_more_keys_and_dirs(self):
+        for key in ("env", "enabledPlugins", "extraKnownMarketplaces"):
+            with tempfile.TemporaryDirectory() as d:
+                os.makedirs(os.path.join(d, ".claude"))
+                Path(d, ".claude", "settings.json").write_text(json.dumps({key: {}}))
+                self.assertEqual(self.ad.project_code(d), [os.path.join(d, ".claude", "settings.json")], key)
+        for sub in ("agents", "commands", "skills"):
+            with tempfile.TemporaryDirectory() as d:
+                os.makedirs(os.path.join(d, ".claude", sub))
+                self.assertEqual(self.ad.project_code(d), [os.path.join(d, ".claude", sub)], sub)
 
     def test_project_code_unreadable_settings_count(self):
         with tempfile.TemporaryDirectory() as d:
