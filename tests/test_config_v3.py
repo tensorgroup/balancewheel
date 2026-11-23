@@ -258,6 +258,50 @@ class PlanOrcaAndProbeKeys(unittest.TestCase):
         self.assertEqual(c["plans"]["metered"]["key_env"], "OR_KEY")
 
 
+class SeatTierAndPanel(unittest.TestCase):
+    SEAT = {"runtime": "codex", "model": "vendor/model-b", "roles": ["review"], "plan": "plan-b"}
+
+    def load(self, extra, base=None):
+        obj = base() if base else v3()
+        extra = dict(extra)
+        obj["seats"].update(extra.pop("seats", {}))
+        obj.update(extra)
+        return load_obj(obj)
+
+    def load_v2(self, extra):
+        return self.load(extra, base=v2)
+
+    def test_tier_default_and_reserved(self):
+        c = self.load({"seats": {"a": {**self.SEAT}, "b": {**self.SEAT, "tier": "reserved"}}})
+        self.assertEqual(c["seats"]["a"]["tier"], "default")
+        self.assertEqual(c["seats"]["b"]["tier"], "reserved")
+        self.assertEqual(cfg.SEAT_TIERS, frozenset({"default", "reserved"}))
+
+    def test_tier_bad(self):
+        self.assertRaisesRegex(cfg.ConfigError, r"seats\.a\.tier", self.load, {"seats": {"a": {**self.SEAT, "tier": "deep"}}})
+
+    def test_reserved_names(self):
+        for n in ("verify", "list"):
+            self.assertRaisesRegex(cfg.ConfigError, rf"seats\.{n}: name is reserved for bw seat {n}",
+                                   self.load, {"seats": {n: self.SEAT}})
+
+    def test_panel_defaults_and_minimum(self):
+        want = {"cap_min": 12, "deep_cap_min": 30, "max_rounds": 2, "max_parallel": 4}
+        self.assertEqual(self.load({})["panel"], want)
+        self.assertEqual(self.load_v2({})["panel"], want)
+        self.assertEqual(self.load({"panel": {"cap_min": 5}})["panel"], {**want, "cap_min": 5})
+        self.assertRaisesRegex(cfg.ConfigError, r"panel\.cap_min: must be an integer of at least 1", self.load, {"panel": {"cap_min": 0}})
+        self.assertRaisesRegex(cfg.ConfigError, r"panel\.x: unknown key", self.load, {"panel": {"x": 1}})
+
+    def test_panel_needs_schema_3(self):
+        self.assertRaisesRegex(cfg.ConfigError, r"panel: unknown key \(needs schema_version 3\)", self.load_v2, {"panel": {}})
+
+    def test_example_fable_reserved(self):
+        c = cfg.load_config(str(HERE.parent / "balancewheel.example.json"))
+        self.assertEqual(c["seats"]["fable"]["tier"], "reserved")
+        self.assertEqual(c["panel"]["cap_min"], 12)
+
+
 class Triage(unittest.TestCase):
     def write(self, extra):
         base = {"schema_version": 3, "plans": {"p": {"billing": "plan", "quota": "statusline"}},

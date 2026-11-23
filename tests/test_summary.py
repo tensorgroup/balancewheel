@@ -46,6 +46,12 @@ class SeatRows(unittest.TestCase):
         self.assertEqual((a["unique_recent"], a["recent_panels"]), (1, 2))
         self.assertEqual(r["gamma"]["n"], 0)
 
+    def test_ran_false_not_a_call(self):
+        d = load([{"type": "usage", "ts": "2026-01-01T00:00:00Z", "seat": "alpha", "ran": False},
+                  {"type": "usage", "ts": "2026-01-01T00:00:00Z", "seat": "alpha", "ran": True},
+                  {"type": "usage", "ts": "2026-01-01T00:00:00Z", "seat": "alpha"}])
+        self.assertEqual(self.rows(d)["alpha"]["calls"], 2)
+
     def test_standout_counts_once_per_panel_and_not_for_shared_groups(self):
         d = load([
             panel("p1", "2026-01-01T00:00:00Z", [fd("alpha", "g1"), fd("alpha", "g2", severity="critical"), fd("beta", "g3")]),

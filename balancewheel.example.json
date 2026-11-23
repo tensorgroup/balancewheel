@@ -134,6 +134,7 @@
     "fable": {
       "runtime": "claude-code",
       "model": "claude-fable-5-2",
+      "tier": "reserved",
       "roles": [
         "design",
         "plan",
@@ -259,6 +260,12 @@
   "metrics_log": "~/.local/state/balancewheel/metrics.jsonl",
   "commands_dir": "~/.claude/commands",
   "bin_dir": "~/.local/bin",
+  "panel": {
+    "cap_min": 12,
+    "deep_cap_min": 30,
+    "max_rounds": 2,
+    "max_parallel": 4
+  },
   "watches": {
     "bloat_total": 30,
     "bloat_per_seat": 8,

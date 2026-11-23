@@ -41,6 +41,11 @@ def _total(events, key):
     return sum(vals) if vals else None
 
 
+def ran_usage(data):
+    """Usage rows for runs that started: `ran: false` marks a run that never began (a capped seat)."""
+    return [u for u in data["usage"] if u.get("ran") is not False]
+
+
 def seat_rows(data, config):
     panels = _panels(data)
     w = config["watches"]
@@ -50,7 +55,7 @@ def seat_rows(data, config):
         mine = [p for p in panels if seat in p["findings"]]
         conf, part, ref = (sum(p["findings"][seat][k] or 0 for p in mine) for k in VERDICTS)
         recent = [p for p in window if seat in p["findings"] and isinstance(p["findings"][seat].get("unique"), int)][-w["redundant_min_panels"]:]
-        calls = [u for u in data["usage"] if u.get("seat") == seat]
+        calls = [u for u in ran_usage(data) if u.get("seat") == seat]
         disputes = [d for p in panels for d in p["disputes"]]
         rows.append({
             "seat": seat, "panels": len(mine), "confirmed": conf, "partial": part, "refuted": ref, "n": conf + part + ref,

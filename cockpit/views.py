@@ -26,7 +26,7 @@ def _seat_usage(data, since):
     """Seat calls per local day, seat and model from `usage` events since `since`; a total with no
     reported value is None."""
     groups, skipped = {}, 0
-    for e in data["usage"]:
+    for e in summary.ran_usage(data):
         t = summary._parse(e.get("ts"))
         if t is None:
             skipped += 1

@@ -36,6 +36,12 @@ class Render(unittest.TestCase):
         for svg in svgs(html):
             ET.fromstring(svg)  # raises on malformed markup
 
+    def test_ran_false_rows_are_not_seat_calls(self):
+        d = store.load("/nonexistent.jsonl")
+        d["usage"] = [{"seat": "alpha", "ran": False}, {"seat": "alpha", "ran": True}, {"seat": "alpha"}]
+        html = dashboard.render(d, CONFIG, None)
+        self.assertIn("2 seat calls", html)
+
     def test_empty_log_and_one_panel_log_render(self):
         html = dashboard.render(store.load("/nonexistent.jsonl"), CONFIG, None)
         for s in SECTIONS:

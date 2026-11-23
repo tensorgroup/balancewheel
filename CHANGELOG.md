@@ -13,8 +13,17 @@ not against the prose.
 
 ## [Unreleased]
 
+### Added (schema 3)
+
+- **`panel`**: `cap_min`, `deep_cap_min`, `max_rounds`, `max_parallel`, each an integer of at least 1
+  (defaults 12, 30, 2, 4).
+- **`seats.*.tier`**: `default` or `reserved`.
+- **Reserved seat names.** The seat names `verify` and `list` are reserved for `bw seat`.
+
 ### Changed
 
+- **`usage` rows with `ran: false` are not counted as calls.** The seat rows, the dashboard totals,
+  and the cockpit usage view skip a run that never started.
 - **The lead verification key hashes `lead/codepaths.py`.** The lists of names that load as code
   (pi and Kimi) move there from `lead/runtimes.py`. Every pi and Kimi lead, and every guarded lead,
   re-verifies once.

@@ -127,6 +127,14 @@ class ViewsCase(unittest.TestCase):
         self.assertEqual(seats["alpha"]["tokens_in"], 100)
         self.assertEqual(seats["alpha"]["cost_usd"], 0.5)
 
+    def test_ran_false_rows_are_not_calls(self):
+        t = iso(NOW - 3600)
+        self.write_log([{"type": "usage", "ts": t, "seat": "alpha", "model": "m", "ran": False},
+                        {"type": "usage", "ts": t, "seat": "alpha", "model": "m", "ran": True},
+                        {"type": "usage", "ts": t, "seat": "alpha", "model": "m"}])
+        alpha = next(r for r in self.built()["usage"]()["seats"] if r["seat"] == "alpha")
+        self.assertEqual(alpha["calls"], 2)
+
     def test_a_seat_cost_never_reported_is_null_not_zero(self):
         self.synthetic()
         beta = next(r for r in self.built()["usage"]()["seats"] if r["seat"] == "beta")

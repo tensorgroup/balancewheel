@@ -135,7 +135,7 @@ def stacked_bars(panels, seat):
 
 def section_roster(data, config, colors):
     panels = sorted(data["panels"], key=lambda p: p["ts"] or "")
-    total_usage = len(data["usage"]) or 1
+    total_usage = len(summary.ran_usage(data)) or 1
     rows = []
     for r in summary.seat_rows(data, config):
         seat, n = r["seat"], r["n"]
@@ -241,7 +241,7 @@ def section_watches(data):
 def render(data, config, seats_state):
     colors = seat_colors(config, data)
     parts = [f"<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>Balancewheel dashboard</title><style>{CSS}</style></head><body>",
-             f'<h1>Balancewheel — seat metrics</h1><p class="muted">generated {esc(store.now_ts())} · {len(data["panels"])} panels · {len(data["usage"])} seat calls · log {esc(store.log_path(config))}</p>',
+             f'<h1>Balancewheel — seat metrics</h1><p class="muted">generated {esc(store.now_ts())} · {len(data["panels"])} panels · {len(summary.ran_usage(data))} seat calls · log {esc(store.log_path(config))}</p>',
              section_now(data, config, seats_state), section_roster(data, config, colors), section_timeline(data, config, colors),
              section_disputes(data, colors), section_findings(data, colors), section_watches(data), "</body></html>"]
     return "".join(parts)

@@ -17,7 +17,7 @@ EFFORT_LEVELS = {
 }
 SEAT_NAME = re.compile(r"[a-z0-9-]+")  # used with fullmatch: a trailing newline is refused
 TOP_KEYS = {"_comment", "schema_version", "seats", "state_dir", "metrics_log", "commands_dir", "bin_dir", "watches"}
-V3_TOP_KEYS = {"guard", "triage", "improve"}
+V3_TOP_KEYS = {"guard", "triage", "improve", "panel"}
 V3_LEAD_KEYS = {"autonomy"}
 V3_PROFILE_KEYS = {"protected_branches", "deploy_commands"}
 GUARD_KEYS = {"mode", "model", "on_judge_failure", "rules_on_native"}
@@ -52,7 +52,9 @@ PERMISSION_ARGS = {
 DEFAULT_PROTECTED_BRANCHES = ["main", "master"]
 V2_TOP_KEYS = {"plans", "tools", "leads", "profiles", "projects", "default_profile", "rotation", "updates", "cockpit", "team"}
 SEAT_KEYS = {"runtime", "model", "effort", "roles", "args", "provider", "policy", "enabled"}
-V2_SEAT_KEYS = {"plan", "fallback"}
+V2_SEAT_KEYS = {"plan", "fallback", "tier"}
+SEAT_TIERS = frozenset({"default", "reserved"})
+RESERVED_SEAT_NAMES = {"verify", "list"}
 BILLING = {"plan", "metered"}
 QUOTA_SOURCES = {"statusline", "probe", "orca", "none"}
 PROBES = {"agy", "openrouter"}
@@ -65,6 +67,7 @@ DEPTHS = {"standard", "deep", "deep-on-stakes"}
 ROUTER_MODES = {"off", "shadow", "acting"}
 ROTATION_DEFAULTS = {"return_above_pct": 50, "cap_expiry_hours": 5, "probe_every_min": 15}
 UPDATES_DEFAULTS = {"min_interval_hours": 0}
+PANEL_DEFAULTS = {"cap_min": 12, "deep_cap_min": 30, "max_rounds": 2, "max_parallel": 4}
 WATCH_DEFAULTS = {
     "bloat_total": 30, "bloat_per_seat": 8, "bloat_min_seats": 3,
     "skim_min_seats": 3, "skim_min_findings": 15,
@@ -97,6 +100,7 @@ def _expect(cond, msg):
 def _validate_seat(name, seat, version=1):
     kp = f"seats.{name}"
     _expect(isinstance(name, str) and SEAT_NAME.fullmatch(name), f"{kp}: seat name must match [a-z0-9-]+")
+    _expect(name not in RESERVED_SEAT_NAMES, f"{kp}: name is reserved for bw seat {name}")
     _expect(isinstance(seat, dict), f"{kp}: must be an object")
     unknown = sorted(set(seat) - SEAT_KEYS - (V2_SEAT_KEYS if version >= 2 else set()))
     if unknown:  # not via _expect: an f-string would index an empty list eagerly
@@ -122,7 +126,9 @@ def _validate_seat(name, seat, version=1):
     _expect(isinstance(policy, str), f"{kp}.policy: must be a string")
     enabled = seat.get("enabled", True)
     _expect(isinstance(enabled, bool), f"{kp}.enabled: must be true or false")
-    return {"runtime": rt, "model": seat["model"], "effort": effort, "roles": roles,
+    tier = seat.get("tier", "default")
+    _expect(tier in SEAT_TIERS, f"{kp}.tier: must be one of {sorted(SEAT_TIERS)}, got {tier!r}")
+    return {"runtime": rt, "model": seat["model"], "effort": effort, "roles": roles, "tier": tier,
             "args": args, "provider": provider, "policy": policy, "enabled": enabled,
             "plan": seat.get("plan"), "fallback": seat.get("fallback")}
 
@@ -403,13 +409,14 @@ def _validate_improve(obj):
     return {"panel_logs": [_abs(p) for p in logs]}
 
 
-def _validate_defaults(obj, key, defaults):
+def _validate_defaults(obj, key, defaults, minimum=0):
     vals = dict(defaults)
     given = obj.get(key, {})
     _expect(isinstance(given, dict), f"{key}: must be an object")
     for k, v in given.items():
         _expect(k in defaults, f"{key}.{k}: unknown key; valid: {sorted(defaults)}")
-        _expect(_is_int(v) and v >= 0, f"{key}.{k}: must be a non-negative integer")
+        _expect(_is_int(v) and v >= minimum,
+                f"{key}.{k}: must be an integer of at least {minimum}" if minimum else f"{key}.{k}: must be a non-negative integer")
         vals[k] = v
     return vals
 
@@ -464,6 +471,7 @@ def load_config(path=None):
     improve = _validate_improve(obj)
     rotation = _validate_defaults(obj, "rotation", ROTATION_DEFAULTS)
     updates = _validate_defaults(obj, "updates", UPDATES_DEFAULTS)
+    panel = _validate_defaults(obj, "panel", PANEL_DEFAULTS, minimum=1)
     cockpit = _validate_cockpit(obj, warnings)
     for k in ("state_dir", "metrics_log", "commands_dir", "bin_dir"):
         if k in obj:
@@ -488,6 +496,7 @@ def load_config(path=None):
         "default_profile": default_profile,
         "rotation": rotation,
         "updates": updates,
+        "panel": panel,
         "cockpit": cockpit,
         "guard": guard,
         "triage": triage,
