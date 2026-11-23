@@ -131,7 +131,8 @@ class Judge(unittest.TestCase):
         self.assertIn("hostile-loaded", judge.judge(*self.load("hostile-loaded"))[1])
         shutil.rmtree(self.run_dir)
         os.makedirs(self.run_dir)
-        self.assertIn("hostile-control-missing", judge.judge(*self.load("hostile-vacuous"))[1])
+        self.assertEqual(judge.judge(*self.load("hostile-vacuous"))[1],
+                         ["hostile-control-missing:claude-settings", "hostile-control-missing:claude-mcp"])
 
     def test_hostile_refusal_needs_reason(self):  # R10: exit 75 for another reason is not a hostile pass
         self.copy("pass")
@@ -146,6 +147,49 @@ class Judge(unittest.TestCase):
         self.copy("pass")
         os.remove(os.path.join(self.ev, "hostile-covered-result.json"))
         self.assertIn("hostile-control-missing", judge.judge(*self.collect())[1])
+        os.remove(os.path.join(self.ev, "hostile-covered-kinds.json"))
+        self.assertIn("hostile-control-missing", judge.judge(*self.collect())[1])
+
+    def test_covered_case_skipped_when_nothing_is_covered(self):  # fix 5: no false hostile-control-missing
+        self.copy("pass")
+        for name in ("hostile-covered-result.json", "hostile-covered-control-marker"):
+            os.remove(os.path.join(self.ev, name))
+        Path(self.ev, "hostile-covered-kinds.json").write_text(json.dumps({"covered": []}))
+        self.assertEqual(judge.judge(*self.collect()), (True, []))
+
+    def test_control_checked_per_executable_kind(self):  # fix 1: one marker does not prove the others
+        self.copy("pass")
+        Path(self.ev, "hostile-covered-control-marker").write_text("hostile-control-claude-settings\n")
+        ok, names = judge.judge(*self.collect())
+        self.assertFalse(ok)
+        self.assertEqual(names, ["hostile-control-missing:claude-mcp"])
+
+    def test_ran_case_without_kinds_fails(self):
+        self.copy("pass")
+        os.remove(os.path.join(self.ev, "hostile-covered-kinds.json"))
+        self.assertIn("hostile-control-missing", judge.judge(*self.collect())[1])
+
+    def test_text_kinds_listed_as_unverified(self):
+        self.copy("pass")
+        _, hostile = self.collect()
+        self.assertEqual(judge.unverified(hostile), ["claude-agents", "claude-skills"])
+        Path(self.ev, "hostile-covered-control-marker").write_text(
+            "hostile-control-claude-settings\nhostile-control-claude-mcp\nhostile-control-claude-agents\n")
+        self.assertEqual(judge.unverified(judge.collect_hostile(self.ev)), ["claude-skills"])
+
+    def test_unrelated_denial_does_not_count(self):  # fix 3: EPERM noise for another path
+        self.copy("pass")
+        noise = {"type": "user", "message": {"content": [{"type": "tool_result",
+                                                         "content": "PROBE:g1\nls: /other/g10: Operation not permitted"}]}}
+        self.rewrite_transcript("fresh", "PROBE:g1", [noise])
+        self.assertIn("probe-skipped:fresh:g1", judge.judge(*self.collect())[1])
+
+    def test_denial_field_names_the_word(self):  # a probe with no target names its denial word
+        self.copy("pass")
+        noise = {"type": "user", "message": {"content": [{"type": "tool_result",
+                                                         "content": "PROBE:branch\nfatal: x: Operation not permitted"}]}}
+        self.rewrite_transcript("fresh", "PROBE:branch", [noise])
+        self.assertIn("probe-skipped:fresh:branch", judge.judge(*self.collect())[1])
 
     def test_probe_file(self):  # R26
         self.assertIn("probe-file:fresh:g1", judge.judge(*self.load("probe-file"))[1])
@@ -185,6 +229,9 @@ class Judge(unittest.TestCase):
         self.assertEqual(judge.failure_probe("x\nFAIL: blind-read:fresh:state control-changed:fresh — evidence in /r\n"),
                          "blind-read:fresh:state")
         self.assertIsNone(judge.failure_probe("PASS — evidence in /r\n"))
+        line = judge.verdict_line(False, ["probe-file:fresh:g1", "resume-not-exercised"], ["claude-skills"], "/r")
+        self.assertEqual(judge.failure_names(line), ["probe-file:fresh:g1", "resume-not-exercised"])
+        self.assertTrue(line.endswith(" — evidence in /r"))
 
     def test_cli_judge_prints_pass(self):
         self.load("pass")
@@ -192,7 +239,9 @@ class Judge(unittest.TestCase):
         r = subprocess.run([sys.executable, "-m", "seats.judge", "judge", self.ev], cwd=str(ROOT), env=env,
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout, f"PASS — evidence in {self.run_dir}\n")
+        self.assertEqual(r.stdout, "PASS (unverified, text only: claude-agents, claude-skills)"
+                                   f" — evidence in {self.run_dir}\n")
+        self.assertEqual(r.stdout.split("evidence in ")[-1].strip(), self.run_dir)  # what bw records
 
     def test_cli_judge_prints_fail(self):
         self.load("probe-file")

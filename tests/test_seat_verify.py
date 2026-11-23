@@ -307,10 +307,70 @@ class SeatAttack(unittest.TestCase):
         run_dir = fake.argv[fake.argv.index("--run") + 1]
         self.assertFalse(os.path.exists(os.path.join(run_dir, "state", "seats", "attack-tokens", "astra.json")))
 
-    def test_timeout_passed(self):
+    def test_timeout_passed(self):  # controller ruling, fix round 1: the script's worst case
         fake = AttackRun("PASS — evidence in /ev\n")
         verify.verify_seat(self.config, self.state, "astra", run=fake)
-        self.assertEqual(fake.timeout, 2 * 30 * 60 + 300)
+        self.assertEqual(verify.ATTACK_RUNS, 6)
+        self.assertEqual(fake.timeout, 6 * 12 * 60 + 300)
+        self.config["panel"]["cap_min"] = 5
+        self.assertEqual(verify.attack_timeout(self.config), 6 * 5 * 60 + 300)
+        sh = (Path(verify.SCRIPT)).read_text()
+        self.assertIn("ATTACK_RUNS", sh)  # the script's header names the shared constant
+
+    def test_sweep_after_a_killed_script(self):  # fix 2: the trap never ran
+        home = os.environ["HOME"]
+        planted = []
+
+        def killed(argv, timeout, **kw):
+            if len(argv) == 2:
+                return Result(0, "codex-cli 9.9\n", "", False)
+            run_dir = argv[argv.index("--run") + 1]
+            tag = verify.run_tag(run_dir)
+            os.makedirs(os.path.join(home, ".ssh"))
+            Path(run_dir, verify.MADE_SSH).write_text("")
+            scratch = os.path.join(self.tmp.name, f"zz-attack-{tag}-ab12")
+            os.makedirs(scratch)
+            paths = [os.path.join(home, ".ssh", f"bw-seat-attack-{tag}"), os.path.join(home, f"bw-seat-probe-{tag}"),
+                     os.path.join(scratch, "out.md"), os.path.join(run_dir, "state", "planted.txt")]
+            for p in paths:
+                Path(p).write_text("n")
+            keep = os.path.join(home, "unrelated-file")
+            Path(keep).write_text("k")
+            Path(run_dir, verify.PLANTED_LIST).write_text("\n".join([scratch] + paths + [keep]) + "\n")
+            planted.extend([scratch] + paths)
+            return Result(124, "", "", True)  # proc.run killed the script on the cap
+
+        ok, msg = verify.verify_seat(self.config, self.state, "astra", run=killed)
+        self.assertFalse(ok)
+        self.assertIn("timed out", msg)
+        for p in planted:
+            self.assertFalse(os.path.lexists(p), p)
+        self.assertFalse(os.path.exists(os.path.join(home, ".ssh")))  # the script made it, and it is empty
+        self.assertTrue(os.path.exists(os.path.join(home, "unrelated-file")))  # no tag in the name: kept
+
+    def test_sweep_keeps_ssh_that_was_there_or_is_not_empty(self):
+        home = os.environ["HOME"]
+        run_dir = os.path.join(self.tmp.name, "run.tag123")
+        os.makedirs(os.path.join(home, ".ssh"))
+        Path(home, ".ssh", "id_test").write_text("k")
+        os.makedirs(run_dir)
+        Path(run_dir, verify.MADE_SSH).write_text("")
+        verify.sweep(run_dir)
+        self.assertTrue(os.path.exists(os.path.join(home, ".ssh", "id_test")))
+        os.remove(os.path.join(home, ".ssh", "id_test"))
+        os.remove(os.path.join(run_dir, verify.MADE_SSH))
+        verify.sweep(run_dir)
+        self.assertTrue(os.path.isdir(os.path.join(home, ".ssh")))  # not made by the script: kept
+
+    def test_old_run_dirs_pruned(self):  # fix 7
+        root = os.path.join(os.environ["HOME"], ".cache", "bw-seat-attack")
+        old, new = os.path.join(root, "run.old111"), os.path.join(root, "run.new222")
+        for d in (old, new):
+            os.makedirs(d)
+        os.utime(old, (time.time() - 8 * 86400,) * 2)
+        verify.verify_seat(self.config, self.state, "astra", run=AttackRun("PASS — evidence in /ev\n"))
+        self.assertFalse(os.path.exists(old))
+        self.assertTrue(os.path.exists(new))
 
     def test_token_cleared_when_attack_raises(self):
         def boom(argv, timeout, **kw):

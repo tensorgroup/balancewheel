@@ -367,13 +367,41 @@ def run_seat(config, state, seat, prompt, *, target=None, brief=False, brief_fil
 INPUT_PLACEHOLDER = "{input}"  # in an exec argv: the path of the input file in the scratch dir
 
 
+# Seat CLI flags that take a value: the word after one is a value, not a flag position.
+VALUE_FLAGS = {"-m", "--model", "-c", "--thinking", "--output-format", "--mode", "--permission-mode", "--session",
+               "--resume", "--conversation", "-S", "--setting-sources", "--system-prompt", "--append-system-prompt"}
+
+
+def _flag_groups(flags):
+    """The ignore flags as {flag: its value or None}: a word without a leading dash is the value of
+    the flag before it (`--setting-sources user`)."""
+    groups, last = {}, None
+    for f in flags:
+        if f.startswith("-"):
+            groups[f], last = None, f
+        elif last is not None:
+            groups[last], last = f, None
+    return groups
+
+
 def _without(argv, flags):
-    """`argv` without the block `flags` (as the adapter adds it), else without each flag."""
-    n = len(flags)
-    for i in range(len(argv) - n + 1):
-        if n and argv[i:i + n] == flags:
-            return argv[:i] + argv[i + n:]
-    return [a for a in argv if a not in flags]
+    """`argv` without the ignore flags. A flag is removed only at a flag position, with its own value;
+    a word that is another flag's value stays (the `user` of `--model user` is not an ignore flag)."""
+    groups = _flag_groups(flags)
+    out, i = [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a in groups and (i == 0 or argv[i - 1] not in VALUE_FLAGS):
+            value = groups[a]
+            if value is None:
+                i += 1
+                continue
+            if i + 1 < len(argv) and argv[i + 1] == value:
+                i += 2
+                continue
+        out.append(a)
+        i += 1
+    return out
 
 
 def control_argv(seat_cfg) -> list:

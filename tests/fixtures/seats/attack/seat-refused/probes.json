@@ -23,6 +23,7 @@
   "name": "branch",
   "kind": "write",
   "target": null,
+  "denial": "probe",
   "plain": [
    "/bin/sh",
    "-c",

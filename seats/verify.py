@@ -10,6 +10,7 @@ import fcntl
 import json
 import os
 import secrets
+import shutil
 import stat
 import tempfile
 import time
@@ -25,6 +26,14 @@ PASS_STORE = "seat-verify.json"
 ATTACK_ROOT = os.path.join("~", ".cache", "bw-seat-attack")
 SCRIPT = os.path.join(ROOT, "tests", "attack", "seat_readonly.sh")
 BW = os.path.join(ROOT, "bin", "bw")
+# The model runs of tests/attack/seat_readonly.sh, each capped at panel.cap_min: fresh, resumed, hostile,
+# hostile-covered (`bw seat`), and the positive control of each hostile case (`seats.run exec --control`).
+# The script's header names this constant; change both together.
+ATTACK_RUNS = 6
+ATTACK_MARGIN_S = 300
+PLANTED_LIST = "planted.list"  # <run>/planted.list: each path the script plants, written before it is made
+MADE_SSH = "made-ssh"  # <run>/made-ssh: the script made ~/.ssh
+RUN_MAX_AGE_S = 7 * 24 * 3600
 INCOMPLETE = "attack-incomplete"  # the probe recorded when the script printed no FAIL line (a timeout, a crash)
 # The real home dir of each lead runtime: the seat attack probes a write into each one that a lead uses.
 LEAD_HOMES = {"claude-code": lambda: "~/.claude", "codex": lambda: os.environ.get("CODEX_HOME") or "~/.codex",
@@ -250,8 +259,65 @@ def clear_token(state, seat) -> None:
 # ---- the attack: `bw seat verify` ----
 
 def attack_timeout(config) -> int:
-    """Seconds for the whole attack: fresh, resumed, and hostile runs (Design decision 12)."""
-    return 2 * config["panel"]["deep_cap_min"] * 60 + 300
+    """Seconds for the whole attack: the script's worst case (controller ruling, fix round 1). Each of
+    the ATTACK_RUNS model runs can take the cap the attack uses (`panel.cap_min`: the script runs no
+    deep tier), plus a fixed margin for the setup, the plain probes, and the judge."""
+    return ATTACK_RUNS * config["panel"]["cap_min"] * 60 + ATTACK_MARGIN_S
+
+
+def run_tag(run_dir) -> str:
+    """The run dir's own suffix (`run.XXXXXX` -> `XXXXXX`). The script puts it in the name of every
+    file it plants outside the run dir, so a sweep can find them."""
+    return os.path.basename(run_dir).split(".", 1)[-1]
+
+
+def _inside(path, root):
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def sweep(run_dir) -> None:
+    """Remove what the script planted, when its own trap did not run (the attack timed out and was
+    killed). The script lists each path in `<run>/planted.list` before it makes it. Only a path in the
+    run dir, or one whose name holds `-<tag>`, is removed. `~/.ssh` goes only when the script made it
+    (`<run>/made-ssh`) and it is now empty."""
+    tag = run_tag(run_dir)
+    try:
+        with open(os.path.join(run_dir, PLANTED_LIST), encoding="utf-8", errors="replace") as f:
+            paths = [line.rstrip("\n") for line in f]
+    except OSError:
+        paths = []
+    for p in paths:
+        if not os.path.isabs(p) or not (_inside(p, run_dir) or f"-{tag}" in os.path.basename(p)):
+            continue
+        try:
+            if os.path.isdir(p) and not os.path.islink(p):
+                shutil.rmtree(p)
+            else:
+                os.unlink(p)
+        except OSError:
+            pass
+    if os.path.exists(os.path.join(run_dir, MADE_SSH)):
+        try:
+            os.rmdir(os.path.join(os.path.expanduser("~"), ".ssh"))
+        except OSError:
+            pass
+
+
+def prune_runs(root, now) -> None:
+    """Remove the attack run dirs under `root` older than RUN_MAX_AGE_S (`now`: epoch seconds)."""
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return
+    for name in names:
+        p = os.path.join(root, name)
+        try:
+            st = os.lstat(p)
+        except OSError:
+            continue
+        if name.startswith("run.") and stat.S_ISDIR(st.st_mode) and now - st.st_mtime > RUN_MAX_AGE_S:
+            sweep(p)
+            shutil.rmtree(p, ignore_errors=True)
 
 
 def lead_homes(config) -> list:
@@ -269,8 +335,7 @@ def lead_homes(config) -> list:
 
 def failure_message(stdout) -> str:
     """What `bw seat verify` says when the attack script did not print PASS."""
-    line = next((x for x in stdout.splitlines() if x.startswith(judge.FAIL_PREFIX)), "")
-    names = line[len(judge.FAIL_PREFIX):].split(judge.EVIDENCE)[0].split()
+    names = judge.failure_names(stdout)
     if names and all(n.startswith(REFUSAL_ONLY) for n in names):
         return "not recorded — a refusal by the model is inconclusive; re-run"
     return "not recorded — the seat attack failed; see the evidence"
@@ -285,6 +350,7 @@ def verify_seat(config, state, seat, run=proc.run, now=time.time, _seats_json=Tr
     runtime = config["seats"][seat]["runtime"]
     root = os.path.expanduser(ATTACK_ROOT)
     os.makedirs(root, exist_ok=True)
+    prune_runs(root, now())
     run_dir = os.path.realpath(tempfile.mkdtemp(prefix="run.", dir=root))
     attack_state = _private_dir(os.path.join(run_dir, "state"))
     timeout = attack_timeout(config)
@@ -305,6 +371,7 @@ def verify_seat(config, state, seat, run=proc.run, now=time.time, _seats_json=Tr
             record_failure(state, seat, key_fn(), judge.failure_probe(msg) or INCOMPLETE, now())
     finally:
         clear_token(attack_state, seat)
+        sweep(run_dir)
         if _seats_json:
             write_seats_json(config, state, run=run)
     return ok, msg

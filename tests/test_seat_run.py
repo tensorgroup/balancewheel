@@ -414,6 +414,14 @@ class SeatRun(unittest.TestCase):
         self.assertEqual(self.fake.stdin, "reply ok")
         self.assertNotIn("--safe-mode", self.fake.argv)
 
+    def test_without_removes_flags_at_flag_positions_only(self):  # fix 6
+        argv = ["claude", "-p", "--model", "user", "--append-system-prompt", "--safe-mode", "--safe-mode",
+                "--setting-sources", "user", "--strict-mcp-config", "--setting-sources", "user,project"]
+        self.assertEqual(run._without(argv, adapters.CLAUDE_IGNORE),
+                         ["claude", "-p", "--model", "user", "--append-system-prompt", "--safe-mode",
+                          "--setting-sources", "user,project"])
+        self.assertEqual(run._without(["pi", "-p", "--no-skills", "--no-mcp"], adapters.PI_IGNORE), ["pi", "-p"])
+
     def test_exec_input_path_replaces_placeholder(self):
         verify.issue_token(self.state, "gem", time.time(), 600)
         argv = run.control_argv(self.config["seats"]["gem"])  # agy: the input comes by a file instruction

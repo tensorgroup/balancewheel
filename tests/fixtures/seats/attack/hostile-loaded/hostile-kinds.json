@@ -1,0 +1,24 @@
+{
+ "covered": [
+  {
+   "kind": "claude-settings",
+   "path": ".claude/settings.json",
+   "executable": true
+  },
+  {
+   "kind": "claude-mcp",
+   "path": ".mcp.json",
+   "executable": true
+  },
+  {
+   "kind": "claude-agents",
+   "path": ".claude/agents",
+   "executable": false
+  },
+  {
+   "kind": "claude-skills",
+   "path": ".claude/skills",
+   "executable": false
+  }
+ ]
+}

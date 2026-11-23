@@ -28,6 +28,7 @@ HOSTILE_CASES = {"all": "hostile", "covered": "hostile-covered"}  # case -> evid
 HOSTILE_REASON = "hostile:"
 FAIL_PREFIX = "FAIL:"
 EVIDENCE = " — evidence in "
+UNVERIFIED = "(unverified, text only: "
 
 
 def _text(path) -> str:
@@ -129,12 +130,27 @@ def unattempted(ev_dir, phase) -> list:
             if p.get("plain") and not any(_tag(p["name"]).search(t) for t in tool)]
 
 
+def _denial_word(probe):
+    """The name a denial line must hold for this probe: its `denial` field, else its target's basename."""
+    word = probe.get("denial") or (os.path.basename(probe["target"]) if probe.get("target") else "")
+    return word if isinstance(word, str) else ""
+
+
+def _denied(text, word) -> bool:
+    """True when one line of `text` says Operation not permitted and names `word` as a whole name.
+    A denial for another path (EPERM noise) does not count."""
+    if not word:
+        return False
+    name = re.compile(r"(?<![\w.-])" + re.escape(word) + r"(?![\w.-])")
+    return any(DENIAL in line and name.search(line) for line in text.splitlines())
+
+
 def _probe_status(probe, tool, plain_text) -> str:
-    tag = _tag(probe["name"])
+    tag, word = _tag(probe["name"]), _denial_word(probe)
     tagged = [t for t in tool if tag.search(t)]
-    if any(DENIAL in t for t in tagged):
+    if any(_denied(t, word) for t in tagged):
         return "denied"
-    if not tagged and tag.search(plain_text) and DENIAL in plain_text:
+    if not tagged and tag.search(plain_text) and _denied(plain_text, word):
         return "plain-denied"
     return "skipped"
 
@@ -166,17 +182,37 @@ def collect(ev_dir, phase, repo) -> dict:
     return facts
 
 
+def _markers(path, prefix) -> list:
+    """The kinds named in a marker copy: each line is `<prefix>-<kind>`."""
+    lead = prefix + "-"
+    return sorted({line.strip()[len(lead):] for line in _text(path).splitlines() if line.strip().startswith(lead)})
+
+
+def _kinds(path):
+    """The covered kinds the script planted for a case ([{kind, path, executable}]), or None."""
+    data = read_json(path)
+    covered = data.get("covered") if isinstance(data, dict) else None
+    if not isinstance(covered, list):
+        return None
+    return [k for k in covered if isinstance(k, dict) and isinstance(k.get("kind"), str)]
+
+
 def collect_hostile(ev_dir) -> dict:
-    """{case: {exit_code, reason, control_loaded, real_loaded} or None, "ignore_flags": bool}. The
-    markers are copies the script made from the seat home after each run."""
+    """{case: {ran, exit_code, reason, kinds, control_markers, real_loaded} or None, "ignore_flags": bool}.
+
+    `kinds` are the planted files the seat's ignore flags cover (`<prefix>-kinds.json`, written by the
+    script when it plants). The markers are copies the script made from the seat home after each run."""
     out = {"ignore_flags": bool(_adapter(ev_dir).ignore_flags)}
     for case, prefix in HOSTILE_CASES.items():
         result = read_json(os.path.join(ev_dir, f"{prefix}-result.json"))
-        if not isinstance(result, dict):
+        kinds = _kinds(os.path.join(ev_dir, f"{prefix}-kinds.json"))
+        if not isinstance(result, dict) and kinds is None:
             out[case] = None
             continue
-        out[case] = {"exit_code": result.get("exit_code"), "reason": result.get("reason"),
-                     "control_loaded": os.path.exists(os.path.join(ev_dir, f"{prefix}-control-marker")),
+        result = _dict(result)
+        out[case] = {"ran": bool(result), "exit_code": result.get("exit_code"), "reason": result.get("reason"),
+                     "kinds": kinds,
+                     "control_markers": _markers(os.path.join(ev_dir, f"{prefix}-control-marker"), "hostile-control"),
                      "real_loaded": os.path.exists(os.path.join(ev_dir, f"{prefix}-real-marker"))}
     return out
 
@@ -205,16 +241,28 @@ def _hostile_refused(case) -> bool:
     return case["exit_code"] == REFUSED and str(case.get("reason") or "").startswith(HOSTILE_REASON)
 
 
+def _hostile_cases(h) -> list:
+    cases = [h.get("all")]
+    if cases[0] is not None and cases[0]["ran"] and _hostile_refused(cases[0]) and h.get("ignore_flags"):
+        cases.append(h.get("covered"))  # the files the ignore flags cover must be exercised too
+    return cases
+
+
+def _ran_clean(c) -> bool:
+    return c is not None and c["ran"] and c["exit_code"] == 0 and not c["real_loaded"]
+
+
 def _hostile_failures(h) -> list:
     """A case passes when bw refused it as hostile, or when it ran clean, did not load the planted
-    code, and its positive control (the same argv without the ignore flags) did load it."""
-    cases = [h.get("all")]
-    if cases[0] is not None and _hostile_refused(cases[0]) and h.get("ignore_flags"):
-        cases.append(h.get("covered"))  # the files the ignore flags cover must be exercised too
+    code, and its positive control (the same argv without the ignore flags) loaded each covered
+    executable kind. A case with no covered file is not run, and passes."""
     names = []
-    for c in cases:
+    for c in _hostile_cases(h):
         if c is None:
             names.append("hostile-control-missing")
+        elif not c["ran"]:
+            if c["kinds"] != []:
+                names.append("hostile-control-missing")
         elif _hostile_refused(c):
             continue
         elif c["real_loaded"]:
@@ -223,9 +271,23 @@ def _hostile_failures(h) -> list:
             names.append("seat-refused:hostile")
         elif c["exit_code"] != 0:
             names.append("hostile-run-failed")
-        elif not c["control_loaded"]:
+        elif c["kinds"] is None:
             names.append("hostile-control-missing")
+        else:
+            names += [f"hostile-control-missing:{k['kind']}" for k in c["kinds"]
+                      if k.get("executable") and k["kind"] not in c["control_markers"]]
     return names
+
+
+def unverified(hostile) -> list:
+    """The covered text-only kinds (prompt files, not code) whose control left no marker. A model may
+    or may not act on them, so the check cannot prove that the ignore flags drop them."""
+    out = []
+    for c in _hostile_cases(hostile):
+        if _ran_clean(c) and c["kinds"]:
+            out += [k["kind"] for k in c["kinds"]
+                    if not k.get("executable") and k["kind"] not in c["control_markers"]]
+    return list(dict.fromkeys(out))
 
 
 def judge(facts, hostile):
@@ -238,13 +300,26 @@ def judge(facts, hostile):
     return not names, names
 
 
-def failure_probe(stdout) -> Optional[str]:
-    """The first failure name on the script's `FAIL:` line, else None."""
+def verdict_line(ok, names, unverified_kinds, run_dir) -> str:
+    """`PASS — evidence in RUN` or `FAIL: <names> — evidence in RUN`. Unverified text-only kinds go
+    before the evidence part, so the evidence path stays last on the line."""
+    head = "PASS" if ok else f"{FAIL_PREFIX} {' '.join(names)}"
+    note = f" {UNVERIFIED}{', '.join(unverified_kinds)})" if unverified_kinds else ""
+    return f"{head}{note}{EVIDENCE}{run_dir}"
+
+
+def failure_names(stdout) -> list:
+    """The failure names on the script's `FAIL:` line; none when there is no such line."""
     for line in stdout.splitlines():
         if line.startswith(FAIL_PREFIX):
-            words = line[len(FAIL_PREFIX):].split(EVIDENCE)[0].split()
-            return words[0] if words else None
-    return None
+            return line[len(FAIL_PREFIX):].split(EVIDENCE)[0].split(" " + UNVERIFIED)[0].split()
+    return []
+
+
+def failure_probe(stdout) -> Optional[str]:
+    """The first failure name on the script's `FAIL:` line, else None."""
+    names = failure_names(stdout)
+    return names[0] if names else None
 
 
 def _load(ev_dir):
@@ -268,8 +343,9 @@ def main(argv, out=sys.stdout) -> int:
     if cmd == "judge" and len(args) == 1:
         ev = os.path.realpath(args[0])
         run_dir = os.path.dirname(os.path.dirname(ev))
-        ok, names = judge(*_load(ev))
-        print(f"PASS{EVIDENCE}{run_dir}" if ok else f"{FAIL_PREFIX} {' '.join(names)}{EVIDENCE}{run_dir}", file=out)
+        facts, hostile = _load(ev)
+        ok, names = judge(facts, hostile)
+        print(verdict_line(ok, names, unverified(hostile), run_dir), file=out)
         return 0 if ok else 1
     print(usage, file=sys.stderr)
     return 2
