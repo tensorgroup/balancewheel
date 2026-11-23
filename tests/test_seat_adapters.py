@@ -8,7 +8,7 @@ from pathlib import Path
 from lead import sandbox
 from lead.codepaths import KIMI_CODE, PI_CODE
 from metrics import config
-from seats import adapters
+from seats import adapters, grants
 
 FIXTURES = Path(__file__).parent / "fixtures" / "seats"
 # Task 2's recorded values (docs/reference-implementation.md, "Seat runtimes under `bw seat`").
@@ -366,7 +366,7 @@ class ClaudeCode(unittest.TestCase):
         self.assertEqual(self.ad.errors(lines, []), ["error"])
 
     def test_env_allowlist_drops_claudecode(self):
-        env = sandbox.seat_env({"PATH": "/bin", "CLAUDECODE": "1", "CLAUDE_CONFIG_DIR": "/c",
+        env = grants.seat_env({"PATH": "/bin", "CLAUDECODE": "1", "CLAUDE_CONFIG_DIR": "/c",
                                 "CLAUDE_CODE_OAUTH_TOKEN": "t"}, keep=self.ad.env_keys)
         self.assertEqual(env, {"PATH": "/bin", "CLAUDE_CODE_OAUTH_TOKEN": "t"})
 
@@ -517,7 +517,7 @@ class Pi(unittest.TestCase):
         # nono denies reads under the home by default. The pi shim is Volta's: without a read of
         # ~/.volta it fails before pi starts ("Could not create directory"). seat_grants reads it.
         from lead import sandbox
-        self.assertIn(".volta", sandbox.SEAT_TOOLCHAIN_READS)
+        self.assertIn(".volta", grants.SEAT_TOOLCHAIN_READS)
         self.assertEqual(self.ad.grants(self.SEAT, HOME).read, [])
 
     def test_code_paths_in_home_write_denied(self):  # R14

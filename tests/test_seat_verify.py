@@ -77,6 +77,15 @@ class SeatVerify(unittest.TestCase):
         self.assertEqual(sorted(k["hook_files"]), sorted(os.path.join(home, n) for n in ("config.toml", "AGENTS.md",
                          "prompts", "hooks.json", "skills", "rules")))
 
+    def test_seat_grants_in_the_seat_key_not_in_lead_sandbox(self):
+        # Seat-only rules live in seats/grants.py: a seat change resets seat keys, never a lead key.
+        k = verify.seat_key(self.config, self.state, "astra", run=FAKE)
+        seats_dir = Path(verify.__file__).resolve().parent
+        self.assertEqual(k["seat_grants_sha"], containment.sha_file(str(seats_dir / "grants.py")))
+        lead_src = (seats_dir.parent / "lead" / "sandbox.py").read_text()
+        for name in ("def seat_grants", "SEAT_TOOLCHAIN_READS", "LEAD_SESSION_STORES", "def seat_env"):
+            self.assertNotIn(name, lead_src)
+
     def test_agy_backend_is_sandbox_exec(self):
         self.assertEqual(verify.seat_key(self.config, self.state, "gem", run=FAKE)["backend"], "sandbox-exec")
 

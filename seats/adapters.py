@@ -28,10 +28,10 @@ SeatAdapter.__new__.__defaults__ = ([], [])  # control_flags, installs
 # argv's ignore flags neutralize is not reported (ruling H-ignore); with no argv, every present file
 # is reported (fail closed).
 # state_dirs: the CLI's own state dirs under the user's home that the seat writes, for a runtime that
-# cannot run on a private home (agy). They go to lead.sandbox.seat_grants(..., state_dirs=...).
+# cannot run on a private home (agy). They go to seats.grants.seat_grants(..., state_dirs=...).
 # control_flags: flags the hostile-repo positive control adds after it drops the ignore flags, for a
 # CLI that loads no project file by default without them (pi trusts project files only with --approve).
-# installs: commands whose install the seat reads, read only (lead.sandbox.seat_grants(..., installs=...)),
+# installs: commands whose install the seat reads, read only (seats.grants.seat_grants(..., installs=...)),
 # for a CLI linked into PATH from a package dir under the home that nono would deny (codex standalone).
 
 TOP_EFFORT = {"codex": "max", "pi": "xhigh", "kimi": "max"}

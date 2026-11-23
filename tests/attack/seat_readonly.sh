@@ -59,7 +59,7 @@ trap cleanup EXIT
 # ---- the seat: runtime, whether its argv has ignore flags, the scratch root, its home and code dirs
 INFO="$(py - "$SEAT" "$BW_STATE_DIR" <<'PY'
 import sys
-from lead import sandbox
+from seats import grants
 from lead.paths import load_config
 from seats import adapters, verify
 seat, state = sys.argv[1], sys.argv[2]
@@ -68,7 +68,7 @@ ad = adapters.SEAT_ADAPTERS[s["runtime"]]
 home = verify.seat_home(state, seat, s["runtime"])  # the code dirs exist before the probes name them
 print(s["runtime"])
 print(1 if ad.ignore_flags else 0)
-print(sandbox.seat_scratch_root())
+print(grants.seat_scratch_root())
 for p in ad.grants(s, home).deny_write:  # code paths that stay read-only (R14); dirs only, never a real file
     print(p)
 PY

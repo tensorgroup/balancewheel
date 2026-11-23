@@ -33,10 +33,10 @@ not against the prose.
   (from `claude setup-token`) in the env. A pi seat on OpenRouter needs `OPENROUTER_API_KEY` in the env.
   An agy seat runs on the real home, because its keychain login does not reach a private home. The
   adapter tuple gains `state_dirs`.
-- **`seat_grants(..., credentials=...)`** (`lead/sandbox.py`). A login file that a seat adapter declares as
+- **`seat_grants(..., credentials=...)`** (`seats/grants.py`). A login file that a seat adapter declares as
   refreshing is readable and writable at its real path, as one file only. bw refuses a credential that is a
   symlink, is not a regular file, or lies in bw state, the target, a code path, or the seat scratch root.
-- **`seat_grants(..., state_dirs=...)`** (`lead/sandbox.py`). A CLI state dir under the user's home that a
+- **`seat_grants(..., state_dirs=...)`** (`seats/grants.py`). A CLI state dir under the user's home that a
   seat adapter declares (agy only) is writable; the code names in it stay read-only. bw refuses a dir that
   is a symlink, is missing, is the home itself, lies outside the home, overlaps bw state, the seat home,
   the seat scratch root, or the target, lies under a code path, or overlaps a secret path.
@@ -68,10 +68,12 @@ not against the prose.
 - **The lead verification key hashes `lead/codepaths.py`.** The lists of names that load as code
   (pi and Kimi) move there from `lead/runtimes.py`. Every pi and Kimi lead, and every guarded lead,
   re-verifies once.
-- **`lead/sandbox.py` gains seat grants.** `seat_grants` lets a review seat write only its own home
+- **Seat grants live in `seats/grants.py`.** `seat_grants` lets a review seat write only its own home
   and read the target, never bw's state, another seat's scratch dir, or a lead's session store.
   `seat_env` passes an allowlist of env names to a seat. A seat runs under nono without
-  `--allow-cwd`. The sandbox hash changes, so leads re-verify (once, with the change above).
+  `--allow-cwd`. The seat key hashes `seats/grants.py` (`seat_grants_sha`); the lead key does not, so a
+  later seat change does not reset a lead key. The shared helpers and profile builders stay in
+  `lead/sandbox.py`; their hash changes, so leads re-verify (once, with the change above).
 - **The Gemini seat stands in for capped seats.** `balancewheel.example.json` moves the `gem` seat
   from `gemini-3.1-pro-high` to `gemini-4-neon-high` (Gemini 4 Neon, the newest Gemini 4 model,
   2026-11-18) and sets `fallback: "gem"` on the `astra` and `kimi` seats, so the Gemini seat runs in

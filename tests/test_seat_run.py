@@ -7,7 +7,7 @@ from lead import containment, proc, sandbox  # noqa: E402
 from lead.locks import RuntimeLock  # noqa: E402
 from lead.paths import load_config  # noqa: E402
 from lead.proc import Result  # noqa: E402
-from seats import adapters, brief, caps, run, sessions, verify  # noqa: E402
+from seats import adapters, brief, caps, grants, run, sessions, verify  # noqa: E402
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "balancewheel.example.json"
 FIX = Path(__file__).resolve().parent / "fixtures" / "seats"
@@ -156,7 +156,7 @@ class SeatRun(unittest.TestCase):
         return run.run_seat(self.config, self.state, seat, prompt, **kw)
 
     def scratch_dirs(self, seat="astra"):
-        return {n for n in os.listdir(sandbox.seat_scratch_root()) if n.startswith(seat + "-")}
+        return {n for n in os.listdir(grants.seat_scratch_root()) if n.startswith(seat + "-")}
 
     # ---- the run ----
 
@@ -416,8 +416,8 @@ class SeatRun(unittest.TestCase):
 
     def test_seat_reads_the_install_its_adapter_names(self):
         # codex links into PATH from a package dir under the home; under nono the seat must read it.
-        real = sandbox.seat_grants
-        with mock.patch.object(sandbox, "seat_grants", side_effect=real) as spy:
+        real = grants.seat_grants
+        with mock.patch.object(grants, "seat_grants", side_effect=real) as spy:
             self.assertTrue(self.seat().ok)
         self.assertEqual(spy.call_args.kwargs["installs"], ["codex"])
         self.assertEqual(adapters.CODEX.installs, ["codex"])
@@ -557,7 +557,7 @@ class SeatRun(unittest.TestCase):
 
     def test_tmpdir_in_scratch_root(self):
         self.seat()
-        root = sandbox.seat_scratch_root()
+        root = grants.seat_scratch_root()
         for k in ("TMPDIR", "NODE_COMPILE_CACHE"):
             self.assertTrue(self.fake.env[k].startswith(root + "/astra-"), self.fake.env[k])
 

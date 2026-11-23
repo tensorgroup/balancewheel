@@ -20,7 +20,7 @@ from lead.guard.review import safe
 from lead.paths import load_config, state_dir
 from lead.projects import resolve_project
 from metrics import store
-from seats import adapters, caps, sessions, verify
+from seats import adapters, caps, grants, sessions, verify
 from seats import brief as seat_brief
 
 SeatResult = namedtuple("SeatResult",
@@ -138,13 +138,13 @@ def _contained(config, state, seat, project, home, scratch, argv):
     rg = adapter.grants(s, home)
     backend = "sandbox-exec" if adapter.backend == "sandbox-exec" else sandbox.backend()
     home_dir = home if rg.private_home else os.path.expanduser("~")
-    env = sandbox.seat_env(os.environ, keep=adapter.env_keys)
+    env = grants.seat_env(os.environ, keep=adapter.env_keys)
     env.update({"TMPDIR": scratch, "NODE_COMPILE_CACHE": scratch})
     env.update(adapter.home_env(home))
-    grants = sandbox.seat_grants(project, home, rg, state, scratch,
-                                 credentials=[p for p, _, refreshes in adapter.credentials if refreshes],
-                                 state_dirs=adapter.state_dirs, installs=adapter.installs)
-    full, cleanup = sandbox.wrap(argv, grants, backend, home_dir, scratch, {}, sandbox.denied_ports(config),
+    seat_grants = grants.seat_grants(project, home, rg, state, scratch,
+                                      credentials=[p for p, _, refreshes in adapter.credentials if refreshes],
+                                      state_dirs=adapter.state_dirs, installs=adapter.installs)
+    full, cleanup = sandbox.wrap(argv, seat_grants, backend, home_dir, scratch, {}, sandbox.denied_ports(config),
                                  allow_cwd=False)
     return full, cleanup, env
 
@@ -230,7 +230,7 @@ class _Run:
         except (Tampered, OSError) as e:
             return self.refuse(f"sandbox: seat home tampered: {safe(e)}", wt)
         try:
-            scratch = tempfile.mkdtemp(prefix=f"{self.seat}-", dir=sandbox.seat_scratch_root())
+            scratch = tempfile.mkdtemp(prefix=f"{self.seat}-", dir=grants.seat_scratch_root())
         except ValueError as e:
             return self.refuse(f"sandbox: {safe(e)}", wt)
         try:
@@ -429,7 +429,7 @@ def exec_sandboxed(config, state, seat, target, argv, run=proc.run, input_text=N
         home = safe_home(state, seat)
         _link_credentials(home, adapter.credentials)
         adapters.make_code_dirs(runtime, home)
-        scratch = tempfile.mkdtemp(prefix=f"{seat}-", dir=sandbox.seat_scratch_root())
+        scratch = tempfile.mkdtemp(prefix=f"{seat}-", dir=grants.seat_scratch_root())
     except (Tampered, OSError, ValueError) as e:
         return proc.Result(REFUSED, "", f"sandbox: {safe(e)}", False)
     try:

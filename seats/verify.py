@@ -142,6 +142,7 @@ def seat_key(config, state, seat, run=proc.run) -> dict:
     home = seat_home(state, seat, s["runtime"])
     key.update({"seat": seat, "model": s["model"], "effort": adapters.effort(s, False), "args": list(s.get("args", [])),
                 "seat_adapter_sha": containment.sha_file(os.path.join(HERE, "adapters.py")),
+                "seat_grants_sha": containment.sha_file(os.path.join(HERE, "grants.py")),
                 "hook_files": {p: _manifest(p) for p in sorted(adapter.hook_files(home))}})
     return key
 

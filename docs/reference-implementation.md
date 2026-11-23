@@ -213,7 +213,7 @@ rarely run it by hand. The step map:
 | The pre-built seat brief | `seats/brief.py` |
 | Session id per target directory, one run at a time | `seats/sessions.py` |
 | Wall-clock cap, cap flags, stand-in seat | `seats/caps.py`, `seats/run.py` |
-| Private scratch dir, OS sandbox, env allowlist | `seats/run.py` with `lead/sandbox.py` |
+| Private scratch dir, OS sandbox, env allowlist | `seats/run.py` with `seats/grants.py` and `lead/sandbox.py` |
 | The `usage` row in the metrics log | `seats/run.py` |
 | Attack-based verification, a pass per seat id | `seats/verify.py`, `seats/judge.py`, `tests/attack/seat_readonly.sh` |
 | `seat.sh`-style command line | `seats/cli.py` (`bw seat`) |
@@ -381,7 +381,7 @@ but is unreadable, so every seat reads the user's global git config (read only, 
 An interpreter from a version manager under the home (pyenv, for one) cannot load its libraries.
 So every seat reads one fixed list of toolchain dirs, read only, when they exist: `~/.pyenv`,
 `~/.volta`, `~/.nvm`, `~/.rbenv`, `~/.cargo`, `~/.rustup`, `~/.local/bin`, `~/.local/lib`
-(`SEAT_TOOLCHAIN_READS` in `lead/sandbox.py`). The secret denies still win inside them: the crates.io
+(`SEAT_TOOLCHAIN_READS` in `seats/grants.py`). The secret denies still win inside them: the crates.io
 token files `~/.cargo/credentials` and `~/.cargo/credentials.toml` stay unreadable on both backends.
 A seat CLI that links into PATH from a package dir under the home also needs that dir. The codex
 standalone install puts a link in `~/.local/bin`, and the binary and its resources live under
