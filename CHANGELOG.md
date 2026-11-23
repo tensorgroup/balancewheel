@@ -60,6 +60,9 @@ not against the prose.
 
 ### Changed
 
+- After the lead opens, `bw start` verifies every seat reachable from a checkpoint, a fallback, or the
+  reserved tier whose key changed, in the background (`bw seat verify --changed`). The registry shows
+  seat caps as `capped` health.
 - **`usage` rows with `ran: false` are not counted as calls.** The seat rows, the dashboard totals,
   and the cockpit usage view skip a run that never started.
 - **The lead verification key hashes `lead/codepaths.py`.** The lists of names that load as code

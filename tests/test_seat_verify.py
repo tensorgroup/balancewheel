@@ -1,4 +1,4 @@
-import copy, json, os, stat, sys, tempfile, threading, time, unittest
+import copy, io, json, os, stat, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -438,3 +438,70 @@ class SeatAttack(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpawnVerify(unittest.TestCase):
+    setUp, tearDown, _pass = SeatVerify.setUp, SeatVerify.tearDown, SeatVerify._pass
+
+    def popen_patch(self):
+        return mock.patch("seats.verify.subprocess.Popen")
+
+    def test_changed_seats(self):
+        self._pass("astra")
+        names = verify.changed_seats(self.config, self.state, run=FAKE)
+        self.assertEqual(names, [n for n in verify.seat_items(self.config) if n != "astra"])
+        self.assertNotIn("astra", names)
+
+    def test_spawn_verify_detached_and_single(self):
+        with self.popen_patch() as popen:
+            self.assertTrue(verify.spawn_verify(self.config, self.state))
+            args, kw = popen.call_args
+            self.assertTrue(kw["start_new_session"])
+            self.assertEqual(args[0][-3:], ["seat", "verify", "--changed"])
+            self.assertEqual(args[0][0], sys.executable)
+            self.assertEqual(kw["stdin"], subprocess.DEVNULL)
+            popen.reset_mock()
+            fd = verify._try_lock(self.state)
+            self.assertIsNotNone(fd)
+            try:
+                self.assertFalse(verify.spawn_verify(self.config, self.state))
+            finally:
+                verify._unlock(fd)
+            popen.assert_not_called()
+
+    def test_spawn_verify_seats_and_bw(self):
+        with self.popen_patch() as popen:
+            verify.spawn_verify(self.config, self.state, seats=["astra"], bw="/x/bw")
+            self.assertEqual(popen.call_args[0][0][1:], ["/x/bw", "seat", "verify", "astra"])
+
+    def test_cli_verify_changed(self):
+        from seats import cli
+        self._pass("astra")
+        done = []
+
+        def fake_verify_seat(config, state, name, run=None, now=None, _seats_json=True):
+            done.append(name)
+            return True, f"{name}: ok"
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(verify, "verify_seat", fake_verify_seat), \
+                mock.patch.object(verify, "write_seats_json"):
+            code = cli.main(["verify", "--changed"], self.config, self.state, run=FAKE, out=out, err=err)
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertNotIn("astra", done)
+        self.assertIn("ox", done)
+
+    def test_cli_verify_ids_hold_lock(self):
+        from seats import cli
+        seen = []
+
+        def fake_verify_seat(config, state, name, run=None, now=None, _seats_json=True):
+            with self.popen_patch() as popen:
+                seen.append((verify.spawn_verify(config, state), popen.called))
+            return True, "ok"
+        with mock.patch.object(verify, "verify_seat", fake_verify_seat):
+            code = cli.main(["verify", "astra"], self.config, self.state, run=FAKE,
+                            out=io.StringIO(), err=io.StringIO())
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [(False, False)])
+        with self.popen_patch():  # released after the run
+            self.assertTrue(verify.spawn_verify(self.config, self.state))

@@ -24,7 +24,7 @@
   bw seat <id> [-b] [-r] [-d DIR] [--deep] "prompt"   run one read-only seat (the panel runs seats for you)
   bw seat list [--json]                           seats, verification, caps
   bw seat verify [<id>...] [--all]                attack-test each seat (no ids: every reachable seat),
-                                                  record a pass per seat id
+                                                  record a pass per seat id (--changed: only those without one)
   bw improve                                      what bw has seen of how you work, as changes worth making
   bw improve note "<text>"                        add your own note on what got in the way
   bw improve done <key>                           dealt with: it returns only on new evidence (a note never)

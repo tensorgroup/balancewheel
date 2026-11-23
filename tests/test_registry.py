@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lead import ccswitch, registry, runner, sandbox  # noqa: E402
 from lead.projects import worktree_key  # noqa: E402
 from lead.proc import Result  # noqa: E402
+from seats import caps as seat_caps  # noqa: E402
 
 NOW = 1_800_000_000.0
 
@@ -114,6 +115,15 @@ class RegistryCase(unittest.TestCase):
         self.assertEqual(self.by(reg, "leads", "lc")["health"], "capped")
         self.assertNotEqual(self.by(reg, "plans", "pp")["health"], "capped")
         self.assertIsNotNone(self.by(reg, "plans", "pc")["cap"])
+
+    def test_seat_enforcement_and_cap(self):
+        reg = self.build()
+        self.assertEqual(self.by(reg, "seats", "s1")["enforcement"], "bw")
+        self.assertEqual(self.by(reg, "seats", "s1")["health"], "unknown")
+        seat_caps.arm(self.state, "s1", NOW, 5)
+        reg = self.build()
+        self.assertEqual(self.by(reg, "seats", "s1")["health"], "capped")
+        self.assertEqual(self.by(reg, "seats", "s2")["health"], "unknown")
 
     def test_missing_seats_json_is_unknown_and_present_is_read(self):
         reg = self.build()

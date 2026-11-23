@@ -17,6 +17,7 @@ from seats import caps, verify
 from seats import run as seat_run
 
 USAGE_ERROR = 2
+BUSY = 75
 PREFIX = "bw seat: "
 
 
@@ -89,24 +90,52 @@ def _verify(argv, config, state, run, out, err):
     p = _Parser(prog="bw seat verify", allow_abbrev=False)
     p.add_argument("ids", nargs="*", metavar="id")
     p.add_argument("--all", action="store_true")
+    p.add_argument("--changed", action="store_true", help="only the seats whose key has no valid pass")
     try:
         a = p.parse_args(argv)
     except _Usage as e:
         _line(err, f"usage error: {e}")
         return USAGE_ERROR
-    if a.ids and a.all:
-        _line(err, "usage error: give seat ids or --all, not both")
+    if sum(map(bool, (a.ids, a.all, a.changed))) > 1:
+        _line(err, "usage error: give seat ids, --all, or --changed, not a mix")
         return USAGE_ERROR
     unknown = [n for n in a.ids if n not in config["seats"]]
     if unknown:
         _line(err, f"unknown seat {unknown[0]!r}; configured: {', '.join(config['seats'])}")
         return USAGE_ERROR
-    passed = True
-    for name in a.ids or verify.seat_items(config):
-        ok, msg = verify.verify_seat(config, state, name, run=run)
-        print(msg, file=out)
-        passed = passed and ok
-    return 0 if passed else 1
+    fd = verify._try_lock(state)  # one verify at a time; spawn_verify sees this lock
+    if fd is None:
+        _line(err, "another seat verify is running")
+        return BUSY
+    try:
+        if a.changed:
+            return _verify_changed(config, state, run, out)
+        passed = True
+        for name in a.ids or verify.seat_items(config):
+            ok, msg = verify.verify_seat(config, state, name, run=run)
+            print(msg, file=out)
+            passed = passed and ok
+        return 0 if passed else 1
+    finally:
+        verify._unlock(fd)
+
+
+def _verify_changed(config, state, run, out):
+    """Attack the seats without a valid pass, one runtime at a time (pending rules: reverify_seats)."""
+    changed = verify.changed_seats(config, state, run=run)
+    runtimes = []
+    for name in changed:
+        if config["seats"][name]["runtime"] not in runtimes:
+            runtimes.append(config["seats"][name]["runtime"])
+    failed = False
+    for runtime in runtimes:
+        for item in verify.reverify_seats(config, state, runtime, time.time(), run=run):
+            if item.state == "verified":
+                continue
+            lines = [ln for ln in (item.reason or "").splitlines() if ln.strip()]
+            print(f"{item.kind}: {item.state}" + (f" — {lines[-1].strip()}" if lines else ""), file=out)
+            failed = failed or item.state == "failed"
+    return 1 if failed else 0
 
 
 def _on_sigterm(signum, frame):

@@ -5,7 +5,8 @@ nothing. Nodes: tools, plans, models, seats, leads, profiles, projects; `edges` 
 (`project→profile`, `profile→lead`, `profile→seat`, `lead→tool`, `seat→tool`, `tool→plan`,
 `plan→model`), each once per pair and only between nodes that exist. Every node has an `id`
 (`<kind>:<name>`) and a `health` in {verified, pending, capped, unknown}:
-  lead/seat — capped when its plan is; else its verification state (a runtime bw does not contain
+  seat      — capped when its seat cap or its plan's is; else its verification state; bw enforces it;
+  lead      — capped when its plan is; else its verification state (a runtime bw does not contain
               and does not guard needs none: unknown);
   plan      — capped when a cap is recorded; verified when a quota reading is known; else unknown;
   tool      — its leads' verification, aggregated (pending beats verified);
@@ -26,6 +27,7 @@ from .locks import DEFAULT_TOOL_RUNTIME, RuntimeLock, runtime_tools, tool_runtim
 from .paths import read_json, write_json_atomic
 from .projects import worktree_key
 from .runtimes import ADAPTERS
+from seats import caps as seat_caps
 from .updates import UNREADABLE, VERSION_TIMEOUT_S, installer_of, read_version
 
 HEALTH = ("verified", "pending", "capped", "unknown")
@@ -186,10 +188,10 @@ def build(config, state, now, run=proc.run) -> dict:
             v = "verified" if entry["verified"] else "pending"
         else:
             v = "unknown"
-        health = "capped" if plan_capped(s.get("plan")) else v
+        health = "capped" if seat_caps.capped(config, state, name, now) is not None else v
         seats.append({"id": f"seat:{name}", "name": name, "runtime": s.get("runtime"), "model": s.get("model"),
                       "plan": s.get("plan"), "fallback": s.get("fallback"), "verified": v,
-                      "enforcement": ad.contained_by if ad else "unknown", "health": health})
+                      "enforcement": "bw", "health": health})
 
     lead_by = {n["name"]: n for n in leads}
     seat_by = {n["name"]: n for n in seats}

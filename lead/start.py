@@ -15,7 +15,9 @@ One `bw start:` line per event. Steps:
   6. open the worktree: an Orca pane when Orca runs, else a Terminal tab through a `.command`
      file in the state dir; neither → print the command and exit 1. A worktree whose lock is
      held already has a lead and is not opened again;
-  7. the cockpit hint, the Orca and cc-switch checks, config warnings.
+  7. verify every reachable seat whose key changed, in one detached background child; the lead
+     never waits (the list is computed before step 6, the child starts after it);
+  8. the cockpit hint, the Orca and cc-switch checks, config warnings.
 `state_dir/start.json` records what happened. `--dry-run` runs only git and `orca status` and
 writes nothing.
 """
@@ -32,6 +34,7 @@ from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
 from .projects import refuse_inside, resolve_project
 from .rotation import decide
+from seats import verify as seat_verify
 
 PASSED_ENV = ("BALANCEWHEEL_CONFIG", "BW_STATE_DIR")
 ORCA_CREATE_TIMEOUT_S = 30
@@ -198,16 +201,41 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     except Exception as e:  # a derived file; never the start's end, and never the exception's text
         say(f"registry not written ({type(e).__name__})")
 
-    # 6. the workspace
+    # 6. the workspace (seat keys are read first; the verify child starts once the lead has opened)
+    try:
+        changed = seat_verify.changed_seats(config, state, run=run)
+    except Exception as e:  # never the start's end, and never the exception's text
+        changed = []
+        say(f"seats: could not read seat keys ({type(e).__name__})")
     code = _workspace(state, project, run, bw, env, say)
 
-    # 7. pointers and checks
+    # 7. the seats, in the background
+    _seats(config, state, changed, verify, bw, say)
+
+    # 8. pointers and checks
     say("cockpit: run bw cockpit")
     for line in checks.lines("orca", orca_checks(state, run)) + checks.lines("cc-switch", ccswitch.check_settings()):
         say(line.strip())
     for w in config.get("warnings", []):
         say(f"config warning: {w}")
     return code
+
+
+def _seats(config, state, changed, verify, bw, say):
+    if not changed:
+        return
+    n = len(changed)
+    if not verify:
+        say(f"seats: {n} unverified (--no-verify)")
+        return
+    try:
+        started = seat_verify.spawn_verify(config, state, bw=bw)
+    except Exception as e:
+        say(f"seats: {n} unverified; could not start the verify ({type(e).__name__})")
+        return
+    log = os.path.join(state, "seats", "verify-log.txt")
+    say(f"seats: verifying {n} in the background ({', '.join(changed)}); log: {log}" if started
+        else f"seats: {n} unverified; a verify is already running")
 
 
 def _quota_and_lead(config, state, project, profile, plans, now, say):
@@ -267,6 +295,10 @@ def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, r
             + (" (--no-verify: a changed key stays pending)" if kinds and not verify else ""))
     for p in plans:
         say(f"would read quota for plan {p}")
+    names = seat_verify.seat_items(config)
+    if names:
+        say(f"seats: would verify {', '.join(names)} in the background" if verify
+            else f"seats: would leave {', '.join(names)} unverified (--no-verify)")
     _quota_and_lead(config, state, project, profile, plans, now, say)
     cmd = _lead_command(bw, env)
     up, why = orca.running(run)

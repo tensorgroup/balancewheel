@@ -12,6 +12,8 @@ import os
 import secrets
 import shutil
 import stat
+import subprocess
+import sys
 import tempfile
 import time
 
@@ -63,6 +65,44 @@ def seat_items(config) -> list:
             want.add(fallback)
             todo.append(fallback)
     return [n for n in seats if n in want]
+
+
+def changed_seats(config, state, run=proc.run) -> list:
+    """The names in `seat_items(config)` whose current key has no valid pass."""
+    return [n for n in seat_items(config) if not is_verified(config, state, n, run)]
+
+
+def _lock_path(state):
+    return os.path.join(_seats_dir(state), "verify.lock")
+
+
+def _try_lock(state):
+    """The fd of `state_dir/seats/verify.lock` held exclusively, or None when another process holds it."""
+    fd = os.open(_lock_path(state), os.O_RDONLY | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def _unlock(fd) -> None:
+    os.close(fd)
+
+
+def spawn_verify(config, state, seats=None, bw=None) -> bool:
+    """Start one detached `bw seat verify` child (`--changed` unless `seats` names ids) and return at
+    once. The child holds `verify.lock` for its whole run. False, and no child, when the lock is held."""
+    fd = _try_lock(state)
+    if fd is None:
+        return False
+    _unlock(fd)  # the child takes it; a start in the gap is refused by the child's own lock
+    argv = [sys.executable, bw or BW, "seat", "verify", *(seats or ["--changed"])]
+    with open(os.path.join(_seats_dir(state), "verify-log.txt"), "ab") as log:
+        subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
+                         env={**os.environ, "BW_STATE_DIR": state})
+    return True
 
 
 def seat_home(state, seat, runtime=None) -> str:

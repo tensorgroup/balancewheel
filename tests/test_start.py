@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 from lead import containment, probes, proc, runner, sandbox, start, status  # noqa: E402
 from lead.proc import Result  # noqa: E402
 from lead.runtimes import ADAPTERS  # noqa: E402
+from seats import verify as seat_verify  # noqa: E402
 
 FIX = ROOT / "tests" / "fixtures" / "orca"
 GITENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
@@ -109,6 +110,8 @@ class StartCase(unittest.TestCase):
         self.env = {"BALANCEWHEEL_CONFIG": "/cfg dir/c.json", "BW_STATE_DIR": self.state}
         p = mock.patch.object(sandbox, "backend", return_value="sandbox-exec")
         p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(seat_verify, "spawn_verify", return_value=True)  # never a real child
+        self.spawn = p.start(); self.addCleanup(p.stop)
         self.saved = {k: os.environ.get(k) for k in ("BW_ORCA_SUPPORT", "BW_CCSWITCH_DIR")}
         os.environ["BW_ORCA_SUPPORT"] = str(self.root / "no-orca")
         os.environ["BW_CCSWITCH_DIR"] = str(self.root / "no-cc-switch")
@@ -424,6 +427,58 @@ class StartCase(unittest.TestCase):
     def test_dry_run_writes_no_registry(self):
         self.start(FakeRun(), dry_run=True)
         self.assertFalse(os.path.exists(os.path.join(self.state, "registry.json")))
+
+    def calls_of(self, run, **kw):
+        order = []
+        with mock.patch.object(seat_verify, "changed_seats", side_effect=lambda *a, **k: order.append("changed") or ["s1"]), \
+                mock.patch.object(start, "_workspace", side_effect=lambda *a, **k: order.append("workspace") or 0), \
+                mock.patch.object(seat_verify, "spawn_verify",
+                                  side_effect=lambda *a, **k: order.append("spawn") or True):
+            code, out = self.start(run, update=False, **kw)
+        return order, out
+
+    def test_lead_opens_before_seat_verify(self):
+        run = FakeRun()
+        order, out = self.calls_of(run)
+        self.assertEqual(order, ["changed", "workspace", "spawn"])
+        self.assertEqual([c for c in run.calls if "seat_readonly" in c[0][0]], [])  # no seat attack
+
+    def test_changed_seats_before_workspace(self):
+        order, _ = self.calls_of(FakeRun())
+        self.assertEqual(order.index("changed"), 0)
+        self.assertLess(order.index("changed"), order.index("workspace"))
+        self.assertLess(order.index("workspace"), order.index("spawn"))
+
+    def test_spawn_line(self):
+        _, out = self.calls_of(FakeRun())
+        self.assertIn("bw start: seats: verifying 1 in the background (s1); log: ", out)
+        self.assertIn("verify-log.txt", out)
+
+    def test_already_running(self):
+        with mock.patch.object(seat_verify, "changed_seats", return_value=["s1"]), \
+                mock.patch.object(seat_verify, "spawn_verify", return_value=False):
+            _, out = self.start(FakeRun(), update=False)
+        self.assertIn("bw start: seats: 1 unverified; a verify is already running", out)
+
+    def test_no_verify(self):
+        with mock.patch.object(seat_verify, "changed_seats", return_value=["s1"]), \
+                mock.patch.object(seat_verify, "spawn_verify") as sp:
+            _, out = self.start(FakeRun(), update=False, verify=False)
+        self.assertIn("bw start: seats: 1 unverified (--no-verify)", out)
+        sp.assert_not_called()
+
+    def test_nothing_changed(self):
+        with mock.patch.object(seat_verify, "changed_seats", return_value=[]), \
+                mock.patch.object(seat_verify, "spawn_verify") as sp:
+            _, out = self.start(FakeRun(), update=False)
+        self.assertNotIn("bw start: seats:", out)
+        sp.assert_not_called()
+
+    def test_dry_run_lists_seats(self):
+        with mock.patch.object(seat_verify, "changed_seats") as ch:
+            _, out = self.start(FakeRun(), dry_run=True)
+        ch.assert_not_called()
+        self.assertIn("bw start: seats: would verify s1 in the background", out)
 
     def test_quota_and_lead_lines(self):
         run = FakeRun()
