@@ -35,7 +35,10 @@ as files, bw-owned `inbox.jsonl`, the answers-only view), `ccswitch.py` (`bw set
 attack-tests a lead runtime (spends model quota; not part of `unittest discover`).
 `lead/guard/` holds `bw guard`: the broker, the lexer and rules, the thin pi and agy clients,
 the evidence record, review, and verification; `tests/attack/guard_attack.sh` attacks it
-(also spends model quota). `bw` must run from a checkout no lead edits. `tests/fixtures/` are synthetic — keep
+(also spends model quota). `seats/` holds `bw seat`: the adapters (`adapters.py`), the brief
+(`brief.py`), sessions and caps (`sessions.py`, `caps.py`), one run (`run.py`), verification
+state and the attack judge (`verify.py`, `judge.py`), and the command line (`cli.py`);
+`tests/attack/seat_readonly.sh` attacks it (also spends model quota). `bw` must run from a checkout no lead edits. `tests/fixtures/` are synthetic — keep
 them that way (privacy firewall). Commits use a lowercase summary with a `feat:`/`fix:`/
 `test:`/`docs:` prefix.
 

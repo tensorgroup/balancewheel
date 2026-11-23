@@ -101,15 +101,15 @@ python3 docs/usage-map/generate.py --open
 **Design repo, mid-extraction.** The reference implementation runs as the author's
 private tooling and is dogfooded daily. What is here: the full design, the rebuild guide,
 dated session handoffs, and the `metrics/` package (Python 3.9+, standard library only,
-tested). What is deliberately *not* here yet: the seat wrappers, the protocol prompts,
-and the driver launcher — those are rewritten clean-room once the criteria in
-[docs/roadmap.md](docs/roadmap.md) hold: design stable for about a month, no preview
-model id in any interface, no private paths or references, and one person other than
-the author has built the setup from this README alone.
+tested). `seats/` is here now, under the 2026-11-22 roadmap amendment. It is the Python
+runner behind `bw seat`: headless argv per runtime, the brief, per-directory sessions,
+caps and stand-ins, the OS sandbox for every seat, usage records, and attack-based
+verification. What is deliberately *not* here yet: the protocol prompts and the driver
+launcher. They wait for the criteria in [docs/roadmap.md](docs/roadmap.md): design stable
+for about a month, no preview model id in any interface, no private paths or references,
+and one person other than the author has built the setup from this README alone.
 
-Planned shape: `seats/` (a Python runner behind `bw seat`: headless argv per runtime, the
-brief, per-directory sessions, caps and stand-ins, the OS sandbox for every seat, usage
-records, and attack-based verification), `panel/` (templates **plus** the mechanics code
+Planned shape: `seats/` (here now), `panel/` (templates **plus** the mechanics code
 behind `bw panel` — the moderator stays whatever agent you already run), `metrics/` (here
 now), `packs/` (the export of one marked catalog block in esc's `model-seats` pack).
 
@@ -353,6 +353,9 @@ outside a git worktree it shows `bw status`.
     bw guard review          # audit the guard's stops and sampled allows, one evidence key at a time
     bw guard verify <rt>     # attack-test the guard on a runtime (pi) and record a pass
     bw guard install agy     # add the guard's entry to agy's hooks file (uninstall: bw guard uninstall agy)
+    bw seat list             # seats, their verification, and caps (the panel runs seats; you rarely run one)
+    bw seat <id> "prompt"    # run one read-only seat by hand
+    bw seat verify [<id>...] # attack-test each seat, fresh and resumed, and record a pass per seat id
     bw setup cc-switch       # write cc-switch's settings before its first launch (optional usage view)
 
 First time? See "Start leading" at the end of this section.
@@ -600,6 +603,24 @@ First time? See "Start leading" at the end of this section.
    tab), or `bw lead` starts it in the terminal you are in. Quit the
    lead to end the session; `bw guard review` later shows what a guarded lead's guard
    logged.
+6. **Seats.** You do not need `bw seat` in normal use: the panel runs the seats. `bw start`
+   checks changed seats in the background after the lead opens. It prints `bw: checking seats
+   in the background (log: <path>)`. `bw seat verify` does the same check by hand, and
+   `bw seat list` shows the state of each seat. Each seat has its own login step:
+   - **Claude seat.** The keychain login does not carry over to the seat's private home. Run
+     `claude setup-token` once. Export `CLAUDE_CODE_OAUTH_TOKEN` in the shell that runs `bw`.
+     Without it, the Claude seat is absent with a "no login" reason.
+   - **Codex seat.** It uses the real `~/.codex/auth.json`. The sandbox grants read and write
+     on that one file only.
+   - **agy seat.** It keeps the real home, because its login does not carry over. Only its own
+     `~/.gemini/antigravity-cli/` folder is writable. Its memory dirs (`knowledge`, `brain`,
+     `implicit`, `annotations`) are read-only. Residual risk: the seat can edit agy
+     conversation files. When the lead is agy, the panel leaves the agy seat out.
+   - **pi seat.** It needs `OPENROUTER_API_KEY` in the environment. OpenRouter is the only
+     backend for now.
+
+   A seat refuses a repo whose project files load code, unless the seat's own "ignore project
+   config" flags cover those files. The seat attack proves each flag with a positive control.
 
 ## Working with OpenEscapement
 

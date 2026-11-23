@@ -21,7 +21,9 @@ seat for deep panels and stuck debugging; updated 2026-11-20 when the Gemini sea
 Gemini 4 Neon and became the stand-in for the OpenAI and Kimi seats while their plans are capped,
 and a Gemini lead joined the lead order after the OpenAI lead (see Seat wrappers); updated
 2026-11-23 with the flags and event shapes of the five seat CLIs, checked on the installed versions,
-and the result that Seatbelt sandboxes do not nest (see Seat runtimes under `bw seat`).*
+and the result that Seatbelt sandboxes do not nest (see Seat runtimes under `bw seat`); updated
+2026-11-23 again: `bw seat` now does each seat wrapper step in this repo (step map in Seat
+wrappers), and the seat login outcomes are recorded.*
 
 ## The cast
 
@@ -198,6 +200,38 @@ JSONL → exit with the CLI's status. The moderator (Claude Code) drives seats t
 slash-command instructions that carry the panel protocol and the mandatory
 outcome-logging step.
 
+**`bw seat` does these steps now.** The `seats/` package in this repo does each wrapper step,
+for every seat, in Python. You can use it instead of a shell script. The panel calls it; you
+rarely run it by hand. The step map:
+
+| Wrapper step | Module |
+|---|---|
+| Headless argv, event parsing, answer and usage shapes | `seats/adapters.py` |
+| The pre-built seat brief | `seats/brief.py` |
+| Session id per target directory, one run at a time | `seats/sessions.py` |
+| Wall-clock cap, cap flags, stand-in seat | `seats/caps.py`, `seats/run.py` |
+| Private scratch dir, OS sandbox, env allowlist | `seats/run.py` with `lead/sandbox.py` |
+| The `usage` row in the metrics log | `seats/run.py` |
+| Attack-based verification, a pass per seat id | `seats/verify.py`, `seats/judge.py`, `tests/attack/seat_readonly.sh` |
+| `seat.sh`-style command line | `seats/cli.py` (`bw seat`) |
+
+Login outcomes, checked 2026-11-23:
+- **Claude seat.** The keychain login does not carry over to the seat's private home. Run
+  `claude setup-token` once and export `CLAUDE_CODE_OAUTH_TOKEN` in the shell that runs `bw`.
+  Without it, the Claude seat is absent with a "no login" reason.
+- **Codex seat.** It uses the real `~/.codex/auth.json`, granted read and write as that one file only.
+- **agy seat.** It keeps the real home, because its login does not carry over. Only its own
+  `~/.gemini/antigravity-cli/` folder is writable. Its memory dirs (knowledge, brain, implicit,
+  annotations) are read-only. Residual risk: it can edit agy conversation files. When the lead is
+  agy, the panel leaves the agy seat out.
+- **pi seat.** It needs `OPENROUTER_API_KEY` in the environment (OpenRouter only for now).
+
+`bw start` checks seats in the background after the lead opens (`bw: checking seats in the
+background (log: <path>)`). `bw seat list` shows the state of each seat.
+
+Hostile repos: a seat refuses a repo whose project files load code, unless the seat's own "ignore
+project config" flags cover them. The attack's positive control proves each flag.
+
 **The seat brief (`-b`, 2026-09-21).** One shared script builds it; each wrapper calls it only
 when starting a *new* session and replaces the prompt with brief + reading rule + task (a
 resumed session already carries it). What goes in, and the limits that keep it useful:
@@ -287,7 +321,7 @@ cover a CLI the user runs by hand, and the ignore file cannot stop the litter, o
 This section records the facts that the `bw seat` adapters use. Each fact was checked on the
 installed CLI on 2026-11-23. A mark follows each value: **h** = the CLI's `--help`, **d** = the
 vendor's docs or text built into the CLI, **o** = observed in a run, **u** = not checked here
-(the value comes from an earlier setup, or a run was not possible). The table has one column per
+(the value comes from an earlier version of the setup, or a run was not possible). The table has one column per
 runtime, so that it fits on a page. `none` means that the CLI has no such flag or file.
 
 Only shapes are recorded: event types and field names. No values from a run are recorded.
@@ -308,17 +342,17 @@ returned only the usage-limit error. The kimi column is therefore "help" plus th
 | Session id (event, field) | `thread.started`, `thread_id` o | every event, `session_id` (`system`/`init`, `result`) o | first line `session`, `id` o | `session.resume_hint`, `session_id` u | `init` and `result`, `conversation_id` o |
 | Config-dir env var | `CODEX_HOME` h | `CLAUDE_CONFIG_DIR` o | `PI_CODING_AGENT_DIR`; sessions `PI_CODING_AGENT_SESSION_DIR` h | `KIMI_CODE_HOME` u | none h |
 | Where the login lives | file `auth.json` in the config dir h,o | macOS keychain, one item per config dir o; a `.credentials.json` file in the config dir also works o | provider API key in env o; `auth.json` for OAuth providers h | file under `credentials/` in the config dir o | macOS keychain u |
-| "Ignore project config" flag | `--ignore-rules` (exec-policy rules only) h | `--setting-sources user` and `--strict-mcp-config` h | `--no-approve` h,d | none h | none h |
-| "Hooks off" flag | none h | `--safe-mode` h | `--no-extensions` h | none h | none h |
+| "Ignore project config" flag | `--ignore-rules` (exec-policy rules only; partial) h | `--setting-sources user` and `--strict-mcp-config` h | `--no-approve` h,d | none h | none h |
+| "Hooks off" flag | none h (partial) | `--safe-mode` h | `--no-extensions` h | none h | none h |
 | Own sandbox: on | `-s read-only` (resume: `-c sandbox_mode="read-only"`) h,o | none | none | none | `--sandbox` h |
 | Own sandbox: off | `--dangerously-bypass-approvals-and-sandbox` (new and resume) h | none | none | none | omit `--sandbox` h |
 | Project files it loads as code | `.codex/config.toml`, `.codex/hooks.json`, `.codex/skills`, `.rules` d | `.claude/settings.json`, `.claude/settings.local.json`, `.mcp.json`, `.claude/agents`, `.claude/commands`, `.claude/skills` d | `.pi/settings.json`, `.pi/extensions`, `.pi/skills`, `.pi/prompts`, `.pi/themes`, `.pi/SYSTEM.md`, `.pi/npm`, `.pi/git` d | `.kimi-code/mcp.json` u, `.kimi-code/skills` d | `.agents/hooks.json`, `.agents/plugins.json`, `.agents/plugins/`, `.agents/skills/`, `.agents/workflows/`, `.agents/agents/`, `.agents/rules/` d |
-| Session store under the real home | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` o | `~/.claude/projects/<cwd>/<id>.jsonl` o | `~/.pi/agent/sessions/--<cwd>--/` o | `~/.kimi-code/sessions/` o | `~/.gemini/antigravity-cli/conversations/<id>.db` and `brain/<id>/` o |
+| Session store under the real home | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` o | `~/.claude/projects/<cwd>/<id>.jsonl` o | `~/.pi/agent/sessions/--<cwd>--/` o | `~/.kimi-code/sessions/` u | `~/.gemini/antigravity-cli/conversations/<id>.db` and `brain/<id>/` o |
 | Error-line shape | events `error` and `turn.failed` u; stderr was empty o | `result` with `is_error`, `subtype`, `api_error_status` o (fields) | assistant `message_end` with `stopReason` `error` u; stderr `Warning:` lines are not errors o | stderr `error: failed to run prompt: provider.api_error: 429 …`, exit 1 o | `result.status` other than `SUCCESS` o (field) |
 | Prompt echo, and where | none with `--json` and a stdin prompt o | none o | stdout: `message_start`, `message_end`, `agent_end` with `role` `user` o | u | none (the `user_input` step has no text) o |
-| Headless tool-permission flag (R19) | `--dangerously-bypass-approvals-and-sandbox` h | `--permission-mode bypassPermissions` h,o | none (no approval prompts) h | `--auto` h | `--dangerously-skip-permissions` h,o |
+| Headless tool-permission flag | `--dangerously-bypass-approvals-and-sandbox` h | `--permission-mode bypassPermissions` h,o | none (no approval prompts) h | `--auto` h | `--dangerously-skip-permissions` h,o |
 | Env keys it needs | none | none (or `CLAUDE_CODE_OAUTH_TOKEN`, see below) o | the provider key, for OpenRouter `OPENROUTER_API_KEY` h,o | none | none |
-| Credential file it refreshes in place (R11) | `auth.json` (it holds a refresh token) o | `.credentials.json` when the login is a file u; none with a token o | none for an API key o | the JSON file under `credentials/` (it holds a refresh token) o | none (keychain) u |
+| Credential file it refreshes in place | `auth.json` (it holds a refresh token) o | `.credentials.json` when the login is a file u; none with a token o | none for an API key o | the JSON file under `credentials/` (it holds a refresh token) o | none (keychain) u |
 | Answer (final text) | last `item.completed` with `item.type` `agent_message`, field `item.text` o | `result.result` o | last assistant `message_end`, `content[].text` o | u | `result.response` o |
 | Token counts | `turn.completed.usage` (`input_tokens`, `output_tokens`, more) o | `result.usage`, `result.total_cost_usd` o | assistant `message_end` `usage` (`input`, `output`, `cost.total`) o | u | `result.usage` (`input_tokens`, `output_tokens`, more) o |
 | Rate limits in the stream | none o | `rate_limit_event`, `rate_limit_info` o | none o | u | none o |
@@ -329,20 +363,20 @@ sandbox-exec nests: no
 
 nono nests sandbox-exec: no
 
-The plan's check, two `(allow default)` profiles one inside the other, exits 0. That result is
+A quick check, two `(allow default)` profiles one inside the other, exits 0. That result is
 misleading. When the outer profile or the inner profile has one rule, the inner `sandbox_apply`
 fails with "Operation not permitted" and exit 71. A rule can be a deny on a path, a port, a Mach
 service, or `process-exec`. A real seat profile always has rules, so nesting does not work. `nono run`
 over `sandbox-exec` fails in the same way. Inside `bw sandbox`, turn off every vendor sandbox that
 uses Seatbelt: Codex runs with `--dangerously-bypass-approvals-and-sandbox`, and agy runs without
 `--sandbox`. The `inner_sandbox` field holds those "off" flags. `bw sandbox` is then the only
-enforcer, as the spec already requires.
+enforcer, as the design requires.
 
 **codex.** `codex exec resume` has no `-s`, `-C`, or `-p` flag. A resume therefore cannot set the
 sandbox with `-s`, and it cannot set the target with `-C`: run it from the target directory. The flag
 `--dangerously-bypass-approvals-and-sandbox` exists on both paths, so one flag sets the same state
 on a new run and on a resume. No `-c` key can be renamed under it.
-With `--json` and the prompt on stdin, stderr stayed empty. The earlier setup saw the prompt echo
+With `--json` and the prompt on stdin, stderr stayed empty. An earlier version of the setup saw the prompt echo
 on stderr without `--json`, so match usage-limit words only on error events. A resume returns the
 same `thread_id`. The exec stream has no rate-limit event, so Codex rate limits do not come from a
 seat run. `--ignore-user-config` skips `config.toml` in `CODEX_HOME` but keeps the login there.
@@ -363,10 +397,10 @@ and `auth status`:
   long-lived and is never refreshed, so no credential file is written. The adapter declares
   `CLAUDE_CODE_OAUTH_TOKEN` in `env_keys`, and the backend can be `any`.
 
-The recommendation is the token. That is a decision for the moderator (R11). `--bare` also skips
+The recommendation is the token. `--bare` also skips
 hooks, but it reads only `ANTHROPIC_API_KEY`, so a plan login does not work with it. `--safe-mode`
 turns off hooks, CLAUDE.md, MCP servers, plugins, skills, and agents, and keeps auth and the
-built-in tools. Unset `CLAUDECODE` before the run, as the earlier setup did. A resume returns the
+built-in tools. Unset `CLAUDECODE` before the run. A resume returns the
 same `session_id`. The `-p` mode skips the workspace trust dialog.
 
 **pi.** pi echoes the prompt on stdout as a `user` message, so the error matcher must skip
@@ -382,15 +416,15 @@ that names the brief file. The usage-limit error is one stderr line that starts 
 to run prompt: provider.api_error: 429`, then a `See log:` line, and exit 1. stdout holds only a
 `system.version` event. Run one OK prompt when the plan resets, and record the session, answer, and
 usage shapes before the kimi fixtures are final. `--auto` is "Never Ask" mode; `--yolo` still asks
-for risky actions. The earlier setup found that Kimi Code ignores its own deny rules in `-p` mode.
+for risky actions. Kimi Code ignores its own deny rules in `-p` mode.
 
 **agy.** The event key is `event`, not `type`. `--effort` exists (`low` to `max`), so the agy
 adapter can take an effort flag. agy has no documented config-dir variable. The binary holds the name
-`ANTIGRAVITY_CONFIG_REL_DIR`, but that variable was not tested. The earlier setup found that a
+`ANTIGRAVITY_CONFIG_REL_DIR`, but that variable was not tested. A
 private `HOME` sends agy to a browser login. So agy cannot have a seat-owned config dir on 1.5.13:
 it runs on the real `~/.gemini` with backend `sandbox-exec`, and its writes go to
 `~/.gemini/antigravity-cli/`. That conflicts with the rule that a seat never writes a lead runtime's
-home. It is a decision for the moderator (R11). Project hooks in `.agents/hooks.json` load after the
+home, so only that folder is writable (see Seat wrappers). Project hooks in `.agents/hooks.json` load after the
 user trusts the folder. Directory rules (`GEMINI.md`, `AGENTS.md`) load as prompt text, not as code.
 
 Checked again on agy 1.5.15 (2026-11-23), with no model call:
@@ -406,7 +440,7 @@ Checked again on agy 1.5.15 (2026-11-23), with no model call:
   an agy lead's conversation. Other seats cannot read these three paths: they are lead session
   stores, and every other seat profile denies reads of them.
 - No run has confirmed that agy still works with the memory dirs read-only. The seat attack
-  (Task 13) must confirm it, on a fresh run and on a resume.
+  attack must confirm it, on a fresh run and on a resume.
 - `--model <variant id> --effort <other level>` fails before the model call: "conflicts with
   --effort". The help text says `--model` also takes a base model name, and `--effort` then picks the
   variant. The config takes only a model id for agy, so the seat adapter passes no `--effort`.
