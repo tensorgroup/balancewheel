@@ -107,9 +107,11 @@ and the driver launcher — those are rewritten clean-room once the criteria in
 model id in any interface, no private paths or references, and one person other than
 the author has built the setup from this README alone.
 
-Planned shape: `seats/` (wrapper generator), `panel/` (the protocol as instruction-file
-templates — the moderator stays whatever agent you already run), `metrics/` (here now),
-`packs/` (seat policy exported as OpenEscapement rule packs).
+Planned shape: `seats/` (a Python runner behind `bw seat`: headless argv per runtime, the
+brief, per-directory sessions, caps and stand-ins, the OS sandbox for every seat, usage
+records, and attack-based verification), `panel/` (templates **plus** the mechanics code
+behind `bw panel` — the moderator stays whatever agent you already run), `metrics/` (here
+now), `packs/` (the export of one marked catalog block in esc's `model-seats` pack).
 
 ## What gets installed, and where
 

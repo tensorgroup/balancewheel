@@ -8,6 +8,8 @@ the metrics loop rewritten clean-room with a dashboard that shows change over ti
 Roadmap criterion 4 (a second user runs setup from README alone) is exercised by a
 real second user during this work.*
 
+*Amended 2026-11-22: `bin/seat` (bash) is replaced by `bw seat` (Python); its duties carry over; seat verification moves to `bw seat verify` and `bw start`, stored per seat id. See `2026-11-22-seats-panel-guard-packs-design.md`.*
+
 ## Goals
 
 1. **A second user can replicate the panel from README alone.** They list the models

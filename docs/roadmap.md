@@ -35,17 +35,17 @@ commands, launchd sync, local dashboard). Goals of this phase:
 
 ## Planned shape
 
-- `seats/` — wrapper generator: given a vendor CLI + model + read-only profile,
-  emit the uniform `seat.sh` interface (new/resume, per-dir sessions, usage logging,
-  scratch-dir hygiene).
-- `panel/` — the protocol as instruction-file templates (moderator rules, substance
-  bar, logging schema) rather than code: the moderator is whatever primary agent the
-  user already runs.
+- `seats/` — a Python runner behind `bw seat`: headless argv per runtime, the brief,
+  per-directory sessions, caps and stand-ins, the OS sandbox for every seat, usage records,
+  and attack-based verification.
+- `panel/` — templates **plus** the mechanics code behind `bw panel`. The templates cover the
+  moderator rules, the substance bar, and the logging schema. The moderator stays whatever
+  primary agent the user already runs.
 - `metrics/` — JSONL schema, validator, dashboard generator.
 - `setup/` — *(landed 2026-09-16, ahead of the gate: it is install hygiene, not the
   seat implementation)* the list of home-directory paths a setup touches, and the
   backup/restore scripts around it.
-- `packs/` — seat policies exported as OpenEscapement rule packs (the governance
+- `packs/` — the export of one marked catalog block in esc's `model-seats` pack (the governance
   hand-off: balancewheel generates and justifies policy; esc distributes it). The first
   pack, `model-seats`, shipped in esc's `examples/packs/` on 2026-09-16, written by hand
   from this repo's seat policy: duties per seat, the substance bar, wall-clock
@@ -64,6 +64,19 @@ Leads and rotation (build-order step 2 of the 2026-10-24 design) are built here,
 before a second user has run the setup. Reason: they are what a second user needs most, and
 the author's own setup becoming `bw`'s first consumer is the dogfood. The privacy firewall is
 unchanged.
+
+## Amendment (2026-11-22): `seats/`, `panel/`, and `packs/` land before criterion 4
+
+The seat runner, the panel mechanics and templates, and the pack export are built here, clean-room,
+before a second user has run the setup. Reason: they make the setup usable without the author's
+private wrappers, so a second user can only run it once they exist. The author's own setup becomes
+their first consumer, as it did for `lead/` and `bin/bw`. The privacy firewall is unchanged: no
+wrapper, instruction file, or log record is copied from the private implementation, and every fixture
+is synthetic. Criterion 4 still gates the first tagged release that calls the extraction complete.
+
+The "Planned shape" bullets above changed in the same commit. `seats/` is a Python runner behind
+`bw seat`, not a wrapper generator. `panel/` is templates plus the mechanics code. `packs/` is the
+export of one marked catalog block.
 
 ## Non-goals
 
