@@ -26,6 +26,7 @@ SeatResult = namedtuple("SeatResult",
     "tokens_in tokens_out cost_usd rate_limits answer")
 REFUSED = 75
 TIMEOUT = 124
+INTERRUPTED = 143  # 128 + SIGTERM
 REASON_MAX = 200
 READING_RULE = ("## Reading rule\n\nOpen a file only to verify a claim, follow a caller, or read what the task "
                 "names. Do not survey the repository.")
@@ -161,27 +162,36 @@ class _Run:
         lock = locks.RuntimeLock(self.state, self.runtime)
         try:
             lock.shared()
-            if not (self.opts["attack"] and verify.check_token(self.state, self.seat, self.now())):
-                if not verify.is_verified(self.config, self.state, self.seat, self.run):
-                    key = verify.seat_key(self.config, self.state, self.seat, self.run)
-                    if key.get("runtime_version") == "unreadable":
-                        return self.refuse(f"unverified: {self.runtime} version unreadable")
-                    return self.refuse("unverified")
-            return self.target()
+            try:
+                # The home and its code dirs exist before any seat key reads the hook manifests
+                # (verify.seat_home makes them; it raises OSError on a tampered home).
+                safe_home(self.state, self.seat)
+                why = self.unverified()
+            except (Tampered, OSError) as e:
+                return self.refuse(f"sandbox: seat home tampered: {safe(e)}")
+            return self.refuse(why) if why else self.target()
         finally:
             lock.release()
 
+    def unverified(self):
+        """The refusal reason when the seat has no pass on its current key, else None."""
+        if self.opts["attack"] and verify.check_token(self.state, self.seat, self.now()):
+            return None
+        if verify.is_verified(self.config, self.state, self.seat, self.run):
+            return None
+        key = verify.seat_key(self.config, self.state, self.seat, self.run)
+        if key.get("runtime_version") == "unreadable":
+            return f"unverified: {self.runtime} version unreadable"
+        return "unverified"
+
     def target(self):
-        """Step 4: the worktree, the hostile-repo check, and the per-seat, per-directory lock."""
+        """Step 4: the worktree and the per-seat, per-directory lock. The hostile-repo check needs the
+        run's argv, so it runs in `execute`, before the CLI starts."""
         try:
             project = resolve_project(self.where, self.config, self.run)
         except ValueError:
             return self.refuse("refused: not a git worktree")
         wt = project.worktree
-        hostile = self.adapter.project_code(wt)
-        if hostile:
-            name = safe(os.path.relpath(hostile[0], wt))
-            return self.refuse(f"hostile: {name} loads code for {self.runtime}", wt)
         try:
             with sessions.run_lock(self.state, self.seat, wt):
                 return self.home(project)
@@ -194,7 +204,7 @@ class _Run:
         try:
             home = safe_home(self.state, self.seat)
             _link_credentials(home, self.adapter.credentials)
-            adapters.make_code_dirs(self.runtime, home)
+            adapters.make_code_dirs(self.runtime, home)  # again: an attack run skips the seat key
         except (Tampered, OSError) as e:
             return self.refuse(f"sandbox: seat home tampered: {safe(e)}", wt)
         try:
@@ -213,7 +223,7 @@ class _Run:
             sid = sessions.get(self.state, self.seat, wt, self.s["model"])
             if sid is None:
                 self.say(f"bw seat: no session for {self.seat} in {safe(wt)}; starting a new one")
-        return sid if adapters.valid_session(sid) else None
+        return sid if adapters.valid_session(sid) else None  # run_seat refuses an invalid explicit id
 
     def brief_text(self, wt):
         if self.opts["brief_file"]:
@@ -235,8 +245,12 @@ class _Run:
         deep = self.opts["deep"]
         argv = (self.adapter.resume_argv(self.s, sid, input_path, deep) if sid
                 else self.adapter.argv(self.s, input_path, deep))
+        hostile = self.adapter.project_code(wt, argv)  # only files this argv's ignore flags do not cover
+        if hostile:
+            name = safe(os.path.relpath(hostile[0], wt))
+            return self.refuse(f"hostile: {name} loads code for {self.runtime}", wt)
 
-        rg = self.adapter.grants(self.s, home)
+        rg =self.adapter.grants(self.s, home)
         backend = "sandbox-exec" if self.adapter.backend == "sandbox-exec" else sandbox.backend()
         home_dir = home if rg.private_home else os.path.expanduser("~")
         env = sandbox.seat_env(os.environ, keep=self.adapter.env_keys)
@@ -257,14 +271,14 @@ class _Run:
             with open(input_path, encoding="utf-8") as stdin:
                 r = self.run(full, cap_s, cwd=wt, env=env, stdin=stdin, out_dir=scratch)
         except (KeyboardInterrupt, SystemExit):
-            self.finish(False, "interrupted", None, sid, mode, wt, round(self.now() - start, 1), {}, "")
+            self.finish(False, "interrupted", INTERRUPTED, sid, mode, wt, round(self.now() - start, 1), {}, "")
             raise
         finally:
             cleanup()
         duration = round(self.now() - start, 1)
-        return self.parse(r, text, sid, mode, wt, duration)
+        return self.parse(r, sid, mode, wt, duration)
 
-    def parse(self, r, text, sid, mode, wt, duration):
+    def parse(self, r, sid, mode, wt, duration):
         """Step 8 and 9: read the run with the adapter and append its row."""
         out_l, err_l = r.out.splitlines(), r.err.splitlines()
         if self.opts["transcript"]:
@@ -284,7 +298,10 @@ class _Run:
             if new_sid:
                 sessions.put(self.state, self.seat, wt, new_sid, self.s["model"], self.now())
             return self.finish(True, "ok", 0, new_sid, mode, wt, duration, usage, answer)
-        echo = {line.strip() for line in text.splitlines() if line.strip()}
+        # The vendor's echo of the prompt is not an error. Only the task and the reading rule count as
+        # echo: a brief's diff that holds a usage-limit line must not hide a real cap.
+        echo = {line.strip() for line in "\n".join([self.prompt, READING_RULE, TASK_HEADING]).splitlines()
+                if line.strip()}
         errors = [e for e in self.adapter.errors(out_l, err_l) if e.strip() not in echo]
         if self.adapter.usage_limit(errors):
             caps.arm(self.state, self.seat, self.now(), self.config["rotation"]["cap_expiry_hours"])
@@ -306,6 +323,8 @@ def run_seat(config, state, seat, prompt, *, target=None, brief=False, brief_fil
     attempt = _Run(config, state, seat, prompt, where, opts, run, now, say, _standin_for)
     if not s.get("enabled", True):
         return attempt.refuse("disabled")
+    if session_id is not None and not adapters.valid_session(session_id):
+        return attempt.refuse("refused: invalid session id")
     can_stand_in = (fallback and _standin_for is None and not os.environ.get("BW_SEAT_STANDIN")
                     and s.get("fallback") in config["seats"])
 

@@ -44,11 +44,15 @@ def seat_items(config) -> list:
     return [n for n in seats if n in want]
 
 
-def seat_home(state, seat) -> str:
-    """`state_dir/seats/homes/<seat>`, created 0700."""
+def seat_home(state, seat, runtime=None) -> str:
+    """`state_dir/seats/homes/<seat>`, created 0700. With `runtime`, the runtime's code dirs are made
+    in it too, before any seat key reads the hook manifests, so verify, run, and the attack all see
+    the same key. Raises OSError when the home was tampered with (adapters.make_code_dirs)."""
     home = os.path.join(state, "seats", "homes", seat)
     os.makedirs(home, mode=0o700, exist_ok=True)
     os.chmod(home, 0o700)
+    if runtime:
+        adapters.make_code_dirs(runtime, home)
     return home
 
 
@@ -68,7 +72,7 @@ def seat_key(config, state, seat, run=proc.run) -> dict:
     key = containment.verification_key(s["runtime"], adapter.version_argv, backend, run,
                                        sandbox.denied_ports(config))
     del key["adapter_sha"]  # lead/runtimes.py is not seat code: a lead adapter change keeps seat passes
-    home = seat_home(state, seat)
+    home = seat_home(state, seat, s["runtime"])
     key.update({"seat": seat, "model": s["model"], "effort": adapters.effort(s, False), "args": list(s.get("args", [])),
                 "seat_adapter_sha": containment.sha_file(os.path.join(HERE, "adapters.py")),
                 "hook_files": {p: _manifest(p) for p in sorted(adapter.hook_files(home))}})

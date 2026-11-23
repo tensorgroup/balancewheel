@@ -23,6 +23,9 @@ SeatAdapter = namedtuple("SeatAdapter",
     "argv resume_argv session_id usage_limit usage answer errors grants home_env credentials "
     "hook_files project_code inner_sandbox backend version_argv prompt_via ignore_flags env_keys tool_results "
     "state_dirs")
+# project_code(target, argv=()): the hostile project files present that `argv` would load. A file the
+# argv's ignore flags neutralize is not reported (ruling H-ignore); with no argv, every present file
+# is reported (fail closed).
 # state_dirs: the CLI's own state dirs under the user's home that the seat writes, for a runtime that
 # cannot run on a private home (agy). They go to lead.sandbox.seat_grants(..., state_dirs=...).
 
@@ -235,7 +238,7 @@ CODEX = SeatAdapter(
     home_env=lambda seat_home: {"CODEX_HOME": seat_home},
     credentials=[(_codex_login(), "auth.json", True)],  # auth.json holds a refresh token (R11)
     hook_files=lambda seat_home: [os.path.join(seat_home, n) for n in CODEX_CODE],
-    project_code=lambda target: _present(target, CODEX_PROJECT_CODE),
+    project_code=lambda target, argv=(): _present(target, CODEX_PROJECT_CODE),
     inner_sandbox=CODEX_INNER,
     backend="any",
     version_argv=["codex", "--version"],
@@ -362,9 +365,36 @@ def _claude_settings_run_code(path):
     return not isinstance(data, dict) or any(k in data for k in CLAUDE_CODE_KEYS)
 
 
-def _claude_project_code(target):
+def _flag_values(argv, flag):
+    return [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == flag]
+
+
+def _claude_user_settings_only(argv):
+    """True when argv has at least one `--setting-sources` and each one names `user` only."""
+    values = _flag_values(argv, "--setting-sources")
+    return bool(values) and all(set(v.split(",")) == {"user"} for v in values)
+
+
+def _has(flag):
+    return lambda argv: flag in argv
+
+
+# The flag that neutralizes each project file (ruling H-ignore). A name not listed here is always
+# reported: `.claude/commands` is in no flag's documented scope, so it fails closed.
+CLAUDE_COVERS = {
+    ".claude/settings.json": _claude_user_settings_only,
+    ".claude/settings.local.json": _claude_user_settings_only,
+    ".mcp.json": _has("--strict-mcp-config"),
+    ".claude/agents": _has("--safe-mode"),
+    ".claude/skills": _has("--safe-mode"),
+}
+
+
+def _claude_project_code(target, argv=()):
     found = [p for p in _present(target, CLAUDE_PROJECT_SETTINGS) if _claude_settings_run_code(p)]
-    return found + _present(target, [".mcp.json"] + CLAUDE_PROJECT_DIRS)
+    found += _present(target, [".mcp.json"] + CLAUDE_PROJECT_DIRS)
+    argv = list(argv)
+    return [p for p in found if not CLAUDE_COVERS.get(os.path.relpath(p, target), lambda a: False)(argv)]
 
 
 CLAUDE = SeatAdapter(
@@ -472,7 +502,9 @@ PI = SeatAdapter(
     home_env=lambda seat_home: {"PI_CODING_AGENT_DIR": seat_home},
     credentials=[],  # an API key in the env; auth.json is for OAuth providers only
     hook_files=lambda seat_home: [os.path.join(seat_home, n) for n in PI_CODE],
-    project_code=lambda target: _present(target, PI_PROJECT_CODE),
+    # PI_IGNORE covers every .pi/ name (ruling H-ignore) only when all its flags are on the argv.
+    project_code=lambda target, argv=(): ([] if all(f in argv for f in PI_IGNORE)
+                                          else _present(target, PI_PROJECT_CODE)),
     inner_sandbox=[],
     backend="any",
     version_argv=["pi", "--version"],
@@ -548,7 +580,7 @@ KIMI = SeatAdapter(
     home_env=lambda seat_home: {"KIMI_CODE_HOME": seat_home},
     credentials=_kimi_logins(os.environ.get("KIMI_CODE_HOME") or os.path.expanduser("~/.kimi-code")),
     hook_files=lambda seat_home: [os.path.join(seat_home, n) for n in KIMI_CODE],
-    project_code=lambda target: _present(target, KIMI_PROJECT_CODE),
+    project_code=lambda target, argv=(): _present(target, KIMI_PROJECT_CODE),
     inner_sandbox=[],
     backend="any",
     version_argv=["kimi", "--version"],
@@ -655,7 +687,7 @@ AGY = SeatAdapter(
     home_env=lambda seat_home: {},
     credentials=[],  # the login is in the keychain
     hook_files=lambda seat_home: [os.path.join(_agy_state(), n) for n in AGY_CODE] + _agy_config(),
-    project_code=lambda target: _present(target, AGY_PROJECT_CODE),
+    project_code=lambda target, argv=(): _present(target, AGY_PROJECT_CODE),
     inner_sandbox=[],  # vendor sandbox off: omit --sandbox
     backend="sandbox-exec",
     version_argv=["agy", "--version"],

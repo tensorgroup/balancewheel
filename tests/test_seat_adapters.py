@@ -388,6 +388,32 @@ class ClaudeCode(unittest.TestCase):
             os.symlink(os.path.join(d, "missing"), os.path.join(d, ".claude", "settings.json"))
             self.assertEqual(self.ad.project_code(d), [os.path.join(d, ".claude", "settings.json")])
 
+    def test_project_code_ignore_flags_cover(self):  # ruling H-ignore: per-file coverage
+        argv = self.ad.argv({"runtime": "claude-code", "model": "m"}, "/in", False)
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, ".claude", "agents"))
+            os.makedirs(os.path.join(d, ".claude", "skills"))
+            os.makedirs(os.path.join(d, ".claude", "commands"))
+            Path(d, ".claude", "settings.json").write_text(json.dumps({"hooks": {}}))
+            Path(d, ".claude", "settings.local.json").write_text(json.dumps({"env": {}}))
+            Path(d, ".mcp.json").write_text("{}")
+            # commands: no flag's documented scope covers it, so it stays reported (fail closed)
+            self.assertEqual(self.ad.project_code(d, argv), [os.path.join(d, ".claude", "commands")])
+            for flag, names in (("--strict-mcp-config", [".mcp.json"]),
+                                ("--safe-mode", [".claude/agents", ".claude/skills"])):
+                less = [a for a in argv if a != flag]
+                got = self.ad.project_code(d, less)
+                for n in names:
+                    self.assertIn(os.path.join(d, n), got, flag)
+            sources = argv.index("--setting-sources")
+            for value in ("user,project", "local"):
+                other = argv[:sources + 1] + [value] + argv[sources + 2:]
+                self.assertIn(os.path.join(d, ".claude", "settings.json"), self.ad.project_code(d, other), value)
+            no_sources = argv[:sources] + argv[sources + 2:]
+            self.assertIn(os.path.join(d, ".claude", "settings.local.json"), self.ad.project_code(d, no_sources))
+            twice = argv + ["--setting-sources", "project"]  # a later override fails closed
+            self.assertIn(os.path.join(d, ".claude", "settings.json"), self.ad.project_code(d, twice))
+
     def test_static_fields(self):
         self.assertEqual(self.ad.version_argv, ["claude", "--version"])
         self.assertEqual(self.ad.inner_sandbox, [])
@@ -744,6 +770,14 @@ class PiProject(unittest.TestCase):
     def test_pi_project_extensions(self):
         (self.target / ".pi/extensions").mkdir(parents=True)
         self.assertEqual(adapters.SEAT_ADAPTERS["pi"].project_code(str(self.target)), [str(self.target / ".pi/extensions")])
+
+    def test_pi_ignore_flags_cover(self):  # ruling H-ignore: all of PI_IGNORE covers .pi/*
+        (self.target / ".pi/extensions").mkdir(parents=True)
+        pi = adapters.SEAT_ADAPTERS["pi"]
+        argv = pi.argv({"runtime": "pi", "model": "m"}, "/in", False)
+        self.assertEqual(pi.project_code(str(self.target), argv), [])
+        partial = [a for a in argv if a != "--no-extensions"]
+        self.assertEqual(pi.project_code(str(self.target), partial), [str(self.target / ".pi/extensions")])
 
 
 class Registry(unittest.TestCase):

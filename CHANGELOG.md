@@ -42,7 +42,9 @@ not against the prose.
   last failed probe per seat goes to `state_dir/seats/failures.json`. A later failure under the same key
   revokes the pass. bw now writes `state_dir/seats.json`.
 - **One seat run** (`seats/run.py`): brief, sessions, the OS sandbox for every seat, caps, one-hop
-  stand-ins, and `usage` rows with `ran`, `stand_in_for`, and `session_id`.
+  stand-ins, and `usage` rows with `ran`, `stand_in_for`, and `session_id`. A seat refuses a hostile
+  project file only when its argv's ignore flags do not cover that file (`project_code(target, argv)`).
+  The seat home's code dirs are made before any seat key is read, so a run keeps the seat's pass.
 
 ### Fixed
 

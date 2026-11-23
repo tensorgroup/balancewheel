@@ -116,10 +116,33 @@ class SeatRun(unittest.TestCase):
             self._pass(seat)
 
     def _pass(self, seat):
-        rt = self.config["seats"][seat]["runtime"]
-        adapters.make_code_dirs(rt, verify.seat_home(self.state, seat))
+        """A pass on a fresh home: no code dirs are made before the key (the seat key makes them)."""
         key = verify.seat_key(self.config, self.state, seat, run=self.fake)
         containment.record_pass(self.state, seat, key, "/ev", store="seat-verify.json")
+        return key
+
+    def test_pass_on_fresh_home_survives_runs(self):
+        import shutil
+        shutil.rmtree(os.path.join(self.state, "seats", "homes", "astra"))
+        os.remove(os.path.join(self.state, "seat-verify.json"))
+        key = self._pass("astra")
+        self.assertTrue(self.seat().ok)
+        self.assertTrue(self.seat().ok)  # the first run did not change the key
+        self.assertEqual(verify.seat_key(self.config, self.state, "astra", run=self.fake), key)
+
+    def test_brief_diff_does_not_hide_cap(self):
+        line = "ERROR: You have hit your usage limit."
+        Path(self.wt, "README.md").write_text(f"# repo\n{line}\n")  # in the brief's diff, not in the prompt
+        self.fake.queue("codex", Result(1, "", f"user\n{line}\n", False))
+        r = self.seat(brief=True, fallback=False)
+        self.assertIn(line, self.fake.stdin)
+        self.assertEqual(r.reason, "usage cap")
+        self.assertIsNotNone(caps.read(self.state, "astra", time.time()))
+
+    def test_invalid_session_id_refused(self):
+        r = self.seat(session_id="bad id;x")
+        self.assertEqual((r.exit_code, r.reason, r.ran), (75, "refused: invalid session id", False))
+        self.assertIsNone(self.fake.argv)
 
     def usage(self):
         if not os.path.exists(self.log):
@@ -385,11 +408,30 @@ class SeatRun(unittest.TestCase):
         self.assertEqual((r.exit_code, r.reason, r.ok, r.ran), (124, "timeout", False, True))
         self.assertEqual(self.usage()[-1]["reason"], "timeout")
 
-    def test_hostile_repo_refused(self):
+    def test_hostile_covered_by_ignore_flag_runs(self):  # ruling H-ignore
         Path(self.wt, ".mcp.json").write_text("{}")
         r = self.seat("opus")
-        self.assertEqual((r.exit_code, r.reason), (75, "hostile: .mcp.json loads code for claude-code"))
+        self.assertTrue(r.ok, r.reason)
+        self.assertIn("--strict-mcp-config", self.fake.argv)
+
+    def test_hostile_repo_refused(self):  # a file no ignore flag on the argv covers
+        os.makedirs(os.path.join(self.wt, ".claude", "commands"))
+        r = self.seat("opus")
+        self.assertEqual((r.exit_code, r.reason), (75, "hostile: .claude/commands loads code for claude-code"))
         self.assertIsNone(self.fake.argv)
+
+    def test_hostile_refused_without_ignore_flag(self):
+        self.config["seats"]["opus"]["args"] = ["--setting-sources", "user,project"]
+        self._pass("opus")  # args are in the seat key
+        os.makedirs(os.path.join(self.wt, ".claude"))
+        Path(self.wt, ".claude", "settings.json").write_text(json.dumps({"hooks": {}}))
+        r = self.seat("opus")
+        self.assertEqual(r.reason, "hostile: .claude/settings.json loads code for claude-code")
+
+    def test_hostile_codex_always_refused(self):  # codex has no ignore flags
+        os.makedirs(os.path.join(self.wt, ".codex"))
+        Path(self.wt, ".codex", "config.toml").write_text("x = 1\n")
+        self.assertEqual(self.seat().reason, "hostile: .codex/config.toml loads code for codex")
 
     def test_env_allowlist(self):  # R13
         with mock.patch.dict(os.environ, {"OTHER_API_KEY": "x", "BW_PANEL": "1", "LC_ALL": "C"}):
@@ -452,9 +494,11 @@ class SeatRun(unittest.TestCase):
         self.assertEqual(self.scratch_dirs(), before)
         self.assertTrue(lock_free(self.state, "codex"))
         self.fake.raise_ = SystemExit(143)
-        with self.assertRaises(SystemExit):
+        with mock.patch("seats.run._row", wraps=run._row) as row_of, self.assertRaises(SystemExit):
             self.seat()
         self.assertEqual(self.usage()[-1]["reason"], "interrupted")
+        result = row_of.call_args[0][0]
+        self.assertEqual((result.reason, result.exit_code), ("interrupted", 143))
 
     def test_out_and_transcript(self):
         out, tr = os.path.join(self.tmp.name, "answer.md"), os.path.join(self.tmp.name, "t.txt")
