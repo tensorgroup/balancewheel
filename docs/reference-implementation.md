@@ -506,6 +506,10 @@ before each `run_command`, so a read-only `bin` stops every shell command. A fil
 the seat's own next run, under the same sandbox. agy's SQLite resolves the real path of its dir, and
 that needs a metadata read of each dir from bw's state dir down to the seat home. So every seat
 profile allows `file-read-metadata` (not a listing) on those nodes, and on the seat scratch root.
+The live seat attack then passed on the agy seat, fresh and resumed: its shell commands ran, and
+each of the 42 probes got an OS denial in bw's own re-run. The pi and codex seats passed the same
+attack. The attack asks the model for the in-repo probes only: with the full list of reads outside the
+repo, the pi seat's model refused the whole prompt, control included.
 
 Checked again on agy 1.5.15 (2026-11-23), with no model call:
 - A run with `HOME` set to an empty seat home returned a `result` event with `status` `ERROR` and
