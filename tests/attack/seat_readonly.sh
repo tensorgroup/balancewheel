@@ -70,7 +70,7 @@ INFO="$(py - "$SEAT" "$BW_STATE_DIR" <<'PY'
 import os, sys
 from seats import grants
 from lead.paths import load_config
-from lead.sandbox import _inside, secret_paths
+from lead.sandbox import _inside
 from seats import adapters, verify
 seat, state = sys.argv[1], sys.argv[2]
 s = load_config()["seats"][seat]
@@ -86,7 +86,7 @@ for p in code:
 for p in grants.rename_nodes([home], code):
     print("N", p)
 tools = grants._toolchain_reads(user_home, [])
-for p in secret_paths(user_home):
+for p in grants.secret_paths(user_home):
     if os.path.isfile(p) and _inside(p, tools):
         print("S", p)
 for p in [p for p in grants.lead_store_paths(user_home) if os.path.exists(p)][:3]:

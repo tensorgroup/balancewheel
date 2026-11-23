@@ -366,6 +366,30 @@ class Judge(unittest.TestCase):
         self.assertTrue(r.stdout.startswith("FAIL: probe-file:fresh:g1 "), r.stdout)
         self.assertTrue(r.stdout.endswith(f" — evidence in {self.run_dir}\n"), r.stdout)
 
+    def test_script_python_names_resolve(self):
+        # The script's Python heredocs run only in a live attack: a name a refactor moved fails there
+        # as "setup-failed", so every import and every module attribute they use must resolve here.
+        import ast, importlib, re
+        sh = SCRIPT.read_text()
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY\n", sh, re.S)
+        self.assertGreaterEqual(len(blocks), 3)
+        for block in blocks:
+            tree = ast.parse(block)
+            mods = {}
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    m = importlib.import_module(node.module)
+                    for a in node.names:
+                        self.assertTrue(hasattr(m, a.name) or importlib.util.find_spec(f"{node.module}.{a.name}"),
+                                        f"{node.module}.{a.name}")
+                        if importlib.util.find_spec(f"{node.module}.{a.name}") if hasattr(m, "__path__") else False:
+                            mods[a.asname or a.name] = importlib.import_module(f"{node.module}.{a.name}")
+                        elif isinstance(getattr(m, a.name, None), type(m)):
+                            mods[a.asname or a.name] = getattr(m, a.name)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in mods:
+                    self.assertTrue(hasattr(mods[node.value.id], node.attr), f"{node.value.id}.{node.attr}")
+
     def test_script_syntax_and_flags(self):
         sh = SCRIPT.read_text()
         subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
