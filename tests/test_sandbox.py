@@ -491,6 +491,19 @@ class SeatGrants(unittest.TestCase):
         self.assertNotIn(self.state_link, g.deny_read)
         self.assertEqual(list(g.reread), [self.home, self.scratch])
 
+    def test_git_global_config_readable_through_its_link(self):
+        # nono denies reads under the home by default; git dies when ~/.gitconfig is unreadable
+        # ("fatal: unable to access"), so a seat could run no git command. Read only, as for a lead.
+        fake_home = self.root / "user"; dots = fake_home / "dots"; dots.mkdir(parents=True)
+        (dots / ".gitconfig").write_text("[user]\n")
+        os.symlink("dots/.gitconfig", fake_home / ".gitconfig")
+        (fake_home / ".config" / "git").mkdir(parents=True)
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            g = self.grants()
+        for p in (str(dots / ".gitconfig"), str(fake_home / ".gitconfig"), str(fake_home / ".config" / "git")):
+            self.assertIn(p, g.read)
+        self.assertNotIn(str(fake_home / ".gitconfig"), [r[2] for r in g.rules])  # never a write grant
+
     def test_state_and_scratch_root_read_denied_own_reread(self):
         g = self.grants()
         self.assertIn(self.state, g.deny_read)

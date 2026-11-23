@@ -93,6 +93,16 @@ def _git_dir(worktree):
     return os.path.realpath(r.stdout.strip())
 
 
+def git_config_reads():
+    """The user's global git config paths that exist, as real paths, plus the link node of each
+    symlinked one (dotfiles). git dies when one exists but is unreadable, so every git command in a
+    lead or a seat needs these. Read only."""
+    home = os.path.expanduser("~")
+    cfg = [os.path.join(home, ".gitconfig"), os.path.join(home, ".config", "git")]
+    return ([_real(p) for p in cfg if os.path.exists(p)]
+            + [check_path(os.path.abspath(p)) for p in cfg if os.path.islink(p)])
+
+
 def lead_grants(project, runtime, state_dir):
     """Ordered write rules and read grants for a lead working in `project.worktree`."""
     common, wt = project.common_dir, project.worktree
@@ -132,11 +142,9 @@ def lead_grants(project, runtime, state_dir):
     for _, _, p in rules:
         check_path(p)
     # git needs the user's global config (identity, includes) to commit; read-only.
-    home = os.path.expanduser("~")
-    git_cfg = [os.path.join(home, ".gitconfig"), os.path.join(home, ".config", "git")]
-    reads = [_real(p) for p in runtime.read] + [_real(p) for p in git_cfg if os.path.exists(p)]
+    reads = [_real(p) for p in runtime.read] + git_config_reads()
     # A symlinked path (dotfiles) is read through its link: grant the link node as well.
-    reads += [check_path(os.path.abspath(os.path.expanduser(p))) for p in list(runtime.read) + git_cfg
+    reads += [check_path(os.path.abspath(os.path.expanduser(p))) for p in runtime.read
               if os.path.islink(os.path.expanduser(p))]
     reads.append(check_path(own_view))
     # Copies of third-party databases (cc-switch, Orca) bw reads, the inbox record, and the answers
@@ -213,8 +221,8 @@ def _state_dir(d, user_home, bw_paths, code):
 def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_files=(), credentials=(), state_dirs=()):
     """Ordered write rules and read grants for a review seat on `target` (a lead.projects.Project).
     The seat writes only its own home (minus the runtime's code-loading names) and the credential
-    files it refreshes. It reads the target and its git dir, and nothing of bw's state, of other
-    seats' scratch dirs, or of the lead runtimes' session stores.
+    files it refreshes. It reads the target, its git dir, and the user's global git config, and nothing
+    of bw's state, of other seats' scratch dirs, or of the lead runtimes' session stores.
     `credentials`: the real login files the adapter declares as refreshing (ruling C-cred). Each one
     is readable and writable at its real path as one literal file, even under a secret read deny.
     Pass only the adapter's declared credentials here, never a generic write file.
@@ -256,7 +264,8 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
             raise ValueError(f"refusing a seat credential in bw state, the target, a code path, or seat scratch: {real}")
         rules.append(("allow", "literal", real))
         creds.append(real)
-    reads = [_real(target.worktree), _real(target.common_dir)] + [_real(p) for p in runtime_grants.read]
+    reads = ([_real(target.worktree), _real(target.common_dir)] + [_real(p) for p in runtime_grants.read]
+             + git_config_reads())  # a review seat runs git log and git diff
     # Denied whether or not a store exists yet: a lead may create it while the seat runs.
     stores = [os.path.realpath(os.path.join(user_home, s)) for s in LEAD_SESSION_STORES]
     stores = [check_path(p) for p in stores if not _inside(p, [home] + writes + dirs)]
