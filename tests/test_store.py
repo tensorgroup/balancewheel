@@ -64,6 +64,18 @@ class ReadAndLoad(unittest.TestCase):
         self.assertEqual(w["updates"][0]["note"], "re-verified a sample")
         self.assertEqual(d["warnings"], [])
 
+    def test_load_keeps_panel_runs_and_tier(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "log.jsonl")
+            store.append(path, {"type": "panel_run", "panel_id": "p1"})
+            store.append(path, {"type": "panel", "id": "p1", "target": "t", "kind": "review", "seats": {"a": "m"},
+                                "tier": "deep", "findings": {}, "findings_detail": []})
+            store.append(path, {"type": "panel", "id": "p2", "target": "t", "kind": "review", "seats": {"a": "m"},
+                                "tier": 3, "findings": {}, "findings_detail": []})
+            data = store.load(path)
+        self.assertEqual([e["panel_id"] for e in data["panel_runs"]], ["p1"])
+        self.assertEqual([p["tier"] for p in data["panels"]], ["deep", None])
+
     def test_legacy_log_normalises_without_error(self):
         d = store.load(str(FX / "legacy.jsonl"))
         p = d["panels"][0]

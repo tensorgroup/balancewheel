@@ -119,6 +119,8 @@ not against the prose.
 
 ### Changed
 
+- Changed (log schema): a panel record may have empty `seats` when `absent` names every seat.
+  `validate_panel` can keep a bw-assigned id. `store.load()` returns `panel_runs` and keeps a panel's `tier`.
 - After the lead opens, `bw start` verifies every seat reachable from a checkpoint, a fallback, or the
   reserved tier whose key changed, in the background (`bw seat verify --changed`). The registry shows
   seat caps as `capped` health.

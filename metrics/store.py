@@ -135,6 +135,7 @@ def _normalise_panel(e):
         "target": _normalise_target(e.get("target", "")),
         "kind": e.get("kind"),
         "seats": _normalise_seats(e.get("seats")),
+        "tier": e.get("tier") if isinstance(e.get("tier"), str) else None,
         "rounds": e.get("rounds"),
         "immediate_agreement": e.get("immediate_agreement"),
         "findings": _normalise_counts(e.get("findings")),
@@ -221,9 +222,10 @@ def load(path):
     guards = [e for e in events if e.get("type") == "guard"]
     asks = [e for e in events if e.get("type") == "ask"]
     answers = [e for e in events if e.get("type") == "answer"]
+    panel_runs = [e for e in events if e.get("type") == "panel_run"]
     return {"usage": usage, "panels": panels, "watches": watches, "events": events, "warnings": warnings,
             "sessions": sessions, "leads": leads, "ratings": ratings, "guards": guards, "asks": asks,
-            "answers": answers}
+            "answers": answers, "panel_runs": panel_runs}
 
 
 def append(path, event):

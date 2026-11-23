@@ -1,4 +1,5 @@
-import json, os, subprocess, sys, tempfile, unittest
+import io, json, os, subprocess, sys, tempfile, unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -50,6 +51,22 @@ class ValidatePanel(unittest.TestCase):
         self.assertEqual(rec["findings"]["alpha"]["unique"], 1)
         self.assertEqual(len(rec["id"]), 8)
 
+    def test_keeps_bw_panel_id(self):
+        self.assertEqual(logmod.validate_panel(record(), self.cfg, force=False, panel_id="p1a2b3c4")["id"], "p1a2b3c4")
+
+    def test_all_absent_panel_is_valid(self):
+        rec = logmod.validate_panel(record(seats=[], findings={}, findings_detail=[], absent={"alpha": "usage cap"}),
+                                    self.cfg, force=False)
+        self.assertEqual((rec["seats"], rec["absent"]), ({}, {"alpha": "usage cap"}))
+
+    def test_empty_seats_without_absent_refused(self):
+        self.assertRaises(ValueError, logmod.validate_panel, record(seats=[], findings={}, findings_detail=[]), self.cfg, False)
+
+    def test_absent_shape(self):
+        self.assertRaises(ValueError, logmod.validate_panel, record(absent={"alpha": 3}), self.cfg, False)
+        self.assertRaises(ValueError, logmod.validate_panel, record(absent={"alpha": ""}), self.cfg, False)
+        self.assertRaises(ValueError, logmod.validate_panel, record(absent=["alpha"]), self.cfg, False)
+
     def test_rejects_count_mismatch_unless_forced(self):
         bad = record(); bad["findings"]["alpha"]["confirmed"] = 1
         with self.assertRaises(ValueError) as e:
@@ -77,6 +94,48 @@ class ValidatePanel(unittest.TestCase):
         with self.assertRaises(ValueError) as e:
             logmod.validate_panel(bad, self.cfg, force=False)
         self.assertIn("proposals", str(e.exception))
+
+
+class AmendPanel(unittest.TestCase):
+    def setUp(self):
+        import config as cfg
+        self.cfg = cfg.load_config(CONFIG)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "log.jsonl")
+        rec = logmod.validate_panel(record(findings_raw=35), self.cfg, force=False)
+        self.pid = rec["id"]
+        store.append(self.path, rec)
+
+    def test_amend_panel_raises_instead_of_exiting(self):
+        with self.assertRaisesRegex(ValueError, "unknown panel id"):
+            logmod.amend_panel(self.path, self.cfg, "nope", {"notes": "x"})
+
+    def test_amend_panel_rejects_bad_keys_and_counts(self):
+        with self.assertRaisesRegex(ValueError, "amend may only set"):
+            logmod.amend_panel(self.path, self.cfg, self.pid, {"bogus": 1})
+        with self.assertRaisesRegex(ValueError, "non-negative integer"):
+            logmod.amend_panel(self.path, self.cfg, self.pid, {"findings_raw": -1})
+
+    def test_amend_panel_returns_watches_and_prints_nothing(self):
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as real:
+            new, n = logmod.amend_panel(self.path, self.cfg, self.pid,
+                                        {"findings_raw": 35, "findings_after_triage": 9}, out=io.StringIO())
+        self.assertEqual(real.getvalue(), "")
+        self.assertIsInstance(n, int)
+
+    def test_flipped_line_goes_to_out(self):
+        logmod.run_check(self.path, self.cfg, out=io.StringIO())
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as real:
+            logmod.amend_panel(self.path, self.cfg, self.pid, {"findings_after_triage": 9}, out=buf)
+        self.assertIn("(was open)", buf.getvalue())
+        self.assertEqual(real.getvalue(), "")
+
+    def test_run_check_writes_to_out(self):
+        buf = io.StringIO()
+        logmod.run_check(self.path, self.cfg, out=buf)
+        self.assertIn("WATCH[panel-bloat|open]", buf.getvalue())
 
 
 class Cli(unittest.TestCase):

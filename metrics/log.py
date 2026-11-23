@@ -11,6 +11,7 @@
   log.py amend --panel-id <id> < patch.json
 """
 import argparse
+import io
 import json
 import os
 import sys
@@ -155,7 +156,7 @@ def merge_findings_patch(existing, given):
     return merged
 
 
-def validate_panel(rec, config, force):
+def validate_panel(rec, config, force, panel_id=None):
     if not isinstance(rec, dict):
         _fail("panel record must be a JSON object")
     for k in ("target", "kind", "seats", "immediate_agreement", "findings", "findings_detail"):
@@ -173,8 +174,12 @@ def validate_panel(rec, config, force):
         v = rec.get(k)
         if v is not None and not (_is_count(v) and v >= 0):
             _fail(f"{k} must be a non-negative integer")
+    absent = rec.get("absent")
+    if absent is not None and not (isinstance(absent, dict) and all(
+            isinstance(k, str) and isinstance(v, str) and v for k, v in absent.items())):
+        _fail("absent must be an object of seat -> reason")
     seats_in = rec["seats"]
-    if not isinstance(seats_in, (list, dict)) or not seats_in:
+    if not isinstance(seats_in, (list, dict)) or (not seats_in and not absent):
         _fail("seats must be a non-empty list or object")
     names = list(seats_in)
     if not all(isinstance(s, str) for s in names):
@@ -219,18 +224,19 @@ def validate_panel(rec, config, force):
                 or not isinstance(mod.get("resolved"), bool):
             _fail("moderator must be an object with lead, runtime, model (strings) and resolved (true/false)")
     out = dict(rec)
-    out.update({"type": "panel", "id": uuid.uuid4().hex[:8], "ts": store.now_ts(), "seats": seats,
+    out.update({"type": "panel", "id": panel_id or uuid.uuid4().hex[:8], "ts": store.now_ts(), "seats": seats,
                 "findings": findings, "findings_detail": fd, "disputes": disputes,
                 "rounds": rec.get("rounds", 1), "notes": notes})
     return out
 
 
-def _print_watches(new):
+def _print_watches(new, out=None):
+    out = out or sys.stdout
     for w in new:
-        print(f"WATCH[{w['kind']}|{w['status']}] {w['detail']} (id {w['id']})")
+        print(f"WATCH[{w['kind']}|{w['status']}] {w['detail']} (id {w['id']})", file=out)
 
 
-def run_check(path, config, only_panel=None):
+def run_check(path, config, only_panel=None, out=None):
     """Append watches the log does not have yet. A watch that already exists but is open and is now
     computed as resolved (e.g. an amend recorded the triage) gets a watch-update instead of a duplicate."""
     new, flipped = [], []
@@ -274,9 +280,10 @@ def run_check(path, config, only_panel=None):
                                     "note": "re-evaluated: " + w["detail"]})
                 flipped.append(w)
                 existing[w["id"]] = "resolved"
-    _print_watches(new)
+    out = out or sys.stdout
+    _print_watches(new, out)
     for w in flipped:
-        print(f"WATCH[{w['kind']}|resolved] (was open) {w['detail']} (id {w['id']})")
+        print(f"WATCH[{w['kind']}|resolved] (was open) {w['detail']} (id {w['id']})", file=out)
     open_count = sum(1 for s in existing.values() if s == "open")
     return new, open_count
 
@@ -386,46 +393,57 @@ def cmd_resolve(args, config):
     print(f"watch {args.id} → {args.status}")
 
 
+def amend_panel(path, config, panel_id, patch, force=False, out=None):
+    """Amend one logged panel. Raises ValueError for every bad input; prints nothing itself.
+    Returns what run_check returns: (new watches, open watch count)."""
+    if not isinstance(patch, dict):
+        raise ValueError("patch must be a JSON object")
+    allowed = set(store.PANEL_AMENDABLE) | {"note"}
+    bad = set(patch) - allowed
+    if bad:
+        raise ValueError(f"amend may only set {sorted(allowed)}; got {sorted(bad)}")
+    for k in ("findings_raw", "findings_after_triage"):
+        if k in patch and patch[k] is not None and not (_is_count(patch[k]) and patch[k] >= 0):
+            raise ValueError(f"amend {k} must be a non-negative integer")
+    with store.locked(path):  # load -> validate -> append must be atomic; run_check locks separately, after
+        panels = {p["id"]: p for p in store.load(path)["panels"]}
+        if panel_id not in panels:
+            raise ValueError(f"unknown panel id {panel_id}")
+        seats = list(panels[panel_id]["seats"])
+        try:
+            if "findings_detail" in patch:
+                validate_detail(patch["findings_detail"], seats)
+                computed = compute_counts(patch["findings_detail"])
+                given = patch.get("findings", {})
+                patch["findings"], note = check_counts(given, computed, seats, force)
+                if note:
+                    patch["notes"] = ((patch.get("notes") or panels[panel_id]["notes"] or "") + " | " + note).strip(" |")
+            elif "findings" in patch and panels[panel_id]["findings_detail"]:
+                computed = compute_counts(panels[panel_id]["findings_detail"])
+                patch["findings"], note = check_counts(patch["findings"], computed, seats, force)
+                if note:
+                    patch["notes"] = ((patch.get("notes") or panels[panel_id]["notes"] or "") + " | " + note).strip(" |")
+            elif "findings" in patch:
+                patch["findings"] = merge_findings_patch(panels[panel_id]["findings"], patch["findings"])
+        except REJECT as e:
+            raise ValueError(f"amend rejected: {e}")
+        store.append(path, dict(patch, type="panel-amend", panel_id=panel_id))
+    return run_check(path, config, only_panel=panel_id, out=out)
+
+
 def cmd_amend(args, config):
     path = store.log_path(config)
     try:
         patch = json.load(sys.stdin)
     except json.JSONDecodeError as e:
         die(f"patch is not valid JSON: {e}")
-    if not isinstance(patch, dict):
-        die("patch must be a JSON object")
-    allowed = set(store.PANEL_AMENDABLE) | {"note"}
-    bad = set(patch) - allowed
-    if bad:
-        die(f"amend may only set {sorted(allowed)}; got {sorted(bad)}")
-    for k in ("findings_raw", "findings_after_triage"):
-        if k in patch and patch[k] is not None and not (_is_count(patch[k]) and patch[k] >= 0):
-            die(f"amend {k} must be a non-negative integer")
-    with store.locked(path):  # load -> validate -> append must be atomic; run_check locks separately, after
-        panels = {p["id"]: p for p in store.load(path)["panels"]}
-        if args.panel_id not in panels:
-            die(f"unknown panel id {args.panel_id}")
-        seats = list(panels[args.panel_id]["seats"])
-        try:
-            if "findings_detail" in patch:
-                validate_detail(patch["findings_detail"], seats)
-                computed = compute_counts(patch["findings_detail"])
-                given = patch.get("findings", {})
-                patch["findings"], note = check_counts(given, computed, seats, args.force)
-                if note:
-                    patch["notes"] = ((patch.get("notes") or panels[args.panel_id]["notes"] or "") + " | " + note).strip(" |")
-            elif "findings" in patch and panels[args.panel_id]["findings_detail"]:
-                computed = compute_counts(panels[args.panel_id]["findings_detail"])
-                patch["findings"], note = check_counts(patch["findings"], computed, seats, args.force)
-                if note:
-                    patch["notes"] = ((patch.get("notes") or panels[args.panel_id]["notes"] or "") + " | " + note).strip(" |")
-            elif "findings" in patch:
-                patch["findings"] = merge_findings_patch(panels[args.panel_id]["findings"], patch["findings"])
-        except REJECT as e:
-            die(f"amend rejected: {e}")
-        store.append(path, dict(patch, type="panel-amend", panel_id=args.panel_id))
+    buf = io.StringIO()  # the "amended" line comes first, then the watch lines
+    try:
+        amend_panel(path, config, args.panel_id, patch, force=args.force, out=buf)
+    except ValueError as e:
+        die(str(e))
     print(f"panel {args.panel_id} amended")
-    run_check(path, config, only_panel=args.panel_id)
+    print(buf.getvalue(), end="")
 
 
 def main(argv=None):

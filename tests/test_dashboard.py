@@ -42,6 +42,15 @@ class Render(unittest.TestCase):
         html = dashboard.render(d, CONFIG, None)
         self.assertIn("2 seat calls", html)
 
+    def test_all_absent_panel_renders(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "log.jsonl")
+            store.append(path, {"type": "panel", "id": "p1", "target": "t", "kind": "review", "seats": {},
+                                "absent": {"alpha": "usage cap"}, "rounds": 1, "immediate_agreement": True,
+                                "findings": {}, "findings_detail": [], "disputes": []})
+            html = dashboard.render(store.load(path), CONFIG, None)
+        self.assertIn('<section id="now"', html)
+
     def test_empty_log_and_one_panel_log_render(self):
         html = dashboard.render(store.load("/nonexistent.jsonl"), CONFIG, None)
         for s in SECTIONS:
