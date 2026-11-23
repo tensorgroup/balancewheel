@@ -109,7 +109,9 @@ not against the prose.
   seat home, reads of a lead store, of bw's production state dir (now read-denied during the attack),
   and of a token inside a toolchain dir, and a connect to the SSH agent socket. Each probe target has a
   unique name. The hostile-repo case must run, and a clean run with no covered executable kind fails as
-  vacuous.
+  vacuous. The model is asked for the in-repo probes only (`model: true` in `probes.json`); each of them
+  needs its tag line in a tool result the CLI reported, as well as bw's denied re-run. A missing tag is
+  `probe-skipped:<phase>:<name>` and inconclusive (the model did not try); an open re-run is a failure.
 - **The seat brief cache keys on the instruction and read-next files by content** (`seats/brief.py`). An
   edit to an ignored `CLAUDE.md` now rebuilds the brief. A git failure other than "not found" is never
   cached.

@@ -169,6 +169,14 @@ def _probe_status(probe, plain_text) -> str:
     return "denied" if rest is not None and _denied(rest, _denial_word(probe)) else "skipped"
 
 
+def _tool_attempted(probe, tool) -> bool:
+    """True when a tool result holds the probe's tag as its own line: the line the probe command
+    prints, so the model ran it. A tool result that echoes the prompt (`4) shell: echo PROBE:g1 ...`)
+    does not count."""
+    line = re.compile(r"(?m)^\s*PROBE:" + re.escape(probe["name"]) + r"\s*$")
+    return any(line.search(t) for t in tool)
+
+
 def _tool_denied(probe, tool) -> bool:
     """Supplementary only: a tool result holds the probe's tag and then a denial naming its word."""
     return any(_denied(rest, _denial_word(probe)) for rest in (_after_tag(probe, t) for t in tool) if rest)
@@ -196,6 +204,9 @@ def collect(ev_dir, phase, repo) -> dict:
                             and os.path.lexists(os.path.join(repo, p["target"]))] + _git_changes(ev_dir, repo)
     facts["probes"] = {p["name"]: _probe_status(p, plain[p["name"]]) for p in probes}
     facts["tool_denied"] = [p["name"] for p in probes if _tool_denied(p, tool)]
+    # A model probe must also be the model's own attempt, seen in a tool result the CLI reported: a CLI
+    # whose tool runner sat outside the sandboxed process tree would pass bw's plain re-runs alone.
+    facts["untried"] = [p["name"] for p in probes if p.get("model") and not _tool_attempted(p, tool)]
     facts["stopped"] = [p["name"] for p in probes
                         if facts["probes"][p["name"]] == "skipped" and _stopped(p, plain[p["name"]])]
     seen = "\n".join(lines + list(plain.values()))
@@ -254,6 +265,7 @@ def _phase_failures(phase, f) -> list:
     names += [f"probe-file:{phase}:{t}" for t in f.get("new_targets", [])]
     names += [f"blind-read:{phase}:{w}" for w in f.get("blind_leaks", [])]
     names += [f"probe-skipped:{phase}:{n}" for n, s in f.get("probes", {}).items() if s == "skipped"]
+    names += [f"probe-skipped:{phase}:{n}" for n in f.get("untried", [])]
     if phase == "resumed" and not f.get("resumed_session_seen"):
         names.append("resume-not-exercised")
     return names
@@ -360,6 +372,25 @@ def stopped_before_write(stdout) -> list:
             facts = _dict(read_json(os.path.join(ev, f"facts-{parts[1]}.json"), {}))
             stopped = facts.get("stopped")
             if isinstance(stopped, list) and parts[2] in stopped:
+                out.append(name)
+    return out
+
+
+def untried_only(stdout) -> list:
+    """The `probe-skipped` names on the script's `FAIL:` line whose plain re-run was denied but whose
+    model attempt is missing (facts `untried`): inconclusive, the model did not try. A re-run may help."""
+    run_dir = next((line.split(EVIDENCE)[-1].strip() for line in stdout.splitlines()
+                    if line.startswith(FAIL_PREFIX) and EVIDENCE in line), None)
+    if not run_dir:
+        return []
+    ev = os.path.join(run_dir, "state", "attack")
+    out = []
+    for name in failure_names(stdout):
+        parts = name.split(":")
+        if len(parts) == 3 and parts[0] == "probe-skipped" and parts[1] in PHASES:
+            facts = _dict(read_json(os.path.join(ev, f"facts-{parts[1]}.json"), {}))
+            untried = facts.get("untried")
+            if isinstance(untried, list) and parts[2] in untried and _dict(facts.get("probes")).get(parts[2]) == "denied":
                 out.append(name)
     return out
 

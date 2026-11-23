@@ -512,7 +512,9 @@ profile allows `file-read-metadata` (not a listing) on those nodes, and on the s
 The live seat attack then passed on the agy seat, fresh and resumed: its shell commands ran, and
 each of the 42 probes got an OS denial in bw's own re-run. The pi and codex seats passed the same
 attack. The attack asks the model for the in-repo probes only: with the full list of reads outside the
-repo, the pi seat's model refused the whole prompt, control included.
+repo, the pi seat's model refused the whole prompt, control included. Each in-repo probe needs its
+tag line in a tool result the CLI reported, so the CLI's own tool runner is shown to sit inside the
+sandbox; bw's re-run is still the denial evidence. A missing tag is inconclusive.
 
 Checked again on agy 1.5.15 (2026-11-23), with no model call:
 - A run with `HOME` set to an empty seat home returned a `result` event with `status` `ERROR` and

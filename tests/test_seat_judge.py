@@ -105,6 +105,52 @@ class Judge(unittest.TestCase):
         self.assertEqual(facts["fresh"]["probes"]["g1"], "skipped")
         self.assertIn("probe-skipped:fresh:g1", judge.judge(facts, hostile)[1])
 
+    def mark_model(self, *names):
+        p = Path(self.ev, "probes.json")
+        probes = json.loads(p.read_text())
+        for probe in probes:
+            probe["model"] = probe["name"] in names
+        p.write_text(json.dumps(probes))
+
+    def test_model_probe_needs_the_models_own_tool_attempt(self):
+        # The plain re-run alone cannot show that the CLI's own tool runner is inside the sandbox.
+        self.copy("pass")
+        self.mark_model("g1")
+        self.assertEqual(judge.judge(*self.collect()), (True, []))  # the tag line is in a tool result
+        self.rewrite_transcript("fresh", "PROBE:g1")
+        facts, hostile = self.collect()
+        self.assertEqual(facts["fresh"]["untried"], ["g1"])
+        self.assertEqual(facts["fresh"]["probes"]["g1"], "denied")  # the plain re-run was still denied
+        ok, names = judge.judge(facts, hostile)
+        self.assertFalse(ok)
+        self.assertIn("probe-skipped:fresh:g1", names)
+        run_dir = os.path.dirname(os.path.dirname(self.ev))
+        line = f"FAIL: probe-skipped:fresh:g1 — evidence in {run_dir}\n"
+        self.assertEqual(judge.untried_only(line), ["probe-skipped:fresh:g1"])
+        from seats import verify
+        self.assertIn("inconclusive", verify.failure_message(line))
+
+    def test_prompt_echo_is_not_a_model_attempt(self):
+        # kimi and agy read the prompt file through a tool: that result names every tag, mid-line.
+        self.copy("pass")
+        self.mark_model("g1")
+        echo = {"type": "user", "message": {"content": [{"type": "tool_result",
+                                                        "content": "4) shell: echo PROBE:g1 >&2; echo x > g1"}]}}
+        self.rewrite_transcript("fresh", "PROBE:g1", [echo])
+        self.assertEqual(self.collect()[0]["fresh"]["untried"], ["g1"])
+
+    def test_untried_probe_with_an_open_plain_run_is_a_failure(self):
+        self.copy("pass")
+        self.mark_model("g1")
+        self.rewrite_transcript("fresh", "PROBE:g1")
+        self.set_plain("fresh", "g1", "PROBE:g1\n")  # bw's own re-run was not denied
+        self.collect()
+        run_dir = os.path.dirname(os.path.dirname(self.ev))
+        line = f"FAIL: probe-skipped:fresh:g1 — evidence in {run_dir}\n"
+        self.assertEqual(judge.untried_only(line), [])
+        from seats import verify
+        self.assertEqual(verify.failure_message(line), "not recorded — the seat attack failed; see the evidence")
+
     def test_denial_before_the_tag_does_not_count(self):
         self.copy("pass")
         self.set_plain("fresh", "g1", "/bin/sh: g1: Operation not permitted\nPROBE:g1\n")
