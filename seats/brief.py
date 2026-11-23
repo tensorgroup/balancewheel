@@ -22,11 +22,18 @@ INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
 READ_NEXT = ("docs/architecture.md", "ARCHITECTURE.md", "README.md")
 NO_BASE = "base unknown; diff against HEAD"
 DIFF_FLAGS = ("--no-ext-diff", "--no-textconv")
+BRIEF_FORMAT = "2"  # in the cache key: a change to what a brief shows rebuilds every cached brief
 
 
-def _out(target, *args):
-    rc, out, _ = _git_rc(target, *args)
-    return out if rc == 0 else None
+def _out(target, *args, failed=None):
+    """stdout when git succeeds, else None. Status 1 is git's "no such ref or base" answer; any other
+    failure is also added to `failed`, so a brief built on it is never cached."""
+    rc, out, err = _git_rc(target, *args)
+    if rc == 0:
+        return out
+    if rc != 1 and failed is not None:
+        failed.append(f"(git {args[0]} failed: {err[:200]})")
+    return None
 
 
 def _run(target, *args):
@@ -35,17 +42,18 @@ def _run(target, *args):
     return (True, out) if rc == 0 else (False, f"(git {args[0]} failed: {err[:200]})")
 
 
-def resolve_base(target):
-    """merge-base(first of origin/HEAD's target, main, master; HEAD), or None."""
+def resolve_base(target, failed=None):
+    """merge-base(first of origin/HEAD's target, main, master; HEAD), or None. A git failure other
+    than "not found" goes to `failed`."""
     candidates = []
-    ref = _out(target, "symbolic-ref", "-q", "refs/remotes/origin/HEAD")
+    ref = _out(target, "symbolic-ref", "-q", "refs/remotes/origin/HEAD", failed=failed)
     if ref:
         candidates.append(ref)
     candidates += ["refs/heads/main", "refs/heads/master"]
     for cand in candidates:
-        if _out(target, "rev-parse", "--verify", "-q", cand + "^{commit}") is None:
+        if _out(target, "rev-parse", "--verify", "-q", cand + "^{commit}", failed=failed) is None:
             continue
-        base = _out(target, "merge-base", cand, "HEAD")
+        base = _out(target, "merge-base", cand, "HEAD", failed=failed)
         if base:
             return base
     return None
@@ -128,10 +136,10 @@ def build(state, target, paths=()):
 
     A brief with a failed git call is written beside the cache, not in it, so the next call retries."""
     paths = sorted(safe_paths(target, paths))
-    base = resolve_base(target)
-    head = _out(target, "rev-parse", "--verify", "-q", "HEAD^{commit}")
-    ref = base or head
     failed = []
+    base = resolve_base(target, failed)
+    head = _out(target, "rev-parse", "--verify", "-q", "HEAD^{commit}", failed=failed)
+    ref = base or head
 
     def section(empty, *args):
         if not ref and args[0] == "diff":
@@ -144,9 +152,12 @@ def build(state, target, paths=()):
 
     diff = section("", "diff", *DIFF_FLAGS, *([ref] if ref else []))
     untracked = section("", "ls-files", "-z", "--others", "--exclude-standard").replace("\0", "\n").strip()
+    # The instruction and read-next files are in the key by content: an untracked or ignored one
+    # changes no diff, and its edit must still rebuild the brief.
+    shown = [_sha(_read_file(os.path.join(target, n)) or "") for n in INSTRUCTION_FILES + READ_NEXT]
     key = hashlib.sha256("\n".join([
-        os.path.realpath(target), base or "none", head or "unborn", _sha(diff), _sha(untracked),
-        "\0".join(paths)]).encode()).hexdigest()[:16]
+        BRIEF_FORMAT, os.path.realpath(target), base or "none", head or "unborn", _sha(diff), _sha(untracked),
+        "\0".join(paths), *shown]).encode()).hexdigest()[:16]
     out_dir = os.path.join(state, "seats", "briefs")
     path = os.path.join(out_dir, key + ".md")
     if os.path.isfile(path):

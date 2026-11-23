@@ -68,8 +68,16 @@ not against the prose.
   (`--gemini_dir`), so it can run shell commands (agy rewrites `bin/agentapi` there), it reads no agy lead
   conversation, and an agy lead session no longer changes the agy seat key.
 - **bw's git calls blank every filter driver the repo config names** (`lead/handoff.py`). A clean filter
-  named in `.git/info/attributes` used to run on a worktree diff. Git output with non-UTF-8 bytes no
-  longer raises.
+  named in `.git/info/attributes` used to run on a worktree diff. The blanks go through
+  `GIT_CONFIG_COUNT`, so a driver name with `=` or a space is blanked too. When the filter config cannot
+  be read, bw does not run git. Git output with non-UTF-8 bytes no longer raises.
+- **bw's git calls never enter an embedded repo** (`lead/handoff.py`). `diff` and `status` get
+  `--ignore-submodules=all`, and submodule recursion and summaries are off. A gitlink's own config or
+  attributes (a filter, an fsmonitor) could otherwise run code when a user config sets
+  `diff.submodule=diff`.
+- **The seat brief cache keys on the instruction and read-next files by content** (`seats/brief.py`). An
+  edit to an ignored `CLAUDE.md` now rebuilds the brief. A git failure other than "not found" is never
+  cached.
 
 ### Changed
 

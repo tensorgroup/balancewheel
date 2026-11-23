@@ -3,15 +3,20 @@
 Built from facts bw can read, not from transcripts: branch, status, commits since the outgoing
 session began, diff stat, the lead's last checkpoint, and open inbox items. bw reads git
 OUTSIDE the sandbox here, and the outgoing lead could write the repo, so git runs with hooks,
-fsmonitor, external diff drivers, textconv, and optional locks all off, and with GIT_*
-variables cleared: nothing a lead planted in the repo runs at handoff time.
+fsmonitor, external diff drivers, textconv, filter drivers, and optional locks all off, never
+enters an embedded repo (a gitlink, whose own config and attributes would run code), and has its
+GIT_* variables cleared: nothing a lead planted in the repo runs at handoff time.
 """
 import os
 import subprocess
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
-        "-c", "core.attributesFile=/dev/null", "--no-pager"]
+        "-c", "core.attributesFile=/dev/null", "-c", "diff.ignoreSubmodules=all", "-c", "submodule.recurse=false",
+        "-c", "status.submoduleSummary=false", "-c", "diff.submodule=short", "--no-pager"]
+# Commands that look inside a gitlink unless told not to: each gets --ignore-submodules=all.
+SUBMODULE_COMMANDS = ("diff", "status")
+CONFIG_UNREADABLE = 125  # _git_rc's status when the repo's filter config cannot be read
 GIT_TIMEOUT = 5  # seconds: a hung git call must not hold a broker worker or bw
 INBOX_LIMIT = 16 * 1024  # characters of open inbox items in one handoff
 INBOX_CUT = "\n[cut — run `bw inbox --project`]"
@@ -28,32 +33,46 @@ def _env():
 
 
 def _filter_off(worktree, env):
-    """-c flags that blank every filter driver the repo config names.
+    """Env entries (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_n, GIT_CONFIG_VALUE_n) that blank every filter
+    driver the repo config names, or None when the config cannot be read (a timeout, or a status
+    other than 0, or 1 for no match): the caller then refuses to run git.
 
     .git/info/attributes is still read, and a worktree diff or status runs the clean filter of a
-    driver it names. Reading config runs nothing. An empty value disables the driver."""
+    driver it names. Reading config runs nothing. An empty value disables the driver. The env form
+    keeps a name with '=' or a space whole; `-c` splits at the first '='."""
     try:
-        r = subprocess.run(["git", "-C", worktree, *SAFE, "config", "--get-regexp", r"^filter\."],
+        r = subprocess.run(["git", "-C", worktree, *SAFE, "config", "-z", "--get-regexp", r"^filter\."],
                            capture_output=True, env=env, timeout=GIT_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return []
+        return None
+    if r.returncode not in (0, 1):
+        return None
     names = set()
-    for line in r.stdout.decode("utf-8", "replace").split("\n"):
-        key = line.split(" ", 1)[0]
+    for record in r.stdout.decode("utf-8", "surrogateescape").split("\0"):
+        key = record.split("\n", 1)[0]  # -z: the key, a newline, the value
         if key.startswith("filter.") and key.count(".") >= 2:
             names.add(key[len("filter."):].rsplit(".", 1)[0])
-    flags = []
-    for n in sorted(names):
-        for part, val in (("clean", ""), ("smudge", ""), ("process", ""), ("required", "false")):
-            flags += ["-c", f"filter.{n}.{part}={val}"]
-    return flags
+    pairs = [(f"filter.{n}.{part}", val) for n in sorted(names)
+             for part, val in (("clean", ""), ("smudge", ""), ("process", ""), ("required", "false"))]
+    out = {"GIT_CONFIG_COUNT": str(len(pairs))}
+    for i, (k, v) in enumerate(pairs):
+        out[f"GIT_CONFIG_KEY_{i}"], out[f"GIT_CONFIG_VALUE_{i}"] = k, v
+    return out
 
 
 def _git_rc(worktree, *args):
-    """(returncode, stdout, stderr), run the safe way: nothing the lead planted in the repo runs."""
+    """(returncode, stdout, stderr), run the safe way: nothing the lead planted in the repo runs.
+    CONFIG_UNREADABLE, and no git call, when the filter config cannot be read."""
     env = _env()
+    off = _filter_off(worktree, env)
+    if off is None:
+        return CONFIG_UNREADABLE, "", "git config could not be read; git not run"
+    env.update(off)
+    args = list(args)
+    if args and args[0] in SUBMODULE_COMMANDS:
+        args.insert(1, "--ignore-submodules=all")
     try:
-        r = subprocess.run(["git", "-C", worktree, *SAFE, *_filter_off(worktree, env), *args],
+        r = subprocess.run(["git", "-C", worktree, *SAFE, *args],
                            capture_output=True, env=env, timeout=GIT_TIMEOUT)
     except subprocess.TimeoutExpired:
         return 124, "", f"git {args[0]} timed out after {GIT_TIMEOUT}s"

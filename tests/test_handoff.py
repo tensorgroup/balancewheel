@@ -92,6 +92,58 @@ class Handoff(unittest.TestCase):
         rc, out, _ = _git_rc(str(self.repo), "diff", "HEAD")
         self.assertEqual(rc, 0)
 
+    def test_embedded_repo_filter_and_fsmonitor_do_not_run(self):
+        # A lead can plant an embedded repo (a gitlink) with its own config: git status and diff in the
+        # outer repo would run a child git there, and the child reads the inner config, not our -c flags.
+        from lead.handoff import _git_rc
+        from seats import brief
+        marker = self.root / "pwned-sub"
+        sub = self.repo / "sub"; sub.mkdir()
+        git(sub, "init", "-q"); (sub / "x").write_text("1"); git(sub, "add", "."); git(sub, "commit", "-qm", "s")
+        script = self.root / "evil.sh"; script.write_text(f"#!/bin/sh\ntouch {marker}\ncat\n"); script.chmod(0o755)
+        git(sub, "config", "core.fsmonitor", str(script))
+        git(sub, "config", "filter.evil.clean", str(script))
+        (sub / ".git" / "info").mkdir(exist_ok=True)
+        (sub / ".git" / "info" / "attributes").write_text("* filter=evil\n")  # read even with GIT_ATTR_SOURCE
+        git(self.repo, "add", "sub"); git(self.repo, "commit", "-qm", "gitlink")
+        (sub / "x").write_text("changed")
+        git(self.repo, "config", "diff.submodule", "diff")  # as a user's global config may set it
+        _git_rc(str(self.repo), "status", "--short")
+        _git_rc(str(self.repo), "diff", "HEAD")
+        build_handoff(str(self.repo), self.base, str(self.state), "k6", [])
+        brief.build(str(self.state), str(self.repo))
+        self.assertFalse(marker.exists(), "code from an embedded repo ran in bw's git call")
+
+    def test_filter_name_with_equals_sign_is_blanked(self):
+        # `-c filter.a=b.clean=` splits at the first '=': it would set `filter.a`, not blank `a=b`.
+        from lead.handoff import _git_rc
+        marker = self.root / "pwned-eq"
+        script = self.root / "eq.sh"; script.write_text(f"#!/bin/sh\ntouch {marker}\ncat\n"); script.chmod(0o755)
+        with open(self.repo / ".git" / "config", "a") as f:
+            f.write(f'[filter "a=b"]\n\tclean = {script}\n')
+        with open(self.repo / ".git/info/attributes", "a") as f:
+            f.write("* filter=a=b\n")
+        (self.repo / "a").write_text("changed")
+        rc, out, err = _git_rc(str(self.repo), "diff", "HEAD")
+        self.assertEqual(rc, 0, err)  # git ran, and the filter did not
+        self.assertEqual(_git_rc(str(self.repo), "status", "--porcelain")[0], 0)
+        self.assertFalse(marker.exists())
+
+    def test_git_refused_when_the_filter_config_cannot_be_read(self):
+        from unittest import mock
+        from lead import handoff
+        real = subprocess.run
+
+        def config_times_out(argv, *a, **kw):
+            if "config" in argv:
+                raise subprocess.TimeoutExpired(argv, 5)
+            return real(argv, *a, **kw)
+        with mock.patch.object(handoff.subprocess, "run", side_effect=config_times_out) as spy:
+            rc, out, err = handoff._git_rc(str(self.repo), "status", "--short")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("config", err)
+        self.assertEqual(spy.call_count, 1)  # the status call never ran
+
 
 if __name__ == "__main__":
     unittest.main()

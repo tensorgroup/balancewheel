@@ -76,6 +76,16 @@ class Brief(unittest.TestCase):
         (self.wt / "src/parser.py").write_text("changed")
         self.assertNotEqual(brief.build(str(self.state), str(self.wt)), a)
 
+    def test_ignored_instruction_file_edit_rebuilds(self):
+        (self.wt / ".gitignore").write_text("CLAUDE.md\n"); commit_all(self.wt, "ignore")
+        (self.wt / "AGENTS.md").unlink(); commit_all(self.wt, "drop agents")
+        (self.wt / "CLAUDE.md").write_text("old rule\n")
+        a = brief.build(str(self.state), str(self.wt))
+        (self.wt / "CLAUDE.md").write_text("new rule\n")  # ignored: no diff, no untracked name changes
+        b = brief.build(str(self.state), str(self.wt))
+        self.assertNotEqual(a, b)
+        self.assertIn("new rule", Path(b).read_text())
+
     def test_moved_base_rebuilds(self):
         a = brief.build(str(self.state), str(self.wt))
         git(self.wt, "checkout", "-q", "main"); (self.wt / "m.txt").write_text("m"); commit_all(self.wt)
@@ -160,6 +170,16 @@ class Brief(unittest.TestCase):
         good = brief.build(str(self.state), str(self.wt))
         self.assertNotEqual(good, path)
         self.assertNotIn("git diff failed", Path(good).read_text())
+
+    def test_failed_rev_parse_is_not_cached(self):
+        # Status 1 is "no such ref"; any other status is a failure, never an empty "(no changes)" brief.
+        real = brief._git_rc
+        def broken(target, *args):
+            return (128, "", "fatal: bad") if args[0] in ("rev-parse", "merge-base", "symbolic-ref") else real(target, *args)
+        with mock.patch.object(brief, "_git_rc", broken):
+            path = brief.build(str(self.state), str(self.wt))
+        self.assertTrue(path.endswith(".failed.md"), path)  # not a cache hit: the next call retries
+        self.assertNotEqual(brief.build(str(self.state), str(self.wt)), path)
 
     def test_non_ascii_names_unquoted(self):
         (self.wt / "caf\u00e9.txt").write_text("x")
