@@ -154,6 +154,8 @@ not against the prose.
 
 ### Added
 
+- **`panel/` package**: parse and group seat findings (`panel/merge.py`). `metrics/watches.py` gains
+  `is_bloated`, the one panel-bloat test that the watch and the panel merge share.
 - **`bw improve`** (`lead/improve.py`, `bin/bw`): suggestions from how the user works, each with its
   evidence, a minimum sample, and no effect until the user acts. `bw improve note "…"` adds a note,
   `bw improve done <key>` marks one dealt with (`improve.json` in the state dir, added to `setup/paths.txt`). An

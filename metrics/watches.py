@@ -35,11 +35,17 @@ def _seat_count(panel):
     return max(len(panel["seats"]), len(panel["findings"]))
 
 
+def is_bloated(raw, seats, w):
+    """The panel-bloat test, shared with bw's panel merge: the raw findings reach bloat_total,
+    or the per-seat average reaches bloat_per_seat with at least bloat_min_seats seats."""
+    avg = raw / seats if seats else 0
+    return bool(raw >= w["bloat_total"] or (seats >= w["bloat_min_seats"] and avg >= w["bloat_per_seat"]))
+
+
 def _bloat(panel, w):
     seats = _seat_count(panel)
     raw = panel.get("findings_raw") if _is_count(panel.get("findings_raw")) else _sum(panel, "total")
-    avg = raw / seats if seats else 0
-    if not (raw >= w["bloat_total"] or (seats >= w["bloat_min_seats"] and avg >= w["bloat_per_seat"])):
+    if not is_bloated(raw, seats, w):
         return None
     performed = _is_count(panel.get("findings_raw")) and _is_count(panel.get("findings_after_triage"))
     if performed:

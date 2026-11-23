@@ -19,6 +19,13 @@ def panel(pid, seats, counts, raw=None, triaged=None):
             "findings_raw": raw, "findings_after_triage": triaged}
 
 
+class IsBloated(unittest.TestCase):
+    def test_total(self): self.assertTrue(watches.is_bloated(30, 1, W))
+    def test_per_seat(self): self.assertTrue(watches.is_bloated(24, 3, W))
+    def test_quiet(self): self.assertFalse(watches.is_bloated(10, 2, W))
+    def test_no_seats(self): self.assertFalse(watches.is_bloated(0, 0, W))
+
+
 class Bloat(unittest.TestCase):
     def test_fires_on_total_and_marks_performed_when_triaged(self):
         p = panel("p1", "abc", {"a": (12, 12, 0, 0, 1), "b": (10, 10, 0, 0, 1), "c": (10, 10, 0, 0, 1)}, raw=40, triaged=20)

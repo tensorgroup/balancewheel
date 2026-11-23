@@ -21,7 +21,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "usage-map" / "data.generated.js"
-MODULE_DIRS = ("lead", "lead/guard", "metrics", "cockpit", "seats")
+MODULE_DIRS = ("lead", "lead/guard", "metrics", "cockpit", "seats", "panel")
 
 
 def rel(p):

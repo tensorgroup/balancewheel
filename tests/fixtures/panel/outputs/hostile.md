@@ -1,0 +1,374 @@
+Hostile output.
+
+```json
+[{"title": "bad", "claim": "a fence follows
+```
+more"}]
+```
+```
+Valid block:
+
+```json
+[
+ {
+  "severity": "major",
+  "where": "h.py:0",
+  "title": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": 7,
+  "where": "h.py:1",
+  "title": "t1 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:2",
+  "title": "t2 \u001b[31mred\u0007",
+  "claim": "has ``` three backticks"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:3",
+  "title": "t3 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:4",
+  "title": "t4 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:5",
+  "title": "t5 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:6",
+  "title": "t6 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:7",
+  "title": "t7 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:8",
+  "title": "t8 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:9",
+  "title": "t9 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:10",
+  "title": "t10 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:11",
+  "title": "t11 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:12",
+  "title": "t12 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:13",
+  "title": "t13 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:14",
+  "title": "t14 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:15",
+  "title": "t15 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:16",
+  "title": "t16 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:17",
+  "title": "t17 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:18",
+  "title": "t18 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:19",
+  "title": "t19 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:20",
+  "title": "t20 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:21",
+  "title": "t21 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:22",
+  "title": "t22 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:23",
+  "title": "t23 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:24",
+  "title": "t24 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:25",
+  "title": "t25 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:26",
+  "title": "t26 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:27",
+  "title": "t27 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:28",
+  "title": "t28 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:29",
+  "title": "t29 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:30",
+  "title": "t30 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:31",
+  "title": "t31 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:32",
+  "title": "t32 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:33",
+  "title": "t33 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:34",
+  "title": "t34 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:35",
+  "title": "t35 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:36",
+  "title": "t36 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:37",
+  "title": "t37 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:38",
+  "title": "t38 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:39",
+  "title": "t39 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:40",
+  "title": "t40 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:41",
+  "title": "t41 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:42",
+  "title": "t42 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:43",
+  "title": "t43 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:44",
+  "title": "t44 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:45",
+  "title": "t45 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:46",
+  "title": "t46 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:47",
+  "title": "t47 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:48",
+  "title": "t48 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:49",
+  "title": "t49 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:50",
+  "title": "t50 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:51",
+  "title": "t51 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:52",
+  "title": "t52 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:53",
+  "title": "t53 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:54",
+  "title": "t54 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:55",
+  "title": "t55 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:56",
+  "title": "t56 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:57",
+  "title": "t57 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:58",
+  "title": "t58 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ },
+ {
+  "severity": "major",
+  "where": "h.py:59",
+  "title": "t59 \u001b[31mred\u0007",
+  "claim": "c\u0000\u001b]0;x\u0007"
+ }
+]
+```
