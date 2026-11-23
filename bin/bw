@@ -21,6 +21,8 @@
                                                   its inbox file
   bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
   bw setup cc-switch                              pre-write cc-switch's settings (before its first launch)
+  bw seat <id> [-b] [-r] [-d DIR] [--deep] "prompt"   run one read-only seat (the panel runs seats for you)
+  bw seat list [--json]                           seats, verification, caps
   bw improve                                      what bw has seen of how you work, as changes worth making
   bw improve note "<text>"                        add your own note on what got in the way
   bw improve done <key>                           dealt with: it returns only on new evidence (a note never)
@@ -46,6 +48,7 @@ from lead import ccswitch, inbox, probes, quota, registry, runner, sandbox, star
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
 from lead.guard.review import safe  # noqa: E402
 from lead import improve, triage_install  # noqa: E402
+from seats import cli as seat_cli  # noqa: E402
 from lead.paths import ConfigError, load_config, state_dir  # noqa: E402  (also puts metrics/ on sys.path)
 import store  # noqa: E402
 from lead.projects import resolve_project, worktree_key  # noqa: E402
@@ -53,7 +56,7 @@ from lead import proc  # noqa: E402
 from lead.paths import read_json, write_json_atomic  # noqa: E402
 
 COMMANDS = ("lead", "status", "registry", "probe", "start", "inbox", "answer", "cockpit", "cap", "sandbox", "guard", "triage", "improve",
-            "setup")
+            "setup", "seat")
 DECIDED_SEEN = "triage-seen.json"  # when `bw inbox --all` last showed the decided items
 START_STALE_S = 86400  # tools not updated by bw start for this long get a one-line nudge
 
@@ -378,6 +381,10 @@ def cmd_setup(a):
     return code
 
 
+def cmd_seat(a, config, state):
+    return seat_cli.main(a.rest, config, state)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="bw", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -411,7 +418,10 @@ def main(argv=None):
     im = sub.add_parser("improve"); im.add_argument("what", nargs="?", choices=["note", "done"])
     im.add_argument("rest", nargs="*")
     st = sub.add_parser("setup"); st.add_argument("what", choices=["cc-switch"])
+    sub.add_parser("seat", add_help=False)  # listed for --help; `bw seat` parses its own argv
     argv, outside = default_argv(sys.argv[1:] if argv is None else argv, os.getcwd())
+    if argv and argv[0] == "seat":
+        return _dispatch(argparse.Namespace(cmd="seat", rest=argv[1:]))
     a = ap.parse_args(argv)
     if outside:
         code = _dispatch(a)
@@ -441,7 +451,8 @@ def _dispatch(a):
         sys.exit(f"bw: unknown lead {a.use!r}")
     return {"lead": cmd_lead, "start": cmd_start, "status": cmd_status, "cap": cmd_cap, "registry": cmd_registry, "probe": cmd_probe,
             "cockpit": cmd_cockpit,
-            "sandbox": cmd_verify, "inbox": cmd_inbox, "answer": cmd_answer, "improve": cmd_improve}[a.cmd](a, config, state)
+            "sandbox": cmd_verify, "inbox": cmd_inbox, "answer": cmd_answer, "improve": cmd_improve,
+            "seat": cmd_seat}[a.cmd](a, config, state)
 
 
 if __name__ == "__main__":

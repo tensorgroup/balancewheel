@@ -19,6 +19,10 @@ not against the prose.
   (defaults 12, 30, 2, 4).
 - **`seats.*.tier`**: `default` or `reserved`.
 - **Reserved seat names.** The seat names `verify` and `list` are reserved for `bw seat`.
+- **`bw seat <id>` and `bw seat list`.** `bw seat <id>` runs one read-only seat and prints the answer on
+  stdout (exit 124 on the cap, 75 when refused, 143 after SIGTERM, 2 on a usage error).
+  `--result F` writes the run result as JSON, also for a refusal. `bw seat list [--json]` shows each seat
+  with its verification and caps.
 - **`seats/` package.** Per-seat sessions (`state_dir/seats/sessions/`) and seat caps
   (`state_dir/seats/caps/`).
 - **The seat brief** (`seats/brief.py`), cached in `state_dir/seats/briefs/`.
