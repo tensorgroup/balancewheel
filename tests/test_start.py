@@ -449,6 +449,12 @@ class StartCase(unittest.TestCase):
         self.assertIn("bw start: checking seats in the background (log: ", out)
         self.assertIn("verify-log.txt", out)
 
+    def test_seat_verify_child_gets_start_env(self):
+        # start() may run with an env other than os.environ: the child must read the same config.
+        self.start(FakeRun(), update=False)
+        self.assertEqual(self.spawn.call_args.kwargs["env"],
+                         {"BALANCEWHEEL_CONFIG": "/cfg dir/c.json", "BW_STATE_DIR": os.path.abspath(self.state)})
+
     def test_already_running(self):
         with mock.patch.object(seat_verify, "spawn_verify", return_value=False):
             _, out = self.start(FakeRun(), update=False)

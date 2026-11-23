@@ -280,6 +280,16 @@ class Cli(unittest.TestCase):
             self.assertIn("unknown seat 'nope'", err)
             self.assertEqual(self.main(["verify", "astra", "--all"], run=self.fake)[0], 2)
 
+    def test_cli_verify_capped_seat_is_pending(self):
+        # An explicit id keeps the pending rules: a capped seat would record a refusal as a failure.
+        from seats import caps, verify
+        caps.arm(self.state, "astra", time.time(), 5)
+        with mock.patch.object(verify, "verify_seat") as vs:
+            code, out, _ = self.main(["verify", "astra"], run=self.fake)
+        vs.assert_not_called()
+        self.assertEqual(code, 0)
+        self.assertIn("seat astra: pending — ", out)
+
     def test_bw_doc_lists_verify(self):
         bw = load_module("bw_seat_cli_verify", ROOT / "bin" / "bw")
         self.assertIn("  bw seat verify [<id>...] [--all]", bw.__doc__)

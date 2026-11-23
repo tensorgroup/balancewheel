@@ -75,6 +75,16 @@ not against the prose.
   `--ignore-submodules=all`, and submodule recursion and summaries are off. A gitlink's own config or
   attributes (a filter, an fsmonitor) could otherwise run code when a user config sets
   `diff.submodule=diff`.
+- **The seat key binds what the attack ran** (`seats/verify.py`). It hashes `seats/run.py`,
+  `seats/judge.py`, `seats/verify.py`, and `tests/attack/seat_readonly.sh` too. The attack's seat home
+  gets a copy of the real seat home's hook files, so the attack runs the code the key hashes. An edit of
+  the config file during the attack is a changed key. A failure goes on the key that was attacked.
+- **`bw seat verify --changed` does not attack a seat again on a key that already failed**; an explicit
+  `bw seat verify <id>` does. A capped seat, a seat without its login env token, or one whose version is
+  unreadable is pending on both paths. An inconclusive run (a refusal by the model, a timeout) no longer
+  revokes a valid pass. A tampered seat home is a `seats.json` entry, not an exception, and bw never
+  chmods through a link there. `verify-log.txt` moves to `verify-log.1.txt` past 1 MiB. The background
+  verify that `bw start` spawns gets start's own `BALANCEWHEEL_CONFIG` and `BW_STATE_DIR`.
 - **The seat attack takes its denial evidence from bw's own re-runs** (`seats/judge.py`,
   `tests/attack/seat_readonly.sh`). Every probe is re-run as a plain process under the seat's sandbox
   after each phase; a tool result alone never makes a probe denied (a model could print the tag and a

@@ -174,7 +174,7 @@ class SeatRun(unittest.TestCase):
 
     def test_lock_before_verification(self):  # R2
         calls = []
-        real_shared, real_verified = RuntimeLock.shared, verify.is_verified
+        real_shared, real_verified = RuntimeLock.shared, verify.seat_key
 
         def shared(lock):
             calls.append("lock")
@@ -184,10 +184,11 @@ class SeatRun(unittest.TestCase):
             calls.append("verify")
             return real_verified(*a, **kw)
 
-        with mock.patch.object(RuntimeLock, "shared", shared), mock.patch("seats.verify.is_verified", verified):
+        with mock.patch.object(RuntimeLock, "shared", shared), mock.patch("seats.verify.seat_key", verified):
             r = self.seat()
         self.assertTrue(r.ok)
         self.assertEqual(calls[:2], ["lock", "verify"])
+        self.assertEqual(calls.count("verify"), 1)  # the key is read once per run
 
     def test_runtime_lock_held_during_run(self):
         seen = []

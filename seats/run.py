@@ -40,53 +40,43 @@ DENY_READ_ENV = "BW_SEAT_DENY_READ"
 ROW_OPTIONAL = ("session_id", "stand_in_for", "tokens_in", "tokens_out", "cost_usd")
 
 
-class Tampered(Exception):
-    """A seat home component is a symlink or not a dir, or a credential name is not bw's link."""
+Tampered = verify.Tampered  # one seat-home builder: seats.verify.safe_home
+safe_home = verify.safe_home
 
 
 def _stderr(line):
     print(line, file=sys.stderr)
 
 
-def _real_dir(path, name):
-    """Make `path` 0700 when absent. Refuse it when it is a symlink or not a dir (lstat, no follow)."""
-    try:
-        st = os.lstat(path)
-    except FileNotFoundError:
-        os.mkdir(path, 0o700)
-        st = os.lstat(path)
-    if not stat.S_ISDIR(st.st_mode):
-        raise Tampered(name)
-
-
-def safe_home(state, seat) -> str:
-    """`state_dir/seats/homes/<seat>`. Every component from `seats/` down must be a real dir, never
-    a symlink. Raises Tampered with the name of the bad component."""
-    path = state
-    os.makedirs(state, exist_ok=True)
-    for part in ("seats", "homes", seat):
-        path = os.path.join(path, part)
-        _real_dir(path, part)
-    os.chmod(path, 0o700)
-    return path
-
-
 def _link_credentials(home, credentials):
-    """A link in the seat home to each login file. A name is linked only when lstat shows it absent;
-    an existing name that is not the expected link is refused."""
+    """A link in the seat home to each login file. A name is linked only when it is absent; an
+    existing name that is not the expected link is refused. Every step goes through an open dir fd
+    (O_NOFOLLOW), so a dir swapped for a link while this runs is refused, not followed."""
     for real, name, _ in credentials:
-        d = home
-        for part in name.split("/")[:-1]:
-            d = os.path.join(d, part)
-            _real_dir(d, name)
-        link = os.path.join(home, name)
+        parts = name.split("/")
+        fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
-            st = os.lstat(link)
-        except FileNotFoundError:
-            os.symlink(real, link)
-            continue
-        if not stat.S_ISLNK(st.st_mode) or os.readlink(link) != real:
-            raise Tampered(name)
+            for part in parts[:-1]:
+                try:
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                try:
+                    nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                except OSError:
+                    raise Tampered(name)
+                os.close(fd)
+                fd = nxt
+            base = parts[-1]
+            try:
+                st = os.stat(base, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                os.symlink(real, base, dir_fd=fd)
+                continue
+            if not stat.S_ISLNK(st.st_mode) or os.readlink(base, dir_fd=fd) != real:
+                raise Tampered(name)
+        finally:
+            os.close(fd)
 
 
 def _write_private(path, text):
@@ -214,9 +204,9 @@ class _Run:
         """The refusal reason when the seat has no pass on its current key, else None."""
         if self.opts["attack"] and verify.check_token(self.state, self.seat, self.now()):
             return None
-        if verify.is_verified(self.config, self.state, self.seat, self.run):
+        key = verify.seat_key(self.config, self.state, self.seat, self.run)  # read once
+        if verify._status(self.state, self.seat, key)[0] is not None:
             return None
-        key = verify.seat_key(self.config, self.state, self.seat, self.run)
         if key.get("runtime_version") == "unreadable":
             return f"unverified: {self.runtime} version unreadable"
         return "unverified"

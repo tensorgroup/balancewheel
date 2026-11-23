@@ -111,6 +111,12 @@ def _verify(argv, config, state, run, out, err):
             return _verify_changed(config, state, run, out)
         passed = True
         for name in a.ids or verify.seat_items(config):
+            # A capped, loginless, or unreadable seat cannot prove anything now: pending, not a failure.
+            why = verify.pending_reason(config, state, name, verify.seat_key(config, state, name, run=run),
+                                        time.time())
+            if why:
+                print(f"seat {name}: pending — {why}", file=out)
+                continue
             ok, msg = verify.verify_seat(config, state, name, run=run)
             print(msg, file=out)
             passed = passed and ok

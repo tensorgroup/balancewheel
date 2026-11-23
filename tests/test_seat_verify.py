@@ -86,6 +86,32 @@ class SeatVerify(unittest.TestCase):
         for name in ("def seat_grants", "SEAT_TOOLCHAIN_READS", "LEAD_SESSION_STORES", "def seat_env"):
             self.assertNotIn(name, lead_src)
 
+    def test_key_hashes_the_seat_code_the_attack_runs(self):
+        k = verify.seat_key(self.config, self.state, "astra", run=FAKE)
+        self.assertEqual(sorted(k["seat_code_sha"]), ["judge.py", "run.py", "verify.py"])
+        self.assertEqual(k["attack_sha"], containment.sha_file(verify.SCRIPT))
+        with mock.patch.object(verify.containment, "sha_file", side_effect=lambda p: "edited:" + os.path.basename(p)):
+            self.assertNotEqual(verify.seat_key(self.config, self.state, "astra", run=FAKE), k)
+
+    def test_tampered_home_is_an_entry_not_an_exception(self):
+        os.makedirs(os.path.join(self.state, "seats", "homes"))
+        elsewhere = os.path.join(self.tmp.name, "elsewhere"); os.makedirs(elsewhere)
+        os.symlink(elsewhere, os.path.join(self.state, "seats", "homes", "astra"))
+        out = verify.write_seats_json(self.config, self.state, run=FAKE)
+        self.assertEqual(out["astra"]["failed_probe"], verify.TAMPERED)
+        self.assertIn("opus", out)  # the other seats still count
+        self.assertEqual(os.listdir(elsewhere), [])  # no chmod or mkdir through the link
+
+    def test_verify_log_rotates(self):
+        log = os.path.join(self.state, "seats", "verify-log.txt")
+        os.makedirs(os.path.dirname(log))
+        Path(log).write_bytes(b"x" * (verify.VERIFY_LOG_MAX + 1))
+        with mock.patch.object(verify.subprocess, "Popen") as popen:
+            self.assertTrue(verify.spawn_verify(self.config, self.state, env={"BALANCEWHEEL_CONFIG": "/c.json"}))
+        self.assertTrue(os.path.exists(os.path.join(self.state, "seats", "verify-log.1.txt")))
+        self.assertEqual(os.path.getsize(log), 0)
+        self.assertEqual(popen.call_args.kwargs["env"]["BALANCEWHEEL_CONFIG"], "/c.json")
+
     def test_agy_backend_is_sandbox_exec(self):
         self.assertEqual(verify.seat_key(self.config, self.state, "gem", run=FAKE)["backend"], "sandbox-exec")
 
@@ -290,6 +316,60 @@ class SeatAttack(unittest.TestCase):
         self.assertFalse(any("token" in a for a in fake.argv))  # R23
         self.assertTrue(json.loads(Path(self.state, "seats.json").read_text())["astra"]["verified"])
 
+    def test_inconclusive_attack_keeps_the_pass(self):
+        # A refusal by the model proves nothing: it must not revoke a valid pass on the same key.
+        ok, _ = verify.verify_seat(self.config, self.state, "astra", run=AttackRun("PASS — evidence in /ev\n"))
+        self.assertTrue(ok)
+        refused = AttackRun("FAIL: control-failed:fresh resume-not-exercised — evidence in /ev\n", rc=1)
+        ok, msg = verify.verify_seat(self.config, self.state, "astra", run=refused)
+        self.assertFalse(ok)
+        self.assertIn("inconclusive", msg)
+        self.assertTrue(verify.is_verified(self.config, self.state, "astra", run=refused))
+
+    def test_failure_recorded_on_the_key_attacked(self):
+        # The tool updates after the attack: the failure belongs to the version that was attacked.
+        fake = AttackRun("FAIL: probe-file:fresh:g1 — evidence in /ev\n", rc=1, after="codex-cli 10.0")
+        verify.verify_seat(self.config, self.state, "astra", run=fake)
+        failures = json.loads(Path(self.state, "seats", "failures.json").read_text())
+        self.assertEqual(failures["astra"]["key"]["runtime_version"], "codex-cli 9.9")
+        self.assertNotIn(verify.CONFIG_SHA, failures["astra"]["key"])
+
+    def test_config_edit_during_the_attack_is_a_changed_key(self):
+        cfg = os.path.join(self.tmp.name, "c.json")
+        Path(cfg).write_text("{}")
+        self.config["path"] = cfg
+
+        class Edits(AttackRun):
+            def __call__(self, argv, timeout, **kw):
+                r = super().__call__(argv, timeout, **kw)
+                if len(argv) != 2:
+                    Path(cfg).write_text('{"changed": true}')
+                return r
+        ok, msg = verify.verify_seat(self.config, self.state, "astra", run=Edits("PASS — evidence in /ev\n"))
+        self.assertFalse(ok)
+        self.assertIn("key changed", msg)
+        ok, _ = verify.verify_seat(self.config, self.state, "astra", run=AttackRun("PASS — evidence in /ev\n"))
+        self.assertTrue(ok)
+        stored = json.loads(Path(self.state, "seat-verify.json").read_text())["astra"]["key"]
+        self.assertNotIn(verify.CONFIG_SHA, stored)
+
+    def test_attack_home_seeded_with_the_real_hook_files(self):
+        # The key hashes the real seat home's hook files: the attack must run that same code.
+        home = verify.seat_home(self.state, "astra", "codex")
+        Path(home, "config.toml").write_text("model = 'x'\n")
+        Path(home, "skills", "s.md").write_text("skill\n")
+        seen = {}
+
+        class Look(AttackRun):
+            def __call__(self, argv, timeout, **kw):
+                if len(argv) != 2:
+                    attack_home = os.path.join(argv[argv.index("--run") + 1], "state", "seats", "homes", "astra")
+                    seen["config"] = Path(attack_home, "config.toml").read_text()
+                    seen["skill"] = Path(attack_home, "skills", "s.md").read_text()
+                return super().__call__(argv, timeout, **kw)
+        verify.verify_seat(self.config, self.state, "astra", run=Look("PASS — evidence in /ev\n"))
+        self.assertEqual(seen, {"config": "model = 'x'\n", "skill": "skill\n"})
+
     def test_lead_homes_on_argv(self):
         home = os.environ["HOME"]
         for d in (".claude", ".codex"):
@@ -436,6 +516,24 @@ class SeatAttack(unittest.TestCase):
         self.assertEqual(states(), ("verified", "key matches the recorded pass"))
         self.assertEqual(fake.calls, 1)
         self.assertEqual(verify.reverify_seats(self.config, self.state, "kimi", now, run=fake), [])  # kimi disabled
+
+    def test_same_key_failure_not_attacked_again_by_changed(self):
+        # bw start runs --changed on every start: a seat that failed on this key waits for an explicit id.
+        fail = AttackRun("FAIL: probe-file:fresh:g1 — evidence in /ev\n", rc=1)
+        now = time.time()
+        self.assertEqual(verify.reverify_seats(self.config, self.state, "codex", now, run=fail)[0].state, "failed")
+        again = verify.reverify_seats(self.config, self.state, "codex", now, run=fail)
+        self.assertEqual(again[0].state, "pending")
+        self.assertIn("bw seat verify astra", again[0].reason)
+        self.assertEqual(fail.calls, 1)
+
+    def test_loginless_seat_is_pending_not_attacked(self):
+        fake = AttackRun("PASS — evidence in /ev\n")
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": ""}):
+            items = verify.reverify_seats(self.config, self.state, "claude-code", time.time(), run=fake)
+        self.assertTrue(items)
+        self.assertTrue(all(i.state == "pending" and i.reason.startswith("no login") for i in items))
+        self.assertEqual(fake.calls, 0)
 
     def test_reverify_version_unreadable_from_key(self):
         def no_cli(argv, timeout, **kw):

@@ -205,7 +205,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     code = _workspace(state, project, run, bw, env, say)
 
     # 7. the seats, in the background (after the lead opens; no seat key is read here)
-    _seats(config, state, verify, bw, say)
+    _seats(config, state, verify, bw, say, env)
 
     # 8. pointers and checks
     say("cockpit: run bw cockpit")
@@ -216,12 +216,12 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     return code
 
 
-def _seats(config, state, verify, bw, say):
+def _seats(config, state, verify, bw, say, env):
     if not verify:
         say("seats: not checked (--no-verify)")
         return
-    try:
-        started = seat_verify.spawn_verify(config, state, bw=bw)
+    try:  # the child gets start()'s own config and state, as absolute paths (as the lead does)
+        started = seat_verify.spawn_verify(config, state, bw=bw, env=dict(_passed(env)))
     except Exception as e:  # never the start's end, and never the exception's text
         say(f"seats: could not start the check ({type(e).__name__})")
         return

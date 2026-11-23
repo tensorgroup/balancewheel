@@ -25,6 +25,9 @@ from lead.paths import ROOT, read_json, write_json_atomic
 from seats import adapters, caps, judge
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+# The seat code an attack exercises: a change to any of them is a new key (with adapters.py and
+# grants.py, hashed by name below). The script is the attack itself.
+SEAT_CODE = ("run.py", "judge.py", "verify.py")
 PASS_STORE = "seat-verify.json"
 ATTACK_ROOT = os.path.join("~", ".cache", "bw-seat-attack")
 SCRIPT = os.path.join(ROOT, "tests", "attack", "seat_readonly.sh")
@@ -38,6 +41,8 @@ PLANTED_LIST = "planted.list"  # <run>/planted.list: each path the script plants
 MADE_SSH = "made-ssh"  # <run>/made-ssh: the script made ~/.ssh
 RUN_MAX_AGE_S = 7 * 24 * 3600
 INCOMPLETE = "attack-incomplete"  # the probe recorded when the script printed no FAIL line (a timeout, a crash)
+TAMPERED = "seat home tampered"  # seats.json's failed_probe when the seat home has a link or a non-dir
+VERIFY_LOG_MAX = 1024 * 1024  # bytes: verify-log.txt moves to verify-log.1.txt past this
 # The real home dir of each lead runtime: the seat attack probes a write into each one that a lead uses.
 LEAD_HOMES = {"claude-code": lambda: "~/.claude", "codex": lambda: os.environ.get("CODEX_HOME") or "~/.codex",
               "pi": lambda: "~/.pi/agent", "kimi": lambda: os.environ.get("KIMI_CODE_HOME") or "~/.kimi-code",
@@ -94,31 +99,63 @@ def hold_lock(state):
         os.close(fd)  # closing releases the flock
 
 
-def spawn_verify(config, state, seats=None, bw=None) -> bool:
+def spawn_verify(config, state, seats=None, bw=None, env=None) -> bool:
     """Start one detached `bw seat verify` child (`--changed` unless `seats` names ids) and return at
     once. The child holds `verify.lock` for its whole run. False, and no child, when the lock is held.
 
     Known race (documented, not closed): the parent only checks the lock, then spawns; the child takes
     it on its own. Two spawns in that gap start two children, and the second exits with status 75 on
     the child's own lock, so one verify still runs at a time. The fd is not passed down: the child's
-    own `hold_lock` would then block on its parent's open file description."""
+    own `hold_lock` would then block on its parent's open file description. `env`: names to pass to
+    the child over os.environ (`bw start` passes its own BALANCEWHEEL_CONFIG and BW_STATE_DIR)."""
     with hold_lock(state) as free:
         if not free:
             return False
     argv = [sys.executable, bw or BW, "seat", "verify", *(seats or ["--changed"])]
-    with open(os.path.join(_seats_dir(state), "verify-log.txt"), "ab") as log:
+    path = os.path.join(_seats_dir(state), "verify-log.txt")
+    try:
+        if os.path.getsize(path) > VERIFY_LOG_MAX:
+            os.replace(path, os.path.join(_seats_dir(state), "verify-log.1.txt"))
+    except OSError:
+        pass
+    with open(path, "ab") as log:
         subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
-                         env={**os.environ, "BW_STATE_DIR": state})
+                         env={**os.environ, **(env or {}), "BW_STATE_DIR": state})
     return True
 
 
+class Tampered(OSError):
+    """A seat home component is a symlink or not a dir, or a credential name is not bw's link."""
+
+
+def _real_dir(path, name):
+    """Make `path` 0700 when absent. Refuse it when it is a symlink or not a dir (lstat, no follow)."""
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        os.mkdir(path, 0o700)
+        st = os.lstat(path)
+    if not stat.S_ISDIR(st.st_mode):
+        raise Tampered(name)
+
+
+def safe_home(state, seat) -> str:
+    """`state_dir/seats/homes/<seat>`. Every component from `seats/` down must be a real dir, never
+    a symlink, before any chmod. Raises Tampered with the name of the bad component."""
+    path = state
+    os.makedirs(state, exist_ok=True)
+    for part in ("seats", "homes", seat):
+        path = os.path.join(path, part)
+        _real_dir(path, part)
+    os.chmod(path, 0o700)  # checked above: a real dir, not a link
+    return path
+
+
 def seat_home(state, seat, runtime=None) -> str:
-    """`state_dir/seats/homes/<seat>`, created 0700. With `runtime`, the runtime's code dirs are made
-    in it too, before any seat key reads the hook manifests, so verify, run, and the attack all see
-    the same key. Raises OSError when the home was tampered with (adapters.make_code_dirs)."""
-    home = os.path.join(state, "seats", "homes", seat)
-    os.makedirs(home, mode=0o700, exist_ok=True)
-    os.chmod(home, 0o700)
+    """The seat home (`safe_home`: no component is a link). With `runtime`, the runtime's code dirs are
+    made in it too, before any seat key reads the hook manifests, so verify, run, and the attack all see
+    the same key. Raises OSError (Tampered among them) when the home was tampered with."""
+    home = safe_home(state, seat)
     if runtime:
         adapters.make_code_dirs(runtime, home)
     return home
@@ -144,6 +181,8 @@ def seat_key(config, state, seat, run=proc.run) -> dict:
     key.update({"seat": seat, "model": s["model"], "effort": adapters.effort(s, False), "args": list(s.get("args", [])),
                 "seat_adapter_sha": containment.sha_file(os.path.join(HERE, "adapters.py")),
                 "seat_grants_sha": containment.sha_file(os.path.join(HERE, "grants.py")),
+                "seat_code_sha": {n: containment.sha_file(os.path.join(HERE, n)) for n in SEAT_CODE},
+                "attack_sha": containment.sha_file(SCRIPT),
                 "hook_files": {p: _manifest(p) for p in sorted(adapter.hook_files(home))}})
     return key
 
@@ -234,10 +273,20 @@ def write_seats_json(config, state, run=proc.run, now=None) -> dict:
     commands run before the lock is taken, so a slow CLI never holds it."""
     path = os.path.join(state, "seats.json")
     os.makedirs(state, exist_ok=True)
-    keys = {seat: seat_key(config, state, seat, run) for seat, s in config["seats"].items() if s.get("enabled", True)}
+    keys = {}
+    for seat, s in config["seats"].items():
+        if s.get("enabled", True):
+            try:
+                keys[seat] = seat_key(config, state, seat, run)
+            except OSError:  # a tampered seat home: this seat's entry says so; the others still count
+                keys[seat] = None
     with _flock(path + ".lock"):
         out = {}
         for seat, key in keys.items():
+            if key is None:
+                out[seat] = {"verified": False, "runtime_version": None, "verified_at": None,
+                             "failed_probe": TAMPERED}
+                continue
             good, failure, any_record = _status(state, seat, key)
             if good is not None:
                 probe = None
@@ -381,6 +430,39 @@ def lead_homes(config) -> list:
     return out
 
 
+CONFIG_SHA = "_config_sha"  # compared across the attack, never recorded
+INCONCLUSIVE = ("refusal by the model is inconclusive", "attack timed out")
+
+
+def _without_config(key):
+    return {k: v for k, v in key.items() if k != CONFIG_SHA}
+
+
+def inconclusive(msg) -> bool:
+    """True when `bw seat verify`'s message says the run proved nothing either way."""
+    return any(s in msg for s in INCONCLUSIVE)
+
+
+def _seed_attack_home(state, attack_state, seat, runtime):
+    """Copy the real seat home's hook files into the attack's seat home, so the attack runs the same
+    code the seat key hashes. Links are copied as links. A home that is tampered with raises."""
+    real = seat_home(state, seat, runtime)
+    target = seat_home(attack_state, seat, runtime)
+    adapter = adapters.SEAT_ADAPTERS[runtime]
+    for src in adapter.hook_files(real):
+        if not os.path.lexists(src):
+            continue
+        dst = os.path.join(target, os.path.relpath(src, real))
+        os.makedirs(os.path.dirname(dst), mode=0o700, exist_ok=True)
+        if os.path.isdir(src) and not os.path.islink(src):
+            shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
+        elif os.path.islink(src):
+            if not os.path.lexists(dst):
+                os.symlink(os.readlink(src), dst)
+        else:
+            shutil.copy2(src, dst, follow_symlinks=False)
+
+
 def failure_message(stdout) -> str:
     """What `bw seat verify` says when the attack script did not print PASS."""
     names = judge.failure_names(stdout)
@@ -410,24 +492,44 @@ def verify_seat(config, state, seat, run=proc.run, now=time.time, _seats_json=Tr
     argv += [a for home in lead_homes(config) for a in ("--lead-home", home)]
     argv += ["--deny-read", os.path.realpath(state)]  # the attack's runs use RUN/state: deny the real one too
 
+    keys = []
+
     def key_fn():
-        return seat_key(config, state, seat, run)
+        # The child reads the config file: its sha is in the compared key, so an edit during the attack
+        # is a changed key. The recorded key leaves it out.
+        key = {**seat_key(config, state, seat, run), CONFIG_SHA: containment.sha_file(config.get("path") or "")}
+        keys.append(key)
+        return key
 
     def record(key, evidence):
-        containment.record_pass(state, seat, key, evidence, store=PASS_STORE)
+        containment.record_pass(state, seat, _without_config(key), evidence, store=PASS_STORE)
 
     try:
         issue_token(attack_state, seat, now(), timeout)
+        _seed_attack_home(state, attack_state, seat, runtime)
         ok, msg = lead_verify._attack(state, run, argv, key_fn, record, failure_message, "seat", runtime,
                                       f"seat {seat}", timeout=timeout)
-        if not ok and not msg.endswith(lead_verify.KEY_CHANGED):  # a changed key was never attacked
-            record_failure(state, seat, key_fn(), judge.failure_probe(msg) or INCOMPLETE, now())
+        # A changed key was never attacked; an inconclusive run (a refusal, a timeout) proves nothing,
+        # so it never revokes a pass. A failure goes on the key the attack ran against.
+        if not ok and keys and not msg.endswith(lead_verify.KEY_CHANGED) and not inconclusive(msg):
+            record_failure(state, seat, _without_config(keys[0]), judge.failure_probe(msg) or INCOMPLETE, now())
     finally:
         clear_token(attack_state, seat)
         sweep(run_dir)
         if _seats_json:
             write_seats_json(config, state, run=run)
     return ok, msg
+
+
+def pending_reason(config, state, name, key, now, version_ok=True):
+    """Why an attack on `name` cannot prove anything now, else None: the version is unreadable, the
+    seat is capped, or its login env token is absent. Both `--changed` and an explicit id use it."""
+    if not version_ok or key.get("runtime_version") == "unreadable":
+        return "version unreadable"
+    why = caps.capped(config, state, name, now)
+    if why:
+        return why
+    return adapters.login_missing(config["seats"][name]["runtime"], os.environ)
 
 
 def _reverify_one(config, state, runtime, name, now, run, allow_run, version_ok):
@@ -437,11 +539,13 @@ def _reverify_one(config, state, runtime, name, now, run, allow_run, version_ok)
         return lead_verify.Item(runtime, kind, "verified", "key matches the recorded pass")
     if not allow_run:
         return lead_verify.Item(runtime, kind, "pending", "--no-verify")
-    if not version_ok or key.get("runtime_version") == "unreadable":
-        return lead_verify.Item(runtime, kind, "pending", "version unreadable")
-    why = caps.capped(config, state, name, now)
+    why = pending_reason(config, state, name, key, now, version_ok)
     if why:
         return lead_verify.Item(runtime, kind, "pending", why)
+    failure = _status(state, name, key)[1]
+    if failure.get("key") == key:  # the same key failed before: attack again only on an explicit id
+        return lead_verify.Item(runtime, kind, "pending", f"failed on this key ({failure.get('probe')}); "
+                                f"run `bw seat verify {name}` after a fix")
     ok, msg = verify_seat(config, state, name, run=run, _seats_json=False)
     return lead_verify.Item(runtime, kind, "passed" if ok else "failed", msg)
 
