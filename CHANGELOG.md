@@ -21,6 +21,7 @@ not against the prose.
 - **Reserved seat names.** The seat names `verify` and `list` are reserved for `bw seat`.
 - **`seats/` package.** Per-seat sessions (`state_dir/seats/sessions/`) and seat caps
   (`state_dir/seats/caps/`).
+- **The seat brief** (`seats/brief.py`), cached in `state_dir/seats/briefs/`.
 
 ### Changed
 
