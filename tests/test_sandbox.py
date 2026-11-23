@@ -440,14 +440,20 @@ class SeatGrants(unittest.TestCase):
         self.state = str(root / "state"); os.mkdir(self.state)
         self.state_link = str(root / "state-link"); os.symlink(self.state, self.state_link)
         self.home = os.path.join(self.state, "seats", "homes", "s"); os.makedirs(self.home)
-        self.scratch = str(root / "scratch"); os.mkdir(self.scratch)
+        self.scratch = tempfile.mkdtemp(dir=sandbox.seat_scratch_root())
         self.other = str(root / "other"); os.mkdir(self.other)
         self.cred = os.path.join(self.home, "auth.json"); Path(self.cred).write_text("{}")
         self.d = str(root)
         self.none = sandbox.RuntimeGrants([], [], {}, False, ())
 
     def tearDown(self):
+        shutil.rmtree(self.scratch, ignore_errors=True)
         self.tmp.cleanup()
+
+    def repo_at(self, where):
+        where = Path(where); where.mkdir(parents=True, exist_ok=True)
+        git(where, "init", "-q"); (where / "f").write_text("x"); git(where, "add", "."); git(where, "commit", "-qm", "i")
+        return resolve_project(str(where), {"projects": {}, "default_profile": "d"})
 
     def grants(self, rt=None, **kw):
         return sandbox.seat_grants(self.project, self.home, rt or self.none, self.state, self.scratch, **kw)
@@ -495,23 +501,56 @@ class SeatGrants(unittest.TestCase):
 
     def test_lead_session_stores_read_denied_unless_seat_writes_them(self):
         fake_home = self.root / "user"
-        for s in sandbox.LEAD_SESSION_STORES[:2]:
-            (fake_home / s).mkdir(parents=True)
+        (fake_home / sandbox.LEAD_SESSION_STORES[0]).mkdir(parents=True)
         with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
             g = self.grants()
-            self.assertIn(str(fake_home / sandbox.LEAD_SESSION_STORES[0]), g.deny_read)
-            self.assertIn(str(fake_home / sandbox.LEAD_SESSION_STORES[1]), g.deny_read)
-            self.assertNotIn(str(fake_home / sandbox.LEAD_SESSION_STORES[2]), g.deny_read)  # absent
+            for s in sandbox.LEAD_SESSION_STORES:  # present or not yet created: all denied
+                self.assertIn(str(fake_home / s), g.deny_read)
             self.home = str(fake_home / ".codex")  # a seat whose home holds a lead store keeps it
             g = self.grants()
             self.assertNotIn(str(fake_home / ".codex" / "sessions"), g.deny_read)
+            self.assertIn(str(fake_home / ".claude" / "projects"), g.deny_read)
 
     def test_target_inside_state_refused(self):
-        inner = Path(self.state) / "repo"; inner.mkdir()
-        git(inner, "init", "-q"); (inner / "f").write_text("x"); git(inner, "add", "."); git(inner, "commit", "-qm", "i")
-        project = resolve_project(str(inner), {"projects": {}, "default_profile": "d"})
+        project = self.repo_at(Path(self.state) / "repo")
         with self.assertRaises(ValueError):
             sandbox.seat_grants(project, self.home, self.none, self.state, self.scratch)
+
+    def test_write_file_outside_home_or_under_code_path_refused(self):
+        in_state = os.path.join(self.state, "containment.json"); Path(in_state).write_text("{}")
+        in_target = os.path.join(self.project.worktree, "f")
+        hooks = os.path.join(self.home, "hooks"); os.mkdir(hooks)
+        under_code = os.path.join(hooks, "h.json"); Path(under_code).write_text("{}")
+        settings = os.path.join(self.home, "settings.json"); Path(settings).write_text("{}")
+        rt = sandbox.RuntimeGrants([], [], {}, False, [hooks, settings])
+        for p in (in_state, in_target, under_code, settings):
+            with self.assertRaises(ValueError, msg=p):
+                self.grants(rt, write_files=[p])
+
+    def test_target_overlapping_a_seat_write_grant_refused(self):
+        inside_home = self.repo_at(os.path.join(self.home, "repo"))
+        with self.assertRaises(ValueError):
+            sandbox.seat_grants(inside_home, self.home, self.none, self.state, self.scratch)
+        sub = os.path.join(self.root, "rt", "sub")
+        target_holds_home = self.repo_at(self.root / "rt")
+        with self.assertRaises(ValueError):  # the target contains the seat home
+            sandbox.seat_grants(target_holds_home, sub, self.none, self.state, self.scratch)
+        in_scratch = self.repo_at(os.path.join(self.scratch, "repo"))
+        with self.assertRaises(ValueError):
+            sandbox.seat_grants(in_scratch, self.home, self.none, self.state, self.scratch)
+
+    def test_scratch_outside_the_scratch_root_refused(self):
+        for bad in (self.other, sandbox.seat_scratch_root()):
+            with self.assertRaises(ValueError, msg=bad):
+                sandbox.seat_grants(self.project, self.home, self.none, self.state, bad)
+
+    def test_target_holding_a_secret_path_refused(self):
+        fake_home = self.root / "user"
+        project = self.repo_at(fake_home)  # ~/.ssh, ~/.aws, ... lie under this target
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            with self.assertRaises(ValueError):
+                sandbox.seat_grants(project, self.home, self.none, self.state, self.scratch)
+            sandbox.seat_grants(self.project, self.home, self.none, self.state, self.scratch)  # a plain repo is fine
 
     def test_seatbelt_rereads_after_deny(self):
         p = sandbox.seatbelt_profile(self.grants(), self.scratch)

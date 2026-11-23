@@ -188,24 +188,38 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
     files it refreshes. It reads the target and its git dir, and nothing of bw's state, of other
     seats' scratch dirs, or of the lead runtimes' session stores."""
     state, home, own_scratch = _real(state_dir), _real(seat_home), _real(scratch)
-    refuse_overlap(target.worktree, [state])
-    refuse_overlap(target.common_dir, [state])
+    scratch_root = seat_scratch_root()
+    if not own_scratch.startswith(scratch_root + "/"):
+        raise ValueError(f"refusing a seat scratch dir outside {scratch_root}: {own_scratch}")
     writes = [_real(p) for p in runtime_grants.write]
     for w in writes:
         if not _inside(w, [home]):
             raise ValueError(f"refusing: seat write grant {w} lies outside the seat home {home}")
+    # The target is read-only: it overlaps neither bw's state nor anything the seat writes.
+    for t in (target.worktree, target.common_dir):
+        refuse_overlap(t, [state, home, own_scratch] + writes)
+    # A secret under the target would be readable: the profile skips secret denies inside read grants.
+    user_home = os.path.expanduser("~")
+    for s in SECRET_READS:
+        secret = os.path.realpath(os.path.join(user_home, s))
+        if _inside(secret, [_real(target.worktree), _real(target.common_dir)]):
+            raise ValueError(f"refusing a seat target that contains the secret path {secret}")
+    code = [_real(p) for p in runtime_grants.deny_write]
     rules = [("allow", "subpath", home)] + [("allow", "subpath", w) for w in writes]
-    rules += [("deny", "subpath", _real(p)) for p in runtime_grants.deny_write]
+    rules += [("deny", "subpath", p) for p in code]
     for f in write_files:
         given = os.path.abspath(os.path.expanduser(f))
         if os.path.islink(given) or not os.path.isfile(given):
             raise ValueError(f"refusing a seat write file that is not a regular file: {given}")
-        rules.append(("allow", "literal", _real(given)))
+        real = _real(given)
+        if not _inside(real, [home]) or _inside(real, code):
+            raise ValueError(f"refusing a seat write file outside the seat home or under a code path: {real}")
+        rules.append(("allow", "literal", real))
     reads = [_real(target.worktree), _real(target.common_dir)] + [_real(p) for p in runtime_grants.read]
-    user_home = os.path.expanduser("~")
+    # Denied whether or not a store exists yet: a lead may create it while the seat runs.
     stores = [os.path.realpath(os.path.join(user_home, s)) for s in LEAD_SESSION_STORES]
-    stores = [check_path(p) for p in stores if os.path.exists(p) and not _inside(p, [home] + writes)]
-    denied = [state, seat_scratch_root()] + stores
+    stores = [check_path(p) for p in stores if not _inside(p, [home] + writes)]
+    denied = [state, scratch_root] + stores
     return Grants(rules, reads, denied, [home, own_scratch])
 
 
