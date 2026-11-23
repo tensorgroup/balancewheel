@@ -557,6 +557,35 @@ class SeatGrants(unittest.TestCase):
             with self.assertRaises(ValueError, msg=p):
                 self.grants(rt, credentials=[p])
 
+    def test_declared_state_dir_writable_code_names_denied(self):  # ruling S-agy
+        fake_home = self.root / "user"; agy = fake_home / ".gemini" / "agy-state"; agy.mkdir(parents=True)
+        rt = sandbox.RuntimeGrants([], [], {}, False, [str(agy / "settings.json")])
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            g = self.grants(rt, state_dirs=[str(agy)])
+        allow, deny = ("allow", "subpath", str(agy)), ("deny", "subpath", str(agy / "settings.json"))
+        self.assertIn(allow, g.rules)
+        self.assertLess(g.rules.index(allow), g.rules.index(deny))  # the code deny comes after the allow
+        self.assertFalse(any(r[2] == str(fake_home / ".gemini") for r in g.rules))
+
+    def test_state_dir_refused_outside_home_in_bw_paths_or_holding_secrets(self):
+        fake_home = self.root  # bw state, the target, and the seat home all lie under it
+        (fake_home / ".gemini" / "s").mkdir(parents=True)
+        outside = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, outside, True)
+        link = fake_home / "link"; os.symlink(self.other, link)
+        code_dir = fake_home / "code"; (code_dir / "sub").mkdir(parents=True)
+        os.makedirs(os.path.join(self.state, "x"))
+        rt = sandbox.RuntimeGrants([], [], {}, False, [str(code_dir)])
+        bad = [str(fake_home), str(fake_home / ".gemini"),  # the home itself; a dir that holds a secret path
+               outside, self.state, os.path.join(self.state, "x"), self.home, self.scratch,
+               self.project.worktree, os.path.join(self.project.worktree, ".git"),
+               str(link), str(fake_home / "absent"), str(code_dir / "sub")]
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            for p in bad:
+                with self.assertRaises(ValueError, msg=p):
+                    self.grants(rt, state_dirs=[p])
+            for good in (str(fake_home / ".gemini" / "s"), self.other):  # plain dirs under the home
+                self.grants(rt, state_dirs=[good])
+
     def test_target_overlapping_a_seat_write_grant_refused(self):
         inside_home = self.repo_at(os.path.join(self.home, "repo"))
         with self.assertRaises(ValueError):

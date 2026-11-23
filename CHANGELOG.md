@@ -23,11 +23,17 @@ not against the prose.
   (`state_dir/seats/caps/`).
 - **The seat brief** (`seats/brief.py`), cached in `state_dir/seats/briefs/`.
 - **Seat adapters** (`seats/adapters.py`), separate from the lead adapters so a seat change never resets a
-  lead key. Codex and Claude Code first. A Claude Code seat needs `CLAUDE_CODE_OAUTH_TOKEN` (from
-  `claude setup-token`) in the env.
+  lead key. Codex, Claude Code, pi, Kimi Code, and agy. A Claude Code seat needs `CLAUDE_CODE_OAUTH_TOKEN`
+  (from `claude setup-token`) in the env. A pi seat on OpenRouter needs `OPENROUTER_API_KEY` in the env.
+  An agy seat runs on the real home, because its keychain login does not reach a private home. The
+  adapter tuple gains `state_dirs`.
 - **`seat_grants(..., credentials=...)`** (`lead/sandbox.py`). A login file that a seat adapter declares as
   refreshing is readable and writable at its real path, as one file only. bw refuses a credential that is a
   symlink, is not a regular file, or lies in bw state, the target, a code path, or the seat scratch root.
+- **`seat_grants(..., state_dirs=...)`** (`lead/sandbox.py`). A CLI state dir under the user's home that a
+  seat adapter declares (agy only) is writable; the code names in it stay read-only. bw refuses a dir that
+  is a symlink, is missing, is the home itself, lies outside the home, overlaps bw state, the seat home,
+  the seat scratch root, or the target, lies under a code path, or overlaps a secret path.
 
 ### Fixed
 

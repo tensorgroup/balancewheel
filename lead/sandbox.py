@@ -189,14 +189,37 @@ def _regular_file(f):
     return _real(given)
 
 
-def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_files=(), credentials=()):
+def _state_dir(d, user_home, bw_paths, code):
+    """The real path of a declared state dir, or ValueError. It must be a real dir strictly under the
+    user's home, overlap none of `bw_paths` (bw state, seat scratch, the target, the seat home), lie
+    under no code path, and hold or lie under no secret path."""
+    given = os.path.abspath(os.path.expanduser(d))
+    if os.path.islink(given) or not os.path.isdir(given):
+        raise ValueError(f"refusing a seat state dir that is not a real directory: {given}")
+    real, home = _real(given), os.path.realpath(user_home)
+    if real == home or not _inside(real, [home]):
+        raise ValueError(f"refusing a seat state dir that is not strictly under the home {home}: {real}")
+    refuse_overlap(real, bw_paths)
+    if _inside(real, code):
+        raise ValueError(f"refusing a seat state dir under a code path: {real}")
+    for s in SECRET_READS:
+        secret = os.path.realpath(os.path.join(user_home, s))
+        if _inside(secret, [real]) or _inside(real, [secret]):
+            raise ValueError(f"refusing a seat state dir that overlaps the secret path {secret}: {real}")
+    return real
+
+
+def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_files=(), credentials=(), state_dirs=()):
     """Ordered write rules and read grants for a review seat on `target` (a lead.projects.Project).
     The seat writes only its own home (minus the runtime's code-loading names) and the credential
     files it refreshes. It reads the target and its git dir, and nothing of bw's state, of other
     seats' scratch dirs, or of the lead runtimes' session stores.
     `credentials`: the real login files the adapter declares as refreshing (ruling C-cred). Each one
     is readable and writable at its real path as one literal file, even under a secret read deny.
-    Pass only the adapter's declared credentials here, never a generic write file."""
+    Pass only the adapter's declared credentials here, never a generic write file.
+    `state_dirs`: the CLI's own state dirs under the user's home, for a runtime that cannot run on a
+    private home (agy: ruling S-agy). Each one is writable as a subpath; the code names in
+    `runtime_grants.deny_write` stay read-only inside it. Pass only the adapter's declared dirs."""
     state, home, own_scratch = _real(state_dir), _real(seat_home), _real(scratch)
     scratch_root = seat_scratch_root()
     if not own_scratch.startswith(scratch_root + "/"):
@@ -215,15 +238,17 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
         if _inside(secret, [_real(target.worktree), _real(target.common_dir)]):
             raise ValueError(f"refusing a seat target that contains the secret path {secret}")
     code = [_real(p) for p in runtime_grants.deny_write]
-    rules = [("allow", "subpath", home)] + [("allow", "subpath", w) for w in writes]
-    rules += [("deny", "subpath", p) for p in code]
+    bw_paths = [state, scratch_root, _real(target.worktree), _real(target.common_dir)]
+    dirs = [_state_dir(d, user_home, bw_paths + [home], code) for d in state_dirs]
+    rules = [("allow", "subpath", p) for p in [home] + writes + dirs]
+    rules += [("deny", "subpath", p) for p in code]  # after the allows: a later rule wins
     for f in write_files:
         real = _regular_file(f)
         if not _inside(real, [home]) or _inside(real, code):
             raise ValueError(f"refusing a seat write file outside the seat home or under a code path: {real}")
         rules.append(("allow", "literal", real))
     creds = []
-    forbidden = [state, scratch_root, _real(target.worktree), _real(target.common_dir)] + code
+    forbidden = bw_paths + code
     for f in credentials:
         real = _regular_file(f)
         if _inside(real, forbidden):
@@ -233,7 +258,7 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
     reads = [_real(target.worktree), _real(target.common_dir)] + [_real(p) for p in runtime_grants.read]
     # Denied whether or not a store exists yet: a lead may create it while the seat runs.
     stores = [os.path.realpath(os.path.join(user_home, s)) for s in LEAD_SESSION_STORES]
-    stores = [check_path(p) for p in stores if not _inside(p, [home] + writes)]
+    stores = [check_path(p) for p in stores if not _inside(p, [home] + writes + dirs)]
     denied = [state, scratch_root] + stores
     # A credential inside a secret dir is read again after the secret deny.
     return Grants(rules, reads, denied, [home, own_scratch] + creds)

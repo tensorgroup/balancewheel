@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"sess-0006","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp/target"}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Review the diff."}],"timestamp":1700000000000}}
+{"type":"message_end","message":{"role":"assistant","content":[],"usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","errorMessage":"402 This key is out of credits. Add credits to continue."}}
+{"type":"agent_settled"}

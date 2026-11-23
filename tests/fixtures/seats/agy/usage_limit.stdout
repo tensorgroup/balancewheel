@@ -1,0 +1,1 @@
+{"event":"result","result":{"conversation_id":"sess-0008","status":"ERROR","response":"","error":"RESOURCE_EXHAUSTED: quota exhausted for this plan. Try again later.","finished_reason":"error","num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":10,"cache_read_tokens":0,"total_tokens":10}}}

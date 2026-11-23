@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"sess-0003","timestamp":"2026-01-01T00:10:00.000Z","cwd":"/tmp/target"}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Check the fix."}],"timestamp":1700000000000}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"The fix holds."}],"usage":{"input":300,"output":20,"cacheRead":0,"cacheWrite":0,"totalTokens":320,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0.001}},"stopReason":"stop"}}
+{"type":"agent_settled"}

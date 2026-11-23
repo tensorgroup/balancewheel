@@ -5,13 +5,18 @@ import unittest
 from pathlib import Path
 
 from lead import sandbox
+from lead.codepaths import KIMI_CODE, PI_CODE
+from metrics import config
 from seats import adapters
 
 FIXTURES = Path(__file__).parent / "fixtures" / "seats"
 # Task 2's recorded values (docs/reference-implementation.md, "Seat runtimes under `bw seat`").
 RECORDED_PERMISSION_FLAG = {"codex": ["--dangerously-bypass-approvals-and-sandbox"],
-                            "claude-code": ["--permission-mode", "bypassPermissions"]}
-RECORDED_ENV_KEY = {"claude-code": "CLAUDE_CODE_OAUTH_TOKEN"}
+                            "claude-code": ["--permission-mode", "bypassPermissions"],
+                            "pi": [],  # pi has no approval prompts
+                            "kimi": ["--auto"],
+                            "agy": ["--dangerously-skip-permissions"]}
+RECORDED_ENV_KEY = {"claude-code": "CLAUDE_CODE_OAUTH_TOKEN", "pi": "OPENROUTER_API_KEY"}
 HOME = "/st/seats/homes/astra"
 
 
@@ -77,6 +82,12 @@ class Shared(unittest.TestCase):
                          "no login: run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN")
         self.assertEqual(adapters.login_missing("claude-code", {"CLAUDE_CODE_OAUTH_TOKEN": ""}),
                          "no login: run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN")
+
+    def test_login_missing_pi(self):
+        self.assertEqual(adapters.login_missing("pi", {}), "no login: export OPENROUTER_API_KEY")
+        self.assertIsNone(adapters.login_missing("pi", {"OPENROUTER_API_KEY": "k"}))
+        for rt in ("kimi", "agy"):
+            self.assertIsNone(adapters.login_missing(rt, {}))
 
 
 class Codex(unittest.TestCase):
@@ -382,10 +393,343 @@ class ClaudeCode(unittest.TestCase):
         self.assertEqual(self.ad.inner_sandbox, [])
 
 
-class Registry(unittest.TestCase):
-    def test_runtimes(self):
-        self.assertEqual(set(adapters.SEAT_ADAPTERS), {"codex", "claude-code"})
+class Pi(unittest.TestCase):
+    ad = adapters.SEAT_ADAPTERS["pi"]
+    SEAT = {"runtime": "pi", "model": "m-test", "effort": "high", "args": []}
 
+    def test_argv_and_deep(self):
+        self.assertEqual(self.ad.argv(self.SEAT, "/s/input.md", False),
+                         ["pi", "-p", "--mode", "json", "--model", "m-test", "--no-extensions", "--no-approve",
+                          "--thinking", "high"])
+        self.assertTrue(has_run(self.ad.argv(self.SEAT, "/s/i", True), ["--thinking", adapters.TOP_EFFORT["pi"]]))
+        self.assertNotIn("--thinking", self.ad.argv({"runtime": "pi", "model": "m-test"}, "/s/i", False))
+
+    def test_resume_repeats_flags(self):
+        seat = dict(self.SEAT, args=["--seat-arg"])
+        new, res = self.ad.argv(seat, "/s/i", False), self.ad.resume_argv(seat, "sid", "/s/i", False)
+        self.assertEqual(res, new + ["--session", "sid"])
+        self.assertEqual(self.ad.resume_argv(seat, "--x", "/s/i", False), new)
+
+    def test_no_input_text_on_argv(self):
+        self.assertTrue(all(len(a) < 200 for a in self.ad.argv(self.SEAT, "/s/i", False)))
+        self.assertEqual(self.ad.prompt_via, "stdin")
+
+    def test_parse_ok(self):
+        out, err = fixture("pi", "ok")
+        self.assertEqual(self.ad.session_id(out, err), "sess-0003")
+        self.assertEqual(self.ad.answer(out), "No significant findings.")
+        self.assertEqual(self.ad.usage(out), {"tokens_in": 1200, "tokens_out": 300, "cost_usd": 0.03})
+        self.assertEqual(self.ad.errors(out, err), [])  # the stderr Warning: line is not an error
+
+    def test_prompt_echo_is_not_an_error(self):  # pi echoes the prompt as a user message
+        out, err = fixture("pi", "ok")
+        self.assertTrue(any("usage limit" in line for line in out))
+        self.assertFalse(self.ad.usage_limit(self.ad.errors(out, err)))
+
+    def test_parse_resume(self):
+        out, err = fixture("pi", "resume")
+        self.assertEqual(self.ad.session_id(out, err), "sess-0003")
+        self.assertEqual(self.ad.answer(out), "The fix holds.")
+
+    def test_usage_limit_on_error_lines(self):
+        out, err = fixture("pi", "usage_limit")
+        self.assertTrue(self.ad.usage_limit(self.ad.errors(out, err)))
+        self.assertEqual(self.ad.answer(out), "")
+
+    def test_error_not_a_cap(self):
+        out, err = fixture("pi", "error")
+        errs = self.ad.errors(out, err)
+        self.assertTrue(errs)
+        self.assertFalse(self.ad.usage_limit(errs))
+        self.assertEqual(self.ad.answer(out), "")
+
+    def test_tool_results_not_prose(self):
+        out, _ = fixture("pi", "ok")
+        results = self.ad.tool_results(out)
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].startswith("PROBE:g1\n"))
+        self.assertIn("Operation not permitted", results[0])
+
+    def test_hostile_lines(self):
+        lines = [json.dumps({"type": "session", "id": "-x"}),
+                 json.dumps({"type": "message_end", "message": {"role": "assistant", "content": "x",
+                                                                "usage": {"input": "a", "output": None, "cost": 3}}}),
+                 json.dumps({"type": "message_end", "message": {"role": "assistant", "stopReason": "error",
+                                                                "errorMessage": 5}}),
+                 json.dumps({"type": "message_end", "message": "x"}),
+                 json.dumps({"type": "tool_execution_end", "result": 5})]
+        self.assertIsNone(self.ad.session_id(lines, []))
+        self.assertEqual(self.ad.answer(lines), "")
+        self.assertEqual(self.ad.usage(lines), {"tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0})
+        self.assertEqual(self.ad.errors(lines, []), ["error"])
+        self.assertEqual(self.ad.tool_results(lines), [""])
+
+    def test_grants_inside_home(self):
+        g = self.ad.grants(self.SEAT, HOME)
+        self.assertEqual(g.write, [HOME])
+        self.assertEqual(g.env, {"PI_CODING_AGENT_DIR": HOME})
+        self.assertFalse(g.private_home)  # the real HOME keeps a Volta shim working; the agent dir is the seat home
+        self.assertEqual(self.ad.home_env(HOME), {"PI_CODING_AGENT_DIR": HOME})
+        self.assertEqual(self.ad.credentials, [])
+        self.assertEqual(self.ad.state_dirs, [])
+
+    def test_code_paths_in_home_write_denied(self):  # R14
+        g = self.ad.grants(self.SEAT, HOME)
+        self.assertEqual(sorted(g.deny_write), sorted(f"{HOME}/{n}" for n in PI_CODE))
+        self.assertNotIn(f"{HOME}/sessions", g.deny_write)
+        self.assertEqual(sorted(self.ad.hook_files(HOME)), sorted(g.deny_write))
+
+    def test_permission_flag_present(self):  # R19: pi has none; nothing asks
+        self.assertEqual(RECORDED_PERMISSION_FLAG["pi"], [])
+        self.assertEqual(self.ad.inner_sandbox, [])
+
+    def test_ignore_flags_in_argv(self):
+        argv = self.ad.argv(self.SEAT, "/s/i", False)
+        self.assertEqual(self.ad.ignore_flags, ["--no-extensions", "--no-approve"])
+        self.assertTrue(all(f in argv for f in self.ad.ignore_flags))
+
+    def test_pi_env_keys(self):
+        self.assertIn(RECORDED_ENV_KEY["pi"], self.ad.env_keys)
+
+    def test_static_fields(self):
+        self.assertEqual(self.ad.version_argv, ["pi", "--version"])
+        self.assertEqual(self.ad.backend, "any")
+
+
+class Kimi(unittest.TestCase):
+    """Kimi's OK-path event shapes were not observed (the plan was capped): those fixtures are
+    built from the docs and are unverified."""
+    ad = adapters.SEAT_ADAPTERS["kimi"]
+    SEAT = {"runtime": "kimi", "model": "m-test", "effort": "high", "args": []}
+
+    def test_argv(self):
+        self.assertEqual(self.ad.argv(self.SEAT, "/s/input.md", False),
+                         ["kimi", "-m", "m-test", "--output-format", "stream-json", "--auto",
+                          "-p", adapters.FILE_INSTRUCTION.format(path="/s/input.md")])
+
+    def test_deep_without_knob(self):  # kimi 2.3.2 has no effort flag
+        self.assertEqual(self.ad.argv(self.SEAT, "/s/i", True), self.ad.argv(self.SEAT, "/s/i", False))
+
+    def test_resume_repeats_flags(self):
+        seat = dict(self.SEAT, args=["--seat-arg"])
+        new, res = self.ad.argv(seat, "/s/i", False), self.ad.resume_argv(seat, "sid", "/s/i", False)
+        self.assertEqual(res, new[:-2] + ["-S", "sid"] + new[-2:])
+        self.assertEqual(self.ad.resume_argv(seat, "a b", "/s/i", False), new)
+
+    def test_no_input_text_on_argv(self):
+        self.assertTrue(all(len(a) < 200 for a in self.ad.argv(self.SEAT, "/s/i", False)))
+        self.assertEqual(self.ad.prompt_via, "file")
+
+    def test_parse_ok(self):
+        out, err = fixture("kimi", "ok")
+        self.assertEqual(self.ad.session_id(out, err), "sess-0004")
+        self.assertEqual(self.ad.answer(out), "No significant findings.")
+        self.assertEqual(self.ad.usage(out), {})  # no usage shape is known
+        self.assertEqual(self.ad.errors(out, err), [])
+
+    def test_parse_resume(self):
+        out, err = fixture("kimi", "resume")
+        self.assertEqual(self.ad.session_id(out, err), "sess-0004")
+        self.assertEqual(self.ad.answer(out), "The fix holds.")
+
+    def test_usage_limit_on_error_lines(self):  # the observed shape: one stderr error line, then See log:
+        out, err = fixture("kimi", "usage_limit")
+        errs = self.ad.errors(out, err)
+        self.assertTrue(self.ad.usage_limit(errs))
+        self.assertFalse(any(e.startswith("See log:") for e in errs))
+        self.assertEqual(self.ad.answer(out), "")
+
+    def test_error_not_a_cap(self):
+        out, err = fixture("kimi", "error")
+        errs = self.ad.errors(out, err)
+        self.assertTrue(errs)
+        self.assertFalse(self.ad.usage_limit(errs))
+
+    def test_model_text_is_never_an_error(self):
+        line = json.dumps({"role": "assistant", "content": "the code prints: usage limit reached"})
+        self.assertEqual(self.ad.errors([line], ["usage limit reached in the tool output"]), [])
+
+    def test_tool_results_not_prose(self):
+        out, _ = fixture("kimi", "ok")
+        results = self.ad.tool_results(out)
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].startswith("PROBE:g1\n"))
+
+    def test_hostile_lines(self):
+        lines = [json.dumps({"type": "session.resume_hint", "session_id": 5}),
+                 json.dumps({"role": "assistant", "content": [{"type": "text", "text": 5}]}),
+                 json.dumps({"role": "tool", "content": None})]
+        self.assertIsNone(self.ad.session_id(lines, []))
+        self.assertEqual(self.ad.answer(lines), "")
+        self.assertEqual(self.ad.tool_results(lines), [""])
+
+    def test_grants_inside_home(self):
+        g = self.ad.grants(self.SEAT, HOME)
+        self.assertEqual(g.write, [HOME])
+        self.assertEqual(g.env, {"KIMI_CODE_HOME": HOME})
+        self.assertTrue(g.private_home)
+        self.assertEqual(self.ad.home_env(HOME), {"KIMI_CODE_HOME": HOME})
+        self.assertEqual(self.ad.state_dirs, [])
+
+    def test_code_paths_in_home_write_denied(self):  # R14
+        g = self.ad.grants(self.SEAT, HOME)
+        self.assertEqual(sorted(g.deny_write), sorted(f"{HOME}/{n}" for n in KIMI_CODE))
+        self.assertNotIn(f"{HOME}/sessions", g.deny_write)
+        self.assertNotIn(f"{HOME}/credentials", g.deny_write)
+        self.assertEqual(sorted(self.ad.hook_files(HOME)), sorted(g.deny_write))
+
+    def test_credentials_refresh(self):  # R11: the file under credentials/ holds a refresh token
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "credentials"))
+            Path(d, "credentials", "login-x.json").write_text("{}")
+            Path(d, "credentials", "notes.txt").write_text("")
+            self.assertEqual(adapters._kimi_logins(d),
+                             [(os.path.join(d, "credentials", "login-x.json"), "credentials/login-x.json", True)])
+        self.assertEqual(adapters._kimi_logins("/nonexistent/kimi"), [])
+
+    def test_permission_flag_present(self):  # R19
+        self.assertTrue(has_run(self.ad.argv(self.SEAT, "/s/i", False), RECORDED_PERMISSION_FLAG["kimi"]))
+        self.assertTrue(has_run(self.ad.resume_argv(self.SEAT, "sid", "/s/i", False), RECORDED_PERMISSION_FLAG["kimi"]))
+
+    def test_kimi_project_mcp_symlink_counts(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, ".kimi-code"))
+            os.symlink(os.path.join(d, "missing"), os.path.join(d, ".kimi-code", "mcp.json"))
+            self.assertEqual(self.ad.project_code(d), [os.path.join(d, ".kimi-code", "mcp.json")])
+
+    def test_static_fields(self):
+        self.assertEqual(self.ad.version_argv, ["kimi", "--version"])
+        self.assertEqual(self.ad.ignore_flags, [])
+        self.assertEqual(self.ad.env_keys, [])
+        self.assertEqual(self.ad.inner_sandbox, [])
+
+
+class Agy(unittest.TestCase):
+    """agy runs on the real HOME: a private HOME loses the keychain login (ruling S-agy, checked
+    2026-11-23). Its writes go to its own state dir only, declared in `state_dirs`."""
+    ad = adapters.SEAT_ADAPTERS["agy"]
+    SEAT = {"runtime": "agy", "model": "m-test", "args": []}
+
+    def test_argv(self):
+        self.assertEqual(self.ad.argv(self.SEAT, "/s/input.md", False),
+                         ["agy", "-p", adapters.FILE_INSTRUCTION.format(path="/s/input.md"), "--model", "m-test",
+                          "--output-format", "stream-json", "--dangerously-skip-permissions"])
+        self.assertNotIn("--sandbox", self.ad.argv(self.SEAT, "/s/i", False))  # Seatbelt does not nest
+
+    def test_deep_without_knob(self):  # --effort conflicts with a variant model id (observed)
+        self.assertEqual(self.ad.argv(self.SEAT, "/s/i", True), self.ad.argv(self.SEAT, "/s/i", False))
+        self.assertNotIn("--effort", self.ad.argv(self.SEAT, "/s/i", True))
+
+    def test_resume_repeats_flags(self):
+        seat = dict(self.SEAT, args=["--seat-arg"])
+        new, res = self.ad.argv(seat, "/s/i", False), self.ad.resume_argv(seat, "sid", "/s/i", False)
+        self.assertEqual(res, new + ["--conversation", "sid"])
+        self.assertEqual(self.ad.resume_argv(seat, "--x", "/s/i", False), new)
+
+    def test_no_input_text_on_argv(self):
+        self.assertTrue(all(len(a) < 200 for a in self.ad.argv(self.SEAT, "/s/i", False)))
+        self.assertEqual(self.ad.prompt_via, "file")
+
+    def test_parse_ok(self):
+        out, err = fixture("agy", "ok")
+        self.assertEqual(self.ad.session_id(out, err), "sess-0005")
+        self.assertEqual(self.ad.answer(out), "No significant findings.")
+        self.assertEqual(self.ad.usage(out), {"tokens_in": 1200, "tokens_out": 300})
+        self.assertEqual(self.ad.errors(out, err), [])
+
+    def test_parse_resume(self):
+        out, err = fixture("agy", "resume")
+        self.assertEqual(self.ad.session_id(out, err), "sess-0005")
+        self.assertEqual(self.ad.answer(out), "The fix holds.")
+
+    def test_usage_limit_on_error_lines(self):
+        out, err = fixture("agy", "usage_limit")
+        self.assertTrue(self.ad.usage_limit(self.ad.errors(out, err)))
+        self.assertEqual(self.ad.answer(out), "")
+
+    def test_error_not_a_cap(self):
+        out, err = fixture("agy", "error")
+        errs = self.ad.errors(out, err)
+        self.assertTrue(any("authentication" in e for e in errs))
+        self.assertFalse(self.ad.usage_limit(errs))
+        self.assertEqual(self.ad.answer(out), "")
+
+    def test_model_text_is_never_an_error(self):
+        lines = [json.dumps({"event": "step_update", "step_update": {"step_type": "agent_response",
+                                                                     "text_delta": "usage limit reached"}}),
+                 json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "usage limit reached"}})]
+        self.assertEqual(self.ad.errors(lines, []), [])
+
+    def test_tool_results_not_prose(self):  # the tool step shape is unverified
+        out, _ = fixture("agy", "ok")
+        results = self.ad.tool_results(out)
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].startswith("PROBE:g1\n"))
+
+    def test_hostile_lines(self):
+        lines = [json.dumps({"event": "init", "init": "x", "conversation_id": "a b"}),
+                 json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": 5,
+                                                           "usage": {"input_tokens": "x", "output_tokens": True}}}),
+                 json.dumps({"event": "result", "result": {"status": 7, "error": ["x"]}}),
+                 json.dumps({"event": "step_update", "step_update": "x"})]
+        self.assertIsNone(self.ad.session_id(lines, []))
+        self.assertEqual(self.ad.answer(lines), "")
+        self.assertEqual(self.ad.usage(lines), {"tokens_in": 0, "tokens_out": 0})
+        self.assertEqual(self.ad.errors(lines, []), ["error"])
+        self.assertEqual(self.ad.tool_results(lines), [])
+
+    def test_grants_inside_home(self):
+        g = self.ad.grants(self.SEAT, HOME)
+        self.assertEqual(g.write, [HOME])
+        self.assertFalse(g.private_home)
+        self.assertEqual(g.env, {})
+        self.assertEqual(self.ad.home_env(HOME), {})
+        self.assertEqual(self.ad.state_dirs, [adapters._agy_state()])
+        self.assertEqual(self.ad.credentials, [])
+
+    def test_code_paths_in_home_write_denied(self):  # R14: the code names in its state dir stay read-only
+        g = self.ad.grants(self.SEAT, HOME)
+        state = adapters._agy_state()
+        self.assertEqual(sorted(g.deny_write), sorted(os.path.join(state, n) for n in adapters.AGY_CODE))
+        self.assertNotIn(os.path.join(state, "conversations"), g.deny_write)
+        self.assertTrue(set(g.deny_write) <= set(self.ad.hook_files(HOME)))
+
+    def test_permission_flag_present(self):  # R19
+        self.assertTrue(has_run(self.ad.argv(self.SEAT, "/s/i", False), RECORDED_PERMISSION_FLAG["agy"]))
+        self.assertTrue(has_run(self.ad.resume_argv(self.SEAT, "sid", "/s/i", False), RECORDED_PERMISSION_FLAG["agy"]))
+
+    def test_project_code(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.ad.project_code(d), [])
+            os.makedirs(os.path.join(d, ".agents", "skills"))
+            Path(d, ".agents", "hooks.json").write_text("{}")
+            self.assertEqual(self.ad.project_code(d), [os.path.join(d, ".agents", "hooks.json"),
+                                                       os.path.join(d, ".agents", "skills")])
+
+    def test_static_fields(self):
+        self.assertEqual(self.ad.version_argv, ["agy", "--version"])
+        self.assertEqual(self.ad.backend, "sandbox-exec")  # the login is in the keychain
+        self.assertEqual(self.ad.inner_sandbox, [])
+        self.assertEqual(self.ad.ignore_flags, [])
+        self.assertEqual(self.ad.env_keys, [])
+
+
+class PiProject(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.target = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_pi_project_extensions(self):
+        (self.target / ".pi/extensions").mkdir(parents=True)
+        self.assertEqual(adapters.SEAT_ADAPTERS["pi"].project_code(str(self.target)), [str(self.target / ".pi/extensions")])
+
+
+class Registry(unittest.TestCase):
+    def test_all_runtimes(self):
+        self.assertEqual(set(adapters.SEAT_ADAPTERS), config.RUNTIMES)
     def test_every_field_set(self):
         for name, ad in adapters.SEAT_ADAPTERS.items():
             for field in adapters.SeatAdapter._fields:

@@ -9,24 +9,30 @@ tool-permission flags let the model try Bash and Write, so the OS sandbox stops 
 prompt. The input (brief and task) reaches the CLI on stdin or by a fixed file instruction,
 never on argv.
 """
+import glob
 import json
 import os
 import re
 from collections import namedtuple
 from typing import Optional
 
+from lead.codepaths import KIMI_CODE, PI_CODE
 from lead.sandbox import RuntimeGrants
 
 SeatAdapter = namedtuple("SeatAdapter",
     "argv resume_argv session_id usage_limit usage answer errors grants home_env credentials "
-    "hook_files project_code inner_sandbox backend version_argv prompt_via ignore_flags env_keys tool_results")
+    "hook_files project_code inner_sandbox backend version_argv prompt_via ignore_flags env_keys tool_results "
+    "state_dirs")
+# state_dirs: the CLI's own state dirs under the user's home that the seat writes, for a runtime that
+# cannot run on a private home (agy). They go to lead.sandbox.seat_grants(..., state_dirs=...).
 
 TOP_EFFORT = {"codex": "max", "pi": "xhigh", "kimi": "max"}
 # Seat-only code lists (R17): names under a runtime's config dir that load as code. A seat's grants
 # deny writes to them inside the seat home (R14); the seat key manifests them.
 CLAUDE_CODE = ["settings.json", "settings.local.json", "CLAUDE.md", "hooks", "agents", "commands", "plugins", "skills", ".mcp.json"]
 CODEX_CODE = ["config.toml", "AGENTS.md", "prompts", "hooks.json", "skills", "rules"]
-AGY_CODE = ["settings.json", "GEMINI.md", "extensions"]
+# agy's names are relative to its state dir under the real home (see the agy section below).
+AGY_CODE = ["settings.json", "GEMINI.md", "extensions", "bin", "builtin", "updater"]
 # Quota and usage wording only (moderator's call, plan panel: R21). A bare 429 or "rate limit" with no quota
 # word is a transient error, not a cap.
 USAGE_LIMIT = re.compile(r"usage limit|quota (exceeded|exhausted|reached)|exceeded your (current )?quota|"
@@ -36,8 +42,9 @@ USAGE_LIMIT = re.compile(r"usage limit|quota (exceeded|exhausted|reached)|exceed
 SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
 FILE_INSTRUCTION = "Read the file {path} and follow it. It holds your brief and your task."
 # Runtimes whose login is an env token; without it the seat cannot run.
-LOGIN_ENV = {"claude-code": "CLAUDE_CODE_OAUTH_TOKEN"}
-LOGIN_HINT = {"claude-code": "no login: run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN"}
+LOGIN_ENV = {"claude-code": "CLAUDE_CODE_OAUTH_TOKEN", "pi": "OPENROUTER_API_KEY"}
+LOGIN_HINT = {"claude-code": "no login: run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN",
+              "pi": "no login: export OPENROUTER_API_KEY"}
 
 
 def effort(seat, deep) -> Optional[str]:
@@ -95,7 +102,10 @@ def _resume(new_argv, resume_argv):
 # The denied code names that are dirs, per runtime, relative to the seat home. bw makes each one
 # empty before a run: a CLI that tries to create a missing one at start would fail on the deny.
 CODE_DIRS = {"codex": ["prompts", "skills", "rules"],
-             "claude-code": [".claude/hooks", ".claude/agents", ".claude/commands", ".claude/plugins", ".claude/skills"]}
+             "claude-code": [".claude/hooks", ".claude/agents", ".claude/commands", ".claude/plugins", ".claude/skills"],
+             "pi": ["extensions", "skills", "prompts", "themes"],
+             "kimi": ["bin", "skills", "plugins", "hooks", "agents"],
+             "agy": []}  # agy writes its real state dir, where its code dirs already exist
 
 
 def make_code_dirs(runtime, seat_home):
@@ -231,6 +241,7 @@ CODEX = SeatAdapter(
     ignore_flags=[],  # no flag makes codex skip project config
     env_keys=[],
     tool_results=_codex_tool_results,
+    state_dirs=[],
 )
 
 
@@ -374,6 +385,271 @@ CLAUDE = SeatAdapter(
     ignore_flags=CLAUDE_IGNORE,
     env_keys=[LOGIN_ENV["claude-code"]],
     tool_results=_claude_tool_results,
+    state_dirs=[],
 )
 
-SEAT_ADAPTERS = {"codex": CODEX, "claude-code": CLAUDE}  # Task 9 adds pi, kimi, agy
+# ---- pi: `pi -p --mode json`, the input on stdin ----
+# HOME stays the real one, because a Volta shim finds its tools under $HOME. PI_CODING_AGENT_DIR
+# moves pi's config dir and session store to the seat home. For OpenRouter the login is
+# OPENROUTER_API_KEY in the env; no credential file. pi has no approval prompts, so it needs no
+# permission flag. pi echoes the prompt as a user message: errors come from assistant messages only.
+
+PI_IGNORE = ["--no-extensions", "--no-approve"]
+PI_PROJECT_CODE = [".pi/settings.json", ".pi/extensions", ".pi/skills", ".pi/prompts", ".pi/themes", ".pi/SYSTEM.md",
+                   ".pi/npm", ".pi/git"]
+PI_WARNING = "Warning:"  # an stderr line that starts with this is not an error (an unknown model id, for one)
+
+
+def _pi_argv(seat, input_path, deep):
+    e = effort(seat, deep)
+    return (["pi", "-p", "--mode", "json", "--model", seat["model"], *PI_IGNORE]
+            + (["--thinking", e] if e else []) + list(seat.get("args", [])))
+
+
+def _pi_session(stdout_lines, stderr_lines):
+    for ev in json_lines(stdout_lines):
+        if ev.get("type") == "session" and valid_session(ev.get("id")):
+            return ev["id"]
+    return None
+
+
+def _pi_assistant(stdout_lines):
+    return [ev["message"] for ev in json_lines(stdout_lines)
+            if ev.get("type") == "message_end" and isinstance(ev.get("message"), dict)
+            and ev["message"].get("role") == "assistant"]
+
+
+def _pi_answer(stdout_lines):
+    msgs = _pi_assistant(stdout_lines)
+    if not msgs or msgs[-1].get("stopReason") == "error":
+        return ""
+    return _text(msgs[-1].get("content"))
+
+
+def _pi_usage(stdout_lines):
+    used = [m["usage"] for m in _pi_assistant(stdout_lines) if isinstance(m.get("usage"), dict)]
+    if not used:
+        return {}
+    cost = sum(_num(u["cost"].get("total")) for u in used if isinstance(u.get("cost"), dict))
+    return {"tokens_in": sum(_num(u.get("input")) for u in used),
+            "tokens_out": sum(_num(u.get("output")) for u in used),
+            "cost_usd": round(float(cost), 6)}
+
+
+def _pi_errors(stdout_lines, stderr_lines):
+    errs = [_str(m.get("errorMessage")) or "error" for m in _pi_assistant(stdout_lines) if m.get("stopReason") == "error"]
+    return errs + [s for s in (line.strip() for line in stderr_lines) if s and not s.startswith(PI_WARNING)]
+
+
+def _pi_tool_results(stdout_lines):
+    out = []
+    for ev in json_lines(stdout_lines):
+        if ev.get("type") == "tool_execution_end":
+            res = ev.get("result")
+            out.append(_text(res.get("content")) if isinstance(res, dict) else _str(res))
+    return out
+
+
+PI = SeatAdapter(
+    argv=_pi_argv,
+    resume_argv=_resume(_pi_argv, lambda seat, sid, input_path, deep: _pi_argv(seat, input_path, deep) + ["--session", sid]),
+    session_id=_pi_session,
+    usage_limit=usage_limit,
+    usage=_pi_usage,
+    answer=_pi_answer,
+    errors=_pi_errors,
+    grants=lambda seat, seat_home: RuntimeGrants(read=[], write=[seat_home], env={"PI_CODING_AGENT_DIR": seat_home},
+                                                 private_home=False,
+                                                 deny_write=[os.path.join(seat_home, n) for n in PI_CODE]),
+    home_env=lambda seat_home: {"PI_CODING_AGENT_DIR": seat_home},
+    credentials=[],  # an API key in the env; auth.json is for OAuth providers only
+    hook_files=lambda seat_home: [os.path.join(seat_home, n) for n in PI_CODE],
+    project_code=lambda target: _present(target, PI_PROJECT_CODE),
+    inner_sandbox=[],
+    backend="any",
+    version_argv=["pi", "--version"],
+    prompt_via="stdin",
+    ignore_flags=PI_IGNORE,
+    env_keys=[LOGIN_ENV["pi"]],
+    tool_results=_pi_tool_results,
+    state_dirs=[],
+)
+
+
+# ---- kimi: `kimi ... --output-format stream-json -p <file instruction>` ----
+# `-p` needs an argument, and stdin is not proven, so the input comes by a fixed file instruction.
+# KIMI_CODE_HOME and HOME are the seat home. Kimi Code ignores its own deny rules in -p mode: only
+# the OS sandbox enforces. kimi 2.3.2 has no effort flag. Only the usage-limit error path was
+# observed (stderr `error: ...`, then `See log:`); the session, answer, and tool shapes come from
+# the docs and are UNVERIFIED until one OK run is recorded.
+
+KIMI_AUTO = ["--auto"]  # "Never Ask" mode, the headless permission flag (R19)
+KIMI_PROJECT_CODE = [".kimi-code/mcp.json", ".kimi-code/skills"]
+KIMI_ERROR = re.compile(r"error\b", re.I)
+
+
+def _kimi_flags(seat):
+    return ["-m", seat["model"], "--output-format", "stream-json", *KIMI_AUTO, *seat.get("args", [])]
+
+
+def _kimi_argv(seat, input_path, deep):
+    return ["kimi", *_kimi_flags(seat), "-p", FILE_INSTRUCTION.format(path=input_path)]
+
+
+def _kimi_resume(seat, sid, input_path, deep):
+    return ["kimi", *_kimi_flags(seat), "-S", sid, "-p", FILE_INSTRUCTION.format(path=input_path)]
+
+
+def _kimi_session(stdout_lines, stderr_lines):
+    for ev in json_lines(stdout_lines):
+        if ev.get("type") == "session.resume_hint" and valid_session(ev.get("session_id")):
+            return ev["session_id"]
+    return None
+
+
+def _kimi_role(stdout_lines, role):
+    return [ev for ev in json_lines(stdout_lines) if ev.get("role") == role]
+
+
+def _kimi_answer(stdout_lines):
+    msgs = _kimi_role(stdout_lines, "assistant")
+    return _text(msgs[-1].get("content")) if msgs else ""
+
+
+def _kimi_errors(stdout_lines, stderr_lines):
+    """The stderr lines that start with `error`. Model text and tool output never count."""
+    return [s for s in (line.strip() for line in stderr_lines) if KIMI_ERROR.match(s)]
+
+
+def _kimi_logins(config_dir):
+    """(real file, name in the seat home, refreshes) for each JSON login file under credentials/.
+    Each one holds a refresh token (R11)."""
+    paths = sorted(glob.glob(os.path.join(glob.escape(config_dir), "credentials", "*.json")))
+    return [(p, "credentials/" + os.path.basename(p), True) for p in paths if os.path.isfile(p) and not os.path.islink(p)]
+
+
+KIMI = SeatAdapter(
+    argv=_kimi_argv,
+    resume_argv=_resume(_kimi_argv, _kimi_resume),
+    session_id=_kimi_session,
+    usage_limit=usage_limit,
+    usage=lambda stdout_lines: {},  # no usage shape is known
+    answer=_kimi_answer,
+    errors=_kimi_errors,
+    grants=lambda seat, seat_home: _grants(seat_home, seat_home, KIMI_CODE, {"KIMI_CODE_HOME": seat_home}),
+    home_env=lambda seat_home: {"KIMI_CODE_HOME": seat_home},
+    credentials=_kimi_logins(os.environ.get("KIMI_CODE_HOME") or os.path.expanduser("~/.kimi-code")),
+    hook_files=lambda seat_home: [os.path.join(seat_home, n) for n in KIMI_CODE],
+    project_code=lambda target: _present(target, KIMI_PROJECT_CODE),
+    inner_sandbox=[],
+    backend="any",
+    version_argv=["kimi", "--version"],
+    prompt_via="file",
+    ignore_flags=[],  # no flag makes kimi skip project config
+    env_keys=[],
+    tool_results=lambda stdout_lines: [_text(ev.get("content")) for ev in _kimi_role(stdout_lines, "tool")],
+    state_dirs=[],
+)
+
+
+# ---- agy: `agy -p <file instruction> --output-format stream-json` ----
+# agy keeps its login in the macOS keychain, which it finds through $HOME. A private HOME sends it to
+# a browser login (checked 2026-11-23, ruling S-agy). So agy keeps the real HOME, and it writes only
+# its own state dir, which `state_dirs` declares; the AGY_CODE names in that dir stay read-only.
+# Its vendor sandbox stays off (no --sandbox): Seatbelt profiles do not nest. No effort flag:
+# --effort conflicts with a model id that names a variant (observed), and the config takes only
+# model ids for agy. The event key is `event`, not `type`. Tool step shapes are UNVERIFIED.
+
+AGY_PERMISSION = ["--dangerously-skip-permissions"]
+AGY_PROJECT_CODE = [".agents/hooks.json", ".agents/plugins.json", ".agents/plugins", ".agents/skills",
+                    ".agents/workflows", ".agents/agents", ".agents/rules"]
+AGY_TEXT_STEPS = {"user_input", "agent_response"}
+AGY_OK = "SUCCESS"
+
+
+def _agy_state():
+    return os.path.join(os.path.expanduser("~"), ".gemini", "antigravity-cli")
+
+
+def _agy_config():
+    """Files outside the state dir that agy loads as code; already read-only, but in the seat key."""
+    gemini = os.path.join(os.path.expanduser("~"), ".gemini")
+    return [os.path.join(gemini, "settings.json"), os.path.join(gemini, "config", "mcp_config.json")]
+
+
+def _agy_argv(seat, input_path, deep):
+    return ["agy", "-p", FILE_INSTRUCTION.format(path=input_path), "--model", seat["model"],
+            "--output-format", "stream-json", *AGY_PERMISSION, *seat.get("args", [])]
+
+
+def _agy_bodies(stdout_lines, name):
+    return [ev[name] for ev in json_lines(stdout_lines) if ev.get("event") == name and isinstance(ev.get(name), dict)]
+
+
+def _agy_session(stdout_lines, stderr_lines):
+    """`conversation_id` on the `init` event, or in the `result` body."""
+    for ev in json_lines(stdout_lines):
+        name = ev.get("event")
+        if name not in ("init", "result"):
+            continue
+        body = ev.get(name) if isinstance(ev.get(name), dict) else {}
+        for sid in (ev.get("conversation_id"), body.get("conversation_id")):
+            if valid_session(sid):
+                return sid
+    return None
+
+
+def _agy_result(stdout_lines):
+    results = _agy_bodies(stdout_lines, "result")
+    return results[-1] if results else None
+
+
+def _agy_answer(stdout_lines):
+    res = _agy_result(stdout_lines)
+    return _str(res.get("response")) if res and res.get("status") == AGY_OK else ""
+
+
+def _agy_usage(stdout_lines):
+    res = _agy_result(stdout_lines)
+    if res is None:
+        return {}
+    u = res.get("usage") if isinstance(res.get("usage"), dict) else {}
+    return {"tokens_in": _num(u.get("input_tokens")), "tokens_out": _num(u.get("output_tokens"))}
+
+
+def _agy_errors(stdout_lines, stderr_lines):
+    errs = [_str(r.get("error")) or _str(r.get("status")) or "error"
+            for r in _agy_bodies(stdout_lines, "result") if r.get("status") != AGY_OK]
+    return errs + [line.strip() for line in stderr_lines if line.strip()]
+
+
+def _agy_tool_results(stdout_lines):
+    return [_str(s.get("output")) for s in _agy_bodies(stdout_lines, "step_update")
+            if s.get("state") == "DONE" and s.get("step_type") not in AGY_TEXT_STEPS]
+
+
+AGY = SeatAdapter(
+    argv=_agy_argv,
+    resume_argv=_resume(_agy_argv, lambda seat, sid, input_path, deep: _agy_argv(seat, input_path, deep) + ["--conversation", sid]),
+    session_id=_agy_session,
+    usage_limit=usage_limit,
+    usage=_agy_usage,
+    answer=_agy_answer,
+    errors=_agy_errors,
+    grants=lambda seat, seat_home: RuntimeGrants(read=[], write=[seat_home], env={}, private_home=False,
+                                                 deny_write=[os.path.join(_agy_state(), n) for n in AGY_CODE]),
+    home_env=lambda seat_home: {},
+    credentials=[],  # the login is in the keychain
+    hook_files=lambda seat_home: [os.path.join(_agy_state(), n) for n in AGY_CODE] + _agy_config(),
+    project_code=lambda target: _present(target, AGY_PROJECT_CODE),
+    inner_sandbox=[],  # vendor sandbox off: omit --sandbox
+    backend="sandbox-exec",
+    version_argv=["agy", "--version"],
+    prompt_via="file",
+    ignore_flags=[],  # no flag makes agy skip project config
+    env_keys=[],
+    tool_results=_agy_tool_results,
+    state_dirs=[_agy_state()],
+)
+
+SEAT_ADAPTERS = {"codex": CODEX, "claude-code": CLAUDE, "pi": PI, "kimi": KIMI, "agy": AGY}

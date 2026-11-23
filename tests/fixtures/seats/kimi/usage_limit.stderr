@@ -1,0 +1,2 @@
+error: failed to run prompt: provider.api_error: 429 You've reached your monthly usage limit for this billing cycle. Your quota will reset in the next cycle.
+See log: /home/user/.kimi-code/logs/kimi-code.log

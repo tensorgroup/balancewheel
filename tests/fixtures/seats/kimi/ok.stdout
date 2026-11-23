@@ -1,0 +1,5 @@
+{"role":"meta","type":"system.version","version":"2.3.2"}
+{"role":"assistant","content":[{"type":"text","text":"I will probe the sandbox."}],"tool_calls":[{"id":"c1","type":"function","function":{"name":"Shell","arguments":"{}"}}]}
+{"role":"tool","tool_call_id":"c1","content":[{"type":"text","text":"PROBE:g1\nsh: /tmp/target/x: Operation not permitted"}]}
+{"role":"assistant","content":[{"type":"text","text":"No significant findings."}]}
+{"type":"session.resume_hint","session_id":"sess-0004"}

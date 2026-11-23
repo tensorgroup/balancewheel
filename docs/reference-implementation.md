@@ -393,6 +393,20 @@ it runs on the real `~/.gemini` with backend `sandbox-exec`, and its writes go t
 home. It is a decision for the moderator (R11). Project hooks in `.agents/hooks.json` load after the
 user trusts the folder. Directory rules (`GEMINI.md`, `AGENTS.md`) load as prompt text, not as code.
 
+Checked again on agy 1.5.15 (2026-11-23), with no model call:
+- A run with `HOME` set to an empty seat home returned a `result` event with `status` `ERROR` and
+  printed a login URL on stderr. The keychain login does not carry over to a private `HOME`.
+- So the agy seat is the one exception to "a seat writes only its own home". It keeps the real
+  `HOME`. It writes only its state dir, `~/.gemini/antigravity-cli/`, which the adapter declares in
+  `state_dirs`. The code names in that dir (`settings.json`, `bin`, `builtin`, `updater`, and more)
+  stay read-only. The seat can read the agy lead's transcripts in that dir.
+- `--model <variant id> --effort <other level>` fails before the model call: "conflicts with
+  --effort". The help text says `--model` also takes a base model name, and `--effort` then picks the
+  variant. The config takes only a model id for agy, so the seat adapter passes no `--effort`.
+
+**pi seat.** The seat keeps the real `HOME`, because a Volta shim finds its tools under `$HOME`.
+`PI_CODING_AGENT_DIR` moves the config dir and the session store to the seat home.
+
 ## Driver mode (the same CLIs as the working agent)
 
 Driver mode is the writable failover described in architecture.md: one command that

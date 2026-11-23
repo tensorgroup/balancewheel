@@ -1,0 +1,2 @@
+{"event":"init","conversation_id":"sess-0005","init":{"cwd":"/tmp/target","tools":[],"permission_mode":"always-proceed"}}
+{"event":"result","result":{"conversation_id":"sess-0005","status":"SUCCESS","response":"The fix holds.","num_turns":2,"usage":{"input_tokens":300,"output_tokens":20,"thinking_tokens":10,"cache_read_tokens":0,"total_tokens":330}}}
