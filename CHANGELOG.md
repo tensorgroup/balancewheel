@@ -75,6 +75,18 @@ not against the prose.
   `--ignore-submodules=all`, and submodule recursion and summaries are off. A gitlink's own config or
   attributes (a filter, an fsmonitor) could otherwise run code when a user config sets
   `diff.submodule=diff`.
+- **Seat run fixes** (`seats/adapters.py`, `seats/run.py`, `lead/proc.py`). A usage cap needs quota
+  wording: "Rate limit reached" and "context limit reached" no longer arm a 5-hour cap. A project
+  `settings.json` is read with no link followed, as a regular file up to 64 KiB, and a file the argv
+  covers is never opened. The ignore-flag checks read `--flag=value` too, and fail closed on seat args
+  that load code or trust project files (`--mcp-config`, `--settings`, `--plugin-dir`; pi's `--approve`,
+  `-e`, `--extension`). The hostile-repo refusal comes before the brief is built. A seat's process
+  group is killed after a normal exit too (`proc.run(..., reap=True)`). The transcript keeps the last
+  stdout event on its own line. A `nono` line on stderr is a refusal only when the CLI printed nothing.
+  A NaN or infinite cost or token count is never logged. A credential link is made through open dir
+  fds, so a dir swapped for a link meanwhile is refused.
+- **`bw start`'s seat line names the log, not the seats** (a deviation from the plan's wording): the
+  background child writes each seat's result to `state_dir/seats/verify-log.txt`.
 - **The seat key binds what the attack ran** (`seats/verify.py`). It hashes `seats/run.py`,
   `seats/judge.py`, `seats/verify.py`, and `tests/attack/seat_readonly.sh` too. The attack's seat home
   gets a copy of the real seat home's hook files, so the attack runs the code the key hashes. An edit of

@@ -11,6 +11,7 @@ never on argv.
 """
 import glob
 import json
+import math
 import os
 import re
 from collections import namedtuple
@@ -49,11 +50,11 @@ AGY_CODE = ["settings.json", "GEMINI.md", "skills", "policies", "config/mcp_conf
             "antigravity-cli/settings.json", "antigravity-cli/GEMINI.md", "antigravity-cli/extensions",
             "antigravity-cli/updater", "antigravity-cli/knowledge", "antigravity-cli/implicit",
             "antigravity-cli/annotations"]
-# Quota and usage wording only (moderator's call, plan panel: R21). A bare 429 or "rate limit" with no quota
-# word is a transient error, not a cap.
+# Quota and usage wording only (moderator's call, plan panel: R21). A bare 429, "rate limit", or a limit
+# of another kind ("Rate limit reached", "context limit reached") is a transient error, not a cap.
 USAGE_LIMIT = re.compile(r"usage limit|quota (exceeded|exhausted|reached)|exceeded your (current )?quota|"
                          r"hit your .{0,40}(usage|quota|plan) limit|out of (credits|quota)|hit your limit|"
-                         r"limit reached", re.I)
+                         r"\b(usage|quota|plan|weekly|5-hour|daily|monthly) limit reached", re.I)
 # A session id goes on argv only when it has this shape; any other id starts a new session.
 SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*")
 FILE_INSTRUCTION = "Read the file {path} and follow it. It holds your brief and your task."
@@ -97,8 +98,8 @@ def login_missing(runtime, environ) -> Optional[str]:
 
 
 def _num(x):
-    """A token or cost count; anything that is not a plain number counts as 0."""
-    return x if isinstance(x, (int, float)) and not isinstance(x, bool) else 0
+    """A token or cost count; anything that is not a plain finite number counts as 0 (no NaN in the log)."""
+    return x if isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) else 0
 
 
 def _str(x):
@@ -327,7 +328,7 @@ def _claude_usage(stdout_lines):
                                ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
         out["tokens_out"] = _num(u.get("output_tokens"))
         cost = res.get("total_cost_usd")
-        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(cost):
             out["cost_usd"] = float(cost)
     limits = [ev["rate_limit_info"] for ev in json_lines(stdout_lines)
               if ev.get("type") == "rate_limit_event" and isinstance(ev.get("rate_limit_info"), dict)]
@@ -384,17 +385,40 @@ def _claude_tool_results(stdout_lines):
 
 
 def _claude_settings_run_code(path):
-    """True when the settings file has a key that runs a command, or cannot be read as JSON."""
+    """True when the settings file has a key that runs a command, or cannot be read as JSON. The file is
+    in a repo a lead could write: it opens with no link followed, as a regular file only (a FIFO must not
+    hang bw), up to 64 KiB; a deep nesting fails closed."""
+    from seats.brief import _read_file  # the brief's guarded reader
+    text = _read_file(path)
+    if text is None:
+        return True
     try:
-        with open(path) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
+        data = json.loads(text)
+    except (ValueError, RecursionError):
         return True
     return not isinstance(data, dict) or any(k in data for k in CLAUDE_CODE_KEYS)
 
 
 def _flag_values(argv, flag):
-    return [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == flag]
+    """The values of `flag` in both forms: `--flag value` and `--flag=value`."""
+    out = []
+    for i, a in enumerate(argv):
+        if a == flag and i + 1 < len(argv):
+            out.append(argv[i + 1])
+        elif a.startswith(flag + "="):
+            out.append(a[len(flag) + 1:])
+    return out
+
+
+def _overrides(argv, flags):
+    """True when `argv` holds one of `flags`, alone or as `--flag=value`: a flag that loads code or
+    trusts project files, so no ignore flag can be said to cover anything (fail closed)."""
+    return any(a == f or a.startswith(f + "=") for a in argv for f in flags)
+
+
+# Seat-arg flags that undo the ignore flags: each one loads code of its own or trusts project files.
+CLAUDE_OVERRIDES = ("--mcp-config", "--plugin-dir", "--settings")
+PI_OVERRIDES = ("--approve", "-a", "--extension", "-e")
 
 
 def _claude_user_settings_only(argv):
@@ -419,10 +443,14 @@ CLAUDE_COVERS = {
 
 
 def _claude_project_code(target, argv=()):
-    found = [p for p in _present(target, CLAUDE_PROJECT_SETTINGS) if _claude_settings_run_code(p)]
-    found += _present(target, [".mcp.json"] + CLAUDE_PROJECT_DIRS)
     argv = list(argv)
-    return [p for p in found if not CLAUDE_COVERS.get(os.path.relpath(p, target), lambda a: False)(argv)]
+    override = _overrides(argv, CLAUDE_OVERRIDES)
+
+    def covered(p):
+        return not override and CLAUDE_COVERS.get(os.path.relpath(p, target), lambda a: False)(argv)
+    # A file the argv covers is never opened.
+    found = [p for p in _present(target, CLAUDE_PROJECT_SETTINGS) if not covered(p) and _claude_settings_run_code(p)]
+    return found + [p for p in _present(target, [".mcp.json"] + CLAUDE_PROJECT_DIRS) if not covered(p)]
 
 
 CLAUDE = SeatAdapter(
@@ -531,7 +559,7 @@ PI = SeatAdapter(
     credentials=lambda: [],  # an API key in the env; auth.json is for OAuth providers only
     hook_files=lambda seat_home: [os.path.join(seat_home, n) for n in PI_CODE],
     # PI_IGNORE covers every .pi/ name (ruling H-ignore) only when all its flags are on the argv.
-    project_code=lambda target, argv=(): ([] if all(f in argv for f in PI_IGNORE)
+    project_code=lambda target, argv=(): ([] if all(f in argv for f in PI_IGNORE) and not _overrides(argv, PI_OVERRIDES)
                                           else _present(target, PI_PROJECT_CODE)),
     inner_sandbox=[],
     backend="any",

@@ -19,8 +19,9 @@ def _slurp(f):
     return f.read().decode("utf-8", "replace")
 
 
-def run(argv, timeout, cwd=None, env=None, stdin=subprocess.DEVNULL, out_dir=None):
-    """`out_dir`: make the stdout and stderr files there (a sandboxed child's write grant)."""
+def run(argv, timeout, cwd=None, env=None, stdin=subprocess.DEVNULL, out_dir=None, reap=False):
+    """`out_dir`: make the stdout and stderr files there (a sandboxed child's write grant). `reap`: kill
+    the child's process group after a normal exit too, so nothing it started keeps running (a seat)."""
     with tempfile.TemporaryFile(dir=out_dir) as out, tempfile.TemporaryFile(dir=out_dir) as err:
         try:
             p = subprocess.Popen(argv, stdin=stdin, stdout=out, stderr=err, cwd=cwd, env=env,
@@ -30,6 +31,11 @@ def run(argv, timeout, cwd=None, env=None, stdin=subprocess.DEVNULL, out_dir=Non
         try:
             rc = p.wait(timeout)
             timed_out = False
+            if reap:
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):  # the group is already gone
+                    pass
         except subprocess.TimeoutExpired:
             _kill_group(p)
             rc, timed_out = 124, True

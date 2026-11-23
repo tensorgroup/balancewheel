@@ -33,7 +33,7 @@ class FakeRun:
             i += 1
         return argv[i]
 
-    def __call__(self, argv, timeout, cwd=None, env=None, stdin=subprocess.DEVNULL, out_dir=None):
+    def __call__(self, argv, timeout, cwd=None, env=None, stdin=subprocess.DEVNULL, out_dir=None, reap=False):
         if argv[0] == "git":
             return proc.run(argv, timeout, cwd=cwd, env=env)
         if len(argv) == 2 and argv[1] == "--version":
@@ -42,6 +42,7 @@ class FakeRun:
             return Result(0, f"{argv[0]} 9.9\n", "", False)
         assert hasattr(stdin, "read"), "stdin must be a file object, not a path"
         self.argv, self.env, self.out_dir, self.timeout, self.cwd = argv, env, out_dir, timeout, cwd
+        self.reap = reap
         self.stdin = stdin.read()
         cli = self.cli(argv)
         self.calls.append(cli)
@@ -616,6 +617,32 @@ class SeatRun(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o600)
         d = FIX / "codex"
         self.assertEqual(Path(tr).read_text(), (d / "ok.stdout").read_text() + (d / "ok.stderr").read_text())
+
+    def test_transcript_keeps_the_last_event_on_its_own_line(self):
+        tr = os.path.join(self.tmp.name, "t.txt")
+        self.fake.queue("codex", Result(0, '{"type": "x"}', "warn\n", False))
+        self.seat(transcript=tr)
+        self.assertEqual(Path(tr).read_text(), '{"type": "x"}\nwarn\n')
+
+    def test_hostile_refusal_before_the_brief(self):  # no git work in a repo bw refuses
+        os.makedirs(os.path.join(self.wt, ".claude", "commands"))
+        with mock.patch.object(brief, "build", side_effect=AssertionError("brief built")):
+            r = self.seat("opus", brief=True)
+        self.assertTrue(r.reason.startswith("hostile:"), r.reason)
+
+    def test_sandbox_line_after_a_real_run_is_not_a_refusal(self):
+        self.fake.queue("codex", Result(1, '{"type": "turn.failed", "error": {"message": "boom"}}\n',
+                                        "nono: note\n", False))
+        r = self.seat()
+        self.assertTrue(r.ran)
+        self.fake.queue("codex", Result(1, "", "nono: could not apply the profile\n", False))
+        r = self.seat()
+        self.assertFalse(r.ran)
+        self.assertTrue(r.reason.startswith("sandbox: nono"), r.reason)
+
+    def test_seat_process_group_reaped(self):
+        self.seat()
+        self.assertTrue(self.fake.reap)
 
     def test_error_reason_redacted(self):
         self.fake.queue("codex", Result(1, "", "error: API_KEY=abc123 bad " + "x" * 300 + "\n", False))

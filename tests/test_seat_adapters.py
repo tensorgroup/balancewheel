@@ -432,9 +432,52 @@ class ClaudeCode(unittest.TestCase):
             twice = argv + ["--setting-sources", "project"]  # a later override fails closed
             self.assertIn(os.path.join(d, ".claude", "settings.json"), self.ad.project_code(d, twice))
 
+    def test_project_code_flag_forms_and_overrides(self):
+        argv = self.ad.argv({"runtime": "claude-code", "model": "m"}, "/in", False)
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, ".claude"))
+            Path(d, ".claude", "settings.json").write_text(json.dumps({"hooks": {}}))
+            Path(d, ".mcp.json").write_text("{}")
+            self.assertEqual(self.ad.project_code(d, argv), [])
+            eq = argv + ["--setting-sources=user,project"]  # the --flag=value form is read too
+            self.assertIn(os.path.join(d, ".claude", "settings.json"), self.ad.project_code(d, eq))
+            for extra in (["--mcp-config", "x.json"], ["--mcp-config=x.json"], ["--settings", "{}"]):
+                got = self.ad.project_code(d, argv + extra)  # an override: nothing counts as covered
+                self.assertIn(os.path.join(d, ".mcp.json"), got, extra)
+
+    def test_project_settings_read_safely(self):
+        from seats import brief
+        argv = self.ad.argv({"runtime": "claude-code", "model": "m"}, "/in", False)
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, ".claude"))
+            os.mkfifo(os.path.join(d, ".claude", "settings.json"))  # must not hang bw
+            Path(d, ".claude", "settings.local.json").write_text("[" * 100000 + "]" * 100000)
+            got = self.ad.project_code(d, [a for a in argv if a != "--setting-sources" and a != "user"])
+            self.assertIn(os.path.join(d, ".claude", "settings.json"), got)
+            self.assertIn(os.path.join(d, ".claude", "settings.local.json"), got)  # too deep or too big: fails closed
+            with mock.patch.object(brief, "_read_file", side_effect=AssertionError("read")):
+                self.assertEqual(self.ad.project_code(d, argv), [])  # a covered file is never opened
+
     def test_static_fields(self):
         self.assertEqual(self.ad.version_argv, ["claude", "--version"])
         self.assertEqual(self.ad.inner_sandbox, [])
+
+
+class UsageLimitWording(unittest.TestCase):
+    def test_only_quota_wording_is_a_cap(self):
+        for line in ("Rate limit reached for requests", "context limit reached", "max turns limit reached",
+                     "429 Too Many Requests"):
+            self.assertFalse(adapters.usage_limit([line]), line)
+        for line in ("usage limit reached (five_hour)", "You've hit your limit · resets 3pm", "weekly limit reached",
+                     "Quota exceeded for this plan", "You exceeded your current quota"):
+            self.assertTrue(adapters.usage_limit([line]), line)
+
+    def test_nan_cost_is_never_logged(self):
+        res = json.dumps({"type": "result", "subtype": "success", "result": "ok", "total_cost_usd": float("nan"),
+                          "usage": {"input_tokens": float("inf"), "output_tokens": 2}})
+        u = adapters.CLAUDE.usage([res])
+        self.assertNotIn("cost_usd", u)
+        self.assertEqual(u["tokens_in"], 0)
 
 
 class Pi(unittest.TestCase):
@@ -516,6 +559,14 @@ class Pi(unittest.TestCase):
         self.assertEqual(self.ad.home_env(HOME), {"PI_CODING_AGENT_DIR": HOME})
         self.assertEqual(self.ad.credentials(), [])
         self.assertEqual(self.ad.home_argv(HOME), [])
+
+    def test_project_code_reported_when_args_trust_project_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, ".pi", "extensions"))
+            base = self.ad.argv(self.SEAT, "/in", False)
+            self.assertEqual(self.ad.project_code(d, base), [])
+            for extra in (["--approve"], ["-e", "x.ts"], ["--extension=x.ts"]):
+                self.assertEqual(self.ad.project_code(d, base + extra), [os.path.join(d, ".pi", "extensions")], extra)
 
     def test_volta_home_read_through_the_toolchain_list(self):
         # nono denies reads under the home by default. The pi shim is Volta's: without a read of

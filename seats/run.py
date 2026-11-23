@@ -268,16 +268,15 @@ class _Run:
         wt = project.worktree
         sid = self.session(wt)
         mode = "resume" if sid else "new"
-        text = _input_text(self.prompt, None if sid else self.brief_text(wt))
         input_path = os.path.join(scratch, "input.md")
-        _write_private(input_path, text)
         deep = self.opts["deep"]
         argv = with_home(self.adapter, self.adapter.resume_argv(self.s, sid, input_path, deep) if sid
                          else self.adapter.argv(self.s, input_path, deep), home)
         hostile = self.adapter.project_code(wt, argv)  # only files this argv's ignore flags do not cover
-        if hostile:
+        if hostile:  # before the brief: no git work in a repo bw refuses
             name = safe(os.path.relpath(hostile[0], wt))
             return self.refuse(f"hostile: {name} loads code for {self.runtime}", wt)
+        _write_private(input_path, _input_text(self.prompt, None if sid else self.brief_text(wt)))
 
         try:
             full, cleanup, env = _contained(self.config, self.state, self.seat, project, home, scratch, argv)
@@ -288,7 +287,7 @@ class _Run:
         start = self.now()
         try:
             with open(input_path, encoding="utf-8") as stdin:
-                r = self.run(full, cap_s, cwd=wt, env=env, stdin=stdin, out_dir=scratch)
+                r = self.run(full, cap_s, cwd=wt, env=env, stdin=stdin, out_dir=scratch, reap=True)
         except (KeyboardInterrupt, SystemExit):
             self.finish(False, "interrupted", INTERRUPTED, sid, mode, wt, round(self.now() - start, 1), {}, "")
             raise
@@ -301,8 +300,11 @@ class _Run:
         """Step 8 and 9: read the run with the adapter and append its row."""
         out_l, err_l = r.out.splitlines(), r.err.splitlines()
         if self.opts["transcript"]:
-            _write_private(self.opts["transcript"], r.out + r.err)
-        if r.rc != 0 and not r.timed_out:
+            sep = "" if not r.out or r.out.endswith("\n") else "\n"  # a last event keeps its own line
+            _write_private(self.opts["transcript"], r.out + sep + r.err)
+        if r.rc != 0 and not r.timed_out and not any(line.strip() for line in out_l):
+            # Nothing on stdout: the CLI never started, so a sandbox error line is a refusal. A CLI
+            # that ran and printed is a finished run, whatever its stderr says.
             first = next((line.strip() for line in err_l if line.strip()), "")
             if first.startswith(SANDBOX_ERROR_PREFIXES):
                 return self.refuse(f"sandbox: {safe(redact(first))}"[:REASON_MAX], wt)
@@ -452,7 +454,7 @@ def exec_sandboxed(config, state, seat, target, argv, run=proc.run, input_text=N
         try:
             with open(input_path, encoding="utf-8") as stdin:
                 return run(full, config["panel"]["cap_min"] * 60, cwd=project.worktree, env=env, stdin=stdin,
-                           out_dir=scratch)
+                           out_dir=scratch, reap=True)
         finally:
             cleanup()
     finally:

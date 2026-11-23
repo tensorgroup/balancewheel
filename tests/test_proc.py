@@ -59,6 +59,22 @@ class ProcRunTest(unittest.TestCase):
         self.assertEqual(r.rc, 124)
         self.assertLess(time.time() - t, 2)
 
+    def test_reap_kills_what_the_child_left_running(self):
+        with tempfile.TemporaryDirectory() as d:
+            pidfile = os.path.join(d, "pid")
+            r = proc.run(["sh", "-c", f"sleep 30 > /dev/null 2>&1 & echo $! > {pidfile}"], 10, reap=True)
+            self.assertEqual(r.rc, 0)
+            with open(pidfile) as f:
+                pid = int(f.read())
+            for _ in range(50):
+                if not alive(pid):
+                    break
+                time.sleep(0.05)
+            gone = not alive(pid)
+            if not gone:
+                os.kill(pid, signal.SIGKILL)
+            self.assertTrue(gone, "a background process outlived a reaped run")
+
     def test_grandchild_holding_stdout_does_not_hang(self):
         t = time.time()
         r = proc.run(["sh", "-c", "sleep 5 & echo hi"], 5)
