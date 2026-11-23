@@ -11,6 +11,7 @@ import sys
 import time
 
 from lead import proc
+from lead.paths import write_json_atomic
 from seats import caps, verify
 from seats import run as seat_run
 
@@ -28,7 +29,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _parser():
-    p = _Parser(prog="bw seat", description="Run one read-only seat. The answer goes to stdout.")
+    p = _Parser(prog="bw seat", allow_abbrev=False, description="Run one read-only seat. The answer goes to stdout.")
     p.add_argument("seat", metavar="id")
     b = p.add_mutually_exclusive_group()
     b.add_argument("-b", dest="brief", action="store_true", help="build the brief for this worktree (new session)")
@@ -52,7 +53,7 @@ def _line(err, text):
 
 
 def _list(argv, config, state, run, out, err):
-    p = _Parser(prog="bw seat list")
+    p = _Parser(prog="bw seat list", allow_abbrev=False)
     p.add_argument("--json", action="store_true")
     try:
         a = p.parse_args(argv)
@@ -86,11 +87,13 @@ def _on_sigterm(signum, frame):
 
 
 def _install_sigterm():
-    """Returns the previous handler, or None when no handler could be set (not the main thread)."""
+    """Returns the previous handler (SIG_DFL when it was not set from Python), or None when no handler
+    could be set (not the main thread)."""
     try:
-        return signal.signal(signal.SIGTERM, _on_sigterm)
+        previous = signal.signal(signal.SIGTERM, _on_sigterm)
     except ValueError:
         return None
+    return signal.SIG_DFL if previous is None else previous
 
 
 def main(argv, config, state, run=proc.run, out=sys.stdout, err=sys.stderr) -> int:
@@ -128,12 +131,13 @@ def main(argv, config, state, run=proc.run, out=sys.stdout, err=sys.stderr) -> i
     finally:
         if previous is not None:
             signal.signal(signal.SIGTERM, previous)
-    if a.result:
-        with open(a.result, "w", encoding="utf-8") as f:
-            json.dump(seat_run.result_json(result), f, indent=2)
-            f.write("\n")
     if result.answer:
         out.write(result.answer)
+    if a.result:
+        try:  # atomic; a symlink at the path is replaced, never followed
+            write_json_atomic(a.result, seat_run.result_json(result))
+        except OSError as e:
+            _line(err, f"cannot write --result: {e.strerror or e}")
     if not result.ok:
         who = result.seat if result.seat == a.seat else f"{result.seat} (for {a.seat})"
         _line(err, f"{who} {'failed' if result.ran else 'refused'}: {result.reason}")

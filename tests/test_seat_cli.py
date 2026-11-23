@@ -111,6 +111,42 @@ class Cli(unittest.TestCase):
         os.remove(os.path.join(self.state, "seat-verify.json"))
         return self.fake
 
+    def test_result_write_failure_keeps_answer_and_exit_code(self):
+        bad = os.path.join(self.home, "nodir", "x", "result.json")
+        Path(self.home, "nodir").write_text("a file, not a dir")
+        with mock.patch("seats.run.run_seat", return_value=RESULT._replace(exit_code=3, ok=False, reason="boom")):
+            code, out, err = self.main(["astra", "--result", bad, "p"])
+        self.assertEqual((code, out), (3, "the answer"))
+        self.assertIn("bw seat: cannot write --result: ", err)
+
+    def test_result_symlink_replaced_not_followed(self):
+        target = os.path.join(self.home, "target.json")
+        Path(target).write_text("keep")
+        link = os.path.join(self.home, "result.json")
+        os.symlink(target, link)
+        with mock.patch("seats.run.run_seat", return_value=RESULT):
+            self.main(["astra", "--result", link, "p"])
+        self.assertEqual(Path(target).read_text(), "keep")
+        self.assertFalse(os.path.islink(link))
+        self.assertEqual(json.loads(Path(link).read_text())["v"], 1)
+
+    def test_help_list_flag_abbrev_and_dashdash(self):
+        with mock.patch("sys.stdout", io.StringIO()):
+            code, out, err = self.main(["-h"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.main(["list", "--bogus"])[0], 2)
+        with mock.patch("seats.run.run_seat", return_value=RESULT) as rs:
+            self.assertEqual(self.main(["astra", "--att", "p"])[0], 2)
+            rs.assert_not_called()
+            self.main(["astra", "--", "-x"])
+        self.assertEqual(rs.call_args.args[3], "-x")
+
+    def test_sigterm_default_handler_restored(self):
+        with mock.patch("signal.signal", side_effect=[None, signal.SIG_DFL]) as sg, \
+                mock.patch("seats.run.run_seat", return_value=RESULT):
+            self.main(["astra", "p"])
+        self.assertEqual(sg.call_args_list[1].args[1], signal.SIG_DFL)
+
     def test_free_form_refusal_reason_printed_as_given(self):
         refused = RESULT._replace(ran=False, ok=False, reason="login needed: run `x login`", exit_code=75)
         with mock.patch("seats.run.run_seat", return_value=refused):
