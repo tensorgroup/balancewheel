@@ -23,19 +23,28 @@ MAX_BLOCK_CHARS = 1_000_000
 
 
 def _blocks(text):
-    """Fenced blocks with an info string of json or none. A fence line inside an open block closes it."""
-    out, cur, open_ = [], [], False
+    """(bodies, discarded): the bodies of fenced blocks that open with json or no info string, and the
+    count of such blocks that never closed. A fence line with an info string always opens a block, so a
+    stray fence cannot hide a later block. A bare fence closes the open block, or opens one."""
+    out, cur, open_, wanted, discarded = [], [], False, False, 0
     for line in text.split("\n"):
         if line.startswith("```"):
-            if open_:
-                out.append("\n".join(cur))
-                cur, open_ = [], False
+            info = line[3:].strip().lower()
+            if info:
+                if open_ and wanted:
+                    discarded += 1
+                open_, wanted, cur = True, info == "json", []
+            elif open_:
+                if wanted:
+                    out.append("\n".join(cur))
+                open_, cur = False, []
             else:
-                open_ = line[3:].strip().lower() in ("json", "")
-                cur = []
-        elif open_:
+                open_, wanted, cur = True, True, []
+        elif open_ and wanted:
             cur.append(line)
-    return out
+    if open_ and wanted:
+        discarded += 1
+    return out, discarded
 
 
 def _text(value, limit):
@@ -53,44 +62,62 @@ def _entry(raw):
             "claim": _text(raw.get("claim"), CLAIM_CHARS)}
 
 
-def parse(text):
-    """The entries of the last fenced block that parses to a JSON list, or None."""
+def parse_detail(text):
+    """(entries, lost): the entries of the last fenced block that parses to a JSON list (None when no
+    block does), and counts of what bw could not use: skipped_blocks, skipped_entries, truncated."""
+    lost = {"skipped_blocks": 0, "skipped_entries": 0, "truncated": 0}
     if not isinstance(text, str):
-        return None
+        return None, lost
+    bodies, lost["skipped_blocks"] = _blocks(text)
     found = None
-    for body in _blocks(text):
-        if len(body) > MAX_BLOCK_CHARS:
-            continue
-        try:
-            data = json.loads(body)
-        except (ValueError, RecursionError):
-            continue
+    for body in bodies:
+        data = None
+        if len(body) <= MAX_BLOCK_CHARS:
+            try:
+                data = json.loads(body)
+            except (ValueError, RecursionError):
+                pass
         if isinstance(data, list):
             found = data
+        else:
+            lost["skipped_blocks"] += 1
     if found is None:
-        return None
+        return None, lost
     out = []
     for raw in found:
         e = _entry(raw)
-        if e:
+        if e is None:
+            lost["skipped_entries"] += 1
+        elif len(out) >= MAX_PER_SEAT:
+            lost["truncated"] += 1
+        else:
             out.append(e)
-            if len(out) >= MAX_PER_SEAT:
-                break
-    return out
+    return out, lost
 
 
-def number(outputs, order):
-    """Findings with ids f1... in seat order, then block order."""
-    out = []
+def parse(text):
+    """The entries of the last fenced block that parses to a JSON list, or None."""
+    return parse_detail(text)[0]
+
+
+def _number(outputs, order):
+    out, losses = [], {}
     for seat in order:
-        entries = parse(outputs.get(seat))
+        entries, lost = parse_detail(outputs.get(seat))
+        if any(lost.values()):
+            losses[seat] = {k: v for k, v in lost.items() if v}
         if entries is None:
             entries = [{"severity": "minor", "where": "", "title": UNPARSED_TITLE,
                         "claim": f"bw found no JSON block; read seats/{seat}.md"}]
         for e in entries:
             out.append({"id": f"f{len(out) + 1}", "seat": seat, "severity": e["severity"],
                         "where": e["where"], "title": e["title"], "claim": e["claim"]})
-    return out
+    return out, losses
+
+
+def number(outputs, order):
+    """Findings with ids f1... in seat order, then block order."""
+    return _number(outputs, order)[0]
 
 
 def _loc(where):
@@ -156,9 +183,18 @@ def triage_required(findings_raw, seat_count, watches_cfg):
 
 
 def build(meta, outputs, seats, absent, short, short_reasons, watches_cfg, failed=None):
-    """The findings.json document. `outputs` holds only seats whose status is ok."""
+    """The findings.json document. `outputs` holds only seats whose status is ok. A seat with output
+    but no entry in `seats` is still merged and marked `unexpected_output`. A seat whose findings bw
+    could not all use gets a `lost` entry (skipped_blocks, skipped_entries, truncated)."""
+    seats = {s: dict(v) for s, v in seats.items()}
     order = [s for s in seats if s in outputs]
-    findings = number(outputs, order)
+    for s in outputs:
+        if s not in seats:
+            seats[s] = {"status": "ok", "on_roster": False, "unexpected_output": True}
+            order.append(s)
+    findings, losses = _number(outputs, order)
+    for s, lost in losses.items():
+        seats[s]["lost"] = lost
     groups = group(findings)
     return {"panel_id": meta["panel_id"], "checkpoint": meta["checkpoint"], "target": meta["target"],
             "tier": meta["tier"], "short": short, "short_reasons": short_reasons, "failed": failed,

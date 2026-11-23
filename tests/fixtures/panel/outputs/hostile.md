@@ -5,7 +5,7 @@ Hostile output.
 ```
 more"}]
 ```
-```
+
 Valid block:
 
 ```json

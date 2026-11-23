@@ -48,6 +48,28 @@ class Parse(unittest.TestCase):
         f = merge.parse(text)
         self.assertEqual([(x["title"], x["severity"]) for x in f], [("ok", "major")])
 
+    def test_python_block_before_findings(self):
+        text = "```python\nprint(1)\n```\n\n```json\n[{\"title\": \"found\"}]\n```\n"
+        self.assertEqual(merge.parse(text)[0]["title"], "found")
+
+    def test_unclosed_other_block_does_not_hide_findings(self):
+        text = "```python\nprint(1)\n\n```json\n[{\"title\": \"found\"}]\n```\n"
+        self.assertEqual(merge.parse(text)[0]["title"], "found")
+
+    def test_python_block_between_two_valid_blocks(self):
+        b = lambda t: "```json\n[{\"title\": \"%s\"}]\n```\n" % t
+        text = b("first") + "```python\nx = 1\n```\n" + b("second")
+        self.assertEqual(merge.parse(text)[0]["title"], "second")
+
+    def test_losses_counted(self):
+        e, lost = merge.parse_detail(fixture("hostile.md"))
+        self.assertEqual(len(e), merge.MAX_PER_SEAT)
+        self.assertEqual(lost, {"skipped_blocks": 2, "skipped_entries": 0, "truncated": 10})
+        text = "```json\n[1, {\"title\": \"ok\"}]\n```\n```json\nnot json\n```\n"
+        self.assertEqual(merge.parse_detail(text)[1], {"skipped_blocks": 1, "skipped_entries": 1, "truncated": 0})
+        self.assertEqual(merge.parse_detail(fixture("clean-a.md"))[1],
+                         {"skipped_blocks": 0, "skipped_entries": 0, "truncated": 0})
+
     def test_deep_nesting_is_not_fatal(self):
         text = "```json\n" + "[" * 100000 + "\n```\n"
         self.assertIsNone(merge.parse(text))
@@ -154,6 +176,22 @@ class Build(unittest.TestCase):
         self.assertEqual(doc["findings_raw"], 2)
         self.assertIsNone(doc["failed"])
         self.assertFalse(doc["triage_required"])
+
+    def test_lost_findings_recorded_per_seat(self):
+        doc = merge.build({"panel_id": "p1", "checkpoint": "design", "target": "t", "tier": "standard"},
+                          {"a": fixture("hostile.md"), "b": fixture("clean-b.md")},
+                          {"a": {"status": "ok", "on_roster": True}, "b": {"status": "ok", "on_roster": True}},
+                          {}, False, [], WATCHES)
+        self.assertEqual(doc["seats"]["a"]["lost"], {"skipped_blocks": 2, "truncated": 10})
+        self.assertNotIn("lost", doc["seats"]["b"])
+
+    def test_unexpected_output_is_merged_and_marked(self):
+        seats = {"a": {"status": "ok", "on_roster": True}}
+        doc = merge.build({"panel_id": "p1", "checkpoint": "design", "target": "t", "tier": "standard"},
+                          {"a": fixture("clean-a.md"), "z": fixture("clean-b.md")}, seats, {}, False, [], WATCHES)
+        self.assertEqual(doc["findings_raw"], 4)
+        self.assertTrue(doc["seats"]["z"]["unexpected_output"])
+        self.assertNotIn("z", seats)  # the caller's dict is not changed
 
     def test_failed_reason_carried(self):
         doc = merge.build({"panel_id": "p1", "checkpoint": "design", "target": "t", "tier": "standard"},
