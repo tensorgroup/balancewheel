@@ -1,0 +1,2 @@
+PROBE:read-sibling
+cat: /synthetic/run/state/seats/homes/zz-attack-sibling/out.md: Operation not permitted

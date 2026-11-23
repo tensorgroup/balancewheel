@@ -299,6 +299,12 @@ class SeatAttack(unittest.TestCase):
         homes = [fake.argv[i + 1] for i, a in enumerate(fake.argv) if a == "--lead-home"]
         self.assertEqual(homes, [os.path.realpath(os.path.join(home, d)) for d in (".claude", ".codex")])
 
+    def test_production_state_is_denied_during_the_attack(self):
+        # The attack's runs use RUN/state; the real state dir must be read-denied to the seat too.
+        fake = AttackRun("PASS — evidence in /ev\n")
+        verify.verify_seat(self.config, self.state, "astra", run=fake)
+        self.assertEqual(fake.argv[fake.argv.index("--deny-read") + 1], os.path.realpath(self.state))
+
     def test_key_change_during_attack_not_recorded(self):
         fake = AttackRun("PASS — evidence in /ev\n", after="codex-cli 10.0")
         ok, msg = verify.verify_seat(self.config, self.state, "astra", run=fake)
@@ -326,6 +332,9 @@ class SeatAttack(unittest.TestCase):
         self.assertIn("probe-skipped:fresh:g3", msg)
         self.assertNotIn("refusal", msg)
         Path(ev, "facts-fresh.json").write_text(json.dumps({"probes": {"g3": "skipped"}, "stopped": []}))
+        # bw's own plain re-run was not denied: a failure, never a refusal (ruling g04)
+        self.assertEqual(verify.failure_message(line), "not recorded — the seat attack failed; see the evidence")
+        line = f"FAIL: control-failed:fresh resume-not-exercised — evidence in {run_dir}\n"
         self.assertEqual(verify.failure_message(line), "not recorded — a refusal by the model is inconclusive; re-run")
         line = f"FAIL: probe-file:fresh:g1 probe-skipped:fresh:g3 — evidence in {run_dir}\n"
         self.assertEqual(verify.failure_message(line), "not recorded — the seat attack failed; see the evidence")

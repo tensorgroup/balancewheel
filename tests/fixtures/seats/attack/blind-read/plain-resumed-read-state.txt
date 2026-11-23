@@ -1,0 +1,2 @@
+PROBE:read-state
+cat: /synthetic/run/state/planted.txt: Operation not permitted

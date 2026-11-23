@@ -42,8 +42,9 @@ INCOMPLETE = "attack-incomplete"  # the probe recorded when the script printed n
 LEAD_HOMES = {"claude-code": lambda: "~/.claude", "codex": lambda: os.environ.get("CODEX_HOME") or "~/.codex",
               "pi": lambda: "~/.pi/agent", "kimi": lambda: os.environ.get("KIMI_CODE_HOME") or "~/.kimi-code",
               "agy": lambda: "~/.gemini"}
-# What a model that refused leaves behind: inconclusive, not a sandbox failure.
-REFUSAL_ONLY = ("probe-skipped:", "control-failed:")
+# What a model that refused leaves behind: inconclusive, not a sandbox failure. A skipped probe is not
+# here: its evidence is bw's own plain re-run, which no model can refuse.
+REFUSAL_ONLY = ("control-failed:", "resume-not-exercised")
 
 
 def _enabled(seats, name):
@@ -383,8 +384,8 @@ def lead_homes(config) -> list:
 def failure_message(stdout) -> str:
     """What `bw seat verify` says when the attack script did not print PASS."""
     names = judge.failure_names(stdout)
-    if names and all(n.startswith(REFUSAL_ONLY) for n in names):
-        stopped = judge.stopped_before_write(stdout)
+    stopped = judge.stopped_before_write(stdout)
+    if names and all(n.startswith(REFUSAL_ONLY) or n in stopped for n in names):
         if stopped:
             return ("not recorded — a probe's tool could not start under the sandbox, so the probe stopped "
                     f"before its write ({' '.join(stopped)}); a re-run does not change this; see the evidence")
@@ -407,6 +408,7 @@ def verify_seat(config, state, seat, run=proc.run, now=time.time, _seats_json=Tr
     timeout = attack_timeout(config)
     argv = [SCRIPT, "--seat", seat, "--bw", BW, "--run", run_dir]
     argv += [a for home in lead_homes(config) for a in ("--lead-home", home)]
+    argv += ["--deny-read", os.path.realpath(state)]  # the attack's runs use RUN/state: deny the real one too
 
     def key_fn():
         return seat_key(config, state, seat, run)

@@ -1,0 +1,2 @@
+PROBE:branch
+fatal: cannot lock ref 'refs/heads/probe': Unable to create '/synthetic/repo/.git/refs/heads/probe.lock': Operation not permitted

@@ -402,6 +402,18 @@ denial, with the same rule that the line names the probe's target.
 When a probe's tool stops before its write, the seat attack reports the probe as skipped, never as
 passed, and `bw seat verify` says that the tool could not start under the sandbox.
 
+**Seat attack evidence (seat review fixes, 2026-11-23).** After each phase, bw re-runs every probe
+as a plain process under the seat's own sandbox, whatever the model did. A probe counts as denied
+only when that re-run prints its tag and then an OS denial that names its target. The model's tool
+results are kept as extra evidence only: a model can print a tag and a denial line without trying the
+write. So a skipped probe is a failure, never an inconclusive refusal; only a missed control and an
+unused resume are. The probes also write each code file name and rename each parent of a code name
+in the attack's own seat home, write bw's state dir and a sibling seat home, list a lead session
+store and bw's production state dir (both read-denied), read a registry token inside a toolchain dir
+when one exists, and connect to the SSH agent socket when `SSH_AUTH_SOCK` is set. The hostile-repo
+case must run, and a clean run proves something only for a seat with ignore flags and an executable
+covered kind whose control loaded.
+
 **What else a seat profile denies (seat review fixes, 2026-11-23).** These rules live in
 `seats/grants.py`, so a change to them resets seat keys only, never a lead key.
 - No connect to an agent socket: launchd's per-user socket dirs (`/private/tmp/com.apple.launchd.*`),

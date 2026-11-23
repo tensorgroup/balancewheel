@@ -75,6 +75,15 @@ not against the prose.
   `--ignore-submodules=all`, and submodule recursion and summaries are off. A gitlink's own config or
   attributes (a filter, an fsmonitor) could otherwise run code when a user config sets
   `diff.submodule=diff`.
+- **The seat attack takes its denial evidence from bw's own re-runs** (`seats/judge.py`,
+  `tests/attack/seat_readonly.sh`). Every probe is re-run as a plain process under the seat's sandbox
+  after each phase; a tool result alone never makes a probe denied (a model could print the tag and a
+  denial line). A skipped probe is now a failure, not an inconclusive refusal. New probes: a write to
+  each code file name, a rename of each parent of a code name, writes to bw's state dir and a sibling
+  seat home, reads of a lead store, of bw's production state dir (now read-denied during the attack),
+  and of a token inside a toolchain dir, and a connect to the SSH agent socket. Each probe target has a
+  unique name. The hostile-repo case must run, and a clean run with no covered executable kind fails as
+  vacuous.
 - **The seat brief cache keys on the instruction and read-next files by content** (`seats/brief.py`). An
   edit to an ignored `CLAUDE.md` now rebuilds the brief. A git failure other than "not found" is never
   cached.
