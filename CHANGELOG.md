@@ -38,6 +38,9 @@ not against the prose.
   `history.jsonl` under `~/.gemini/antigravity-cli/` join the lead session stores. The agy seat keeps
   them, because they lie in its declared state dir. Its memory dirs (`knowledge`, `brain`, `implicit`,
   `annotations`) stay read-only.
+- **Seat verification keys and passes per seat id** (`seats/verify.py`, `state_dir/seat-verify.json`). The
+  last failed probe per seat goes to `state_dir/seats/failures.json`. A later failure under the same key
+  revokes the pass. bw now writes `state_dir/seats.json`.
 
 ### Fixed
 
