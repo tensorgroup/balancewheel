@@ -19,8 +19,9 @@ def _slurp(f):
     return f.read().decode("utf-8", "replace")
 
 
-def run(argv, timeout, cwd=None, env=None, stdin=subprocess.DEVNULL):
-    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+def run(argv, timeout, cwd=None, env=None, stdin=subprocess.DEVNULL, out_dir=None):
+    """`out_dir`: make the stdout and stderr files there (a sandboxed child's write grant)."""
+    with tempfile.TemporaryFile(dir=out_dir) as out, tempfile.TemporaryFile(dir=out_dir) as err:
         try:
             p = subprocess.Popen(argv, stdin=stdin, stdout=out, stderr=err, cwd=cwd, env=env,
                                  start_new_session=True)

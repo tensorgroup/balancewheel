@@ -18,6 +18,7 @@ worktree's answers view; the lead's own view dir is readable, and no write rule 
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -49,6 +50,13 @@ SECRET_READS = [".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker/confi
                 ".codex/auth.json", ".claude/.credentials.json", ".kimi-code/credentials", ".pi/agent/auth.json",
                 ".gemini/oauth_creds.json", ".config/gcloud",
                 ".cc-switch"]  # its DB holds Codex auth and copies of every vendor config
+# Session stores of the lead runtimes (home-relative): a seat never reads a lead's transcripts.
+LEAD_SESSION_STORES = [".claude/projects", ".codex/sessions", ".pi/agent/sessions", ".kimi-code/sessions",
+                       ".gemini/tmp"]
+# The env a seat gets is an allowlist: these names, every LC_* name, and the adapter's env_keys.
+SEAT_ENV_ALLOW = ("PATH", "HOME", "TMPDIR", "LANG", "TERM")
+SEAT_ENV_PREFIX = "LC_"
+_CS_DARWIN_USER_TEMP_DIR = 65537  # <unistd.h>; some Pythons do not name it in os.confstr_names
 
 
 def denied_ports(config=None):
@@ -136,6 +144,71 @@ def lead_grants(project, runtime, state_dir):
     return Grants(rules, reads, [check_path(p) for p in denied], [check_path(own_view)])
 
 
+def seat_env(environ, keep=()):
+    """Only the allowed keys, the LC_* keys, and the names in `keep` (the adapter's env_keys).
+    Every other key is dropped: ORCA_*, BW_*, and GIT_* included."""
+    keep = set(keep)
+    return {k: v for k, v in environ.items()
+            if k in SEAT_ENV_ALLOW or k.startswith(SEAT_ENV_PREFIX) or k in keep}
+
+
+def _system_temp_root():
+    """The per-user temp dir on macOS, else /tmp. TMPDIR is never read: the caller may have set it."""
+    name = os.confstr_names.get("CS_DARWIN_USER_TEMP_DIR",
+                                _CS_DARWIN_USER_TEMP_DIR if sys.platform == "darwin" else None)
+    if name is not None:
+        try:
+            root = os.confstr(name)
+        except (ValueError, OSError):
+            root = None
+        if root:
+            return root
+    return "/tmp"
+
+
+def seat_scratch_root():
+    """<system temp root>/bw-seats, made 0700 and owned by this user, as a real path. Every seat
+    scratch dir lies under it, and every seat profile denies reads of it (each re-reads its own)."""
+    path = os.path.join(os.path.realpath(_system_temp_root()), "bw-seats")
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    st = os.lstat(path)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        raise ValueError(f"refusing a seat scratch root that is not this user's own directory: {path}")
+    os.chmod(path, 0o700)
+    return check_path(path)
+
+
+def _inside(p, roots):
+    return any(p == r or p.startswith(r.rstrip("/") + "/") for r in roots)
+
+
+def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_files=()):
+    """Ordered write rules and read grants for a review seat on `target` (a lead.projects.Project).
+    The seat writes only its own home (minus the runtime's code-loading names) and the credential
+    files it refreshes. It reads the target and its git dir, and nothing of bw's state, of other
+    seats' scratch dirs, or of the lead runtimes' session stores."""
+    state, home, own_scratch = _real(state_dir), _real(seat_home), _real(scratch)
+    refuse_overlap(target.worktree, [state])
+    refuse_overlap(target.common_dir, [state])
+    writes = [_real(p) for p in runtime_grants.write]
+    for w in writes:
+        if not _inside(w, [home]):
+            raise ValueError(f"refusing: seat write grant {w} lies outside the seat home {home}")
+    rules = [("allow", "subpath", home)] + [("allow", "subpath", w) for w in writes]
+    rules += [("deny", "subpath", _real(p)) for p in runtime_grants.deny_write]
+    for f in write_files:
+        given = os.path.abspath(os.path.expanduser(f))
+        if os.path.islink(given) or not os.path.isfile(given):
+            raise ValueError(f"refusing a seat write file that is not a regular file: {given}")
+        rules.append(("allow", "literal", _real(given)))
+    reads = [_real(target.worktree), _real(target.common_dir)] + [_real(p) for p in runtime_grants.read]
+    user_home = os.path.expanduser("~")
+    stores = [os.path.realpath(os.path.join(user_home, s)) for s in LEAD_SESSION_STORES]
+    stores = [check_path(p) for p in stores if os.path.exists(p) and not _inside(p, [home] + writes)]
+    denied = [state, seat_scratch_root()] + stores
+    return Grants(rules, reads, denied, [home, own_scratch])
+
+
 def _rule(action, kind, path):
     return f'({action} file-write* ({kind} "{path}"))'
 
@@ -202,15 +275,17 @@ def backend():
     return "nono" if shutil.which("nono") else "sandbox-exec"
 
 
-def wrap(argv, grants, which, home, scratch, env, ports=None):
+def wrap(argv, grants, which, home, scratch, env, ports=None, allow_cwd=True):
     """The argv that runs `argv` contained, and a cleanup for any profile file written.
-    `ports`: ports to refuse on any host (default `denied_ports()`)."""
+    `ports`: ports to refuse on any host (default `denied_ports()`). `allow_cwd=False` (seats)
+    leaves out nono's `--allow-cwd`: the seat's grants name the target read-only."""
     envs = [f"HOME={home}", f"TMPDIR={scratch}"] + [f"{k}={v}" for k, v in env.items()]
     if which == "nono":
         fd, path = tempfile.mkstemp(prefix="bw-lead-", suffix=".json", dir=scratch)
         with os.fdopen(fd, "w") as f:
             json.dump(nono_profile(grants, scratch, ports), f)
-        return (["nono", "run", "--silent", "--allow-cwd", "--profile", path, "--", "/usr/bin/env", *envs, *argv],
+        cwd = ["--allow-cwd"] if allow_cwd else []
+        return (["nono", "run", "--silent", *cwd, "--profile", path, "--", "/usr/bin/env", *envs, *argv],
                 lambda: os.path.exists(path) and os.remove(path))
     return (["sandbox-exec", "-p", seatbelt_profile(grants, scratch, ports), "/usr/bin/env", *envs, *argv], lambda: None)
 

@@ -48,22 +48,22 @@ def _lead(config, runtime, lead_name):
                 None)
 
 
-def _attack(state, run, argv, key_fn, record, failure_message, what, runtime, which):
+def _attack(state, run, argv, key_fn, record, failure_message, what, runtime, which, timeout=ATTACK_TIMEOUT):
     lock = RuntimeLock(state, runtime)
     try:
         lock.shared()  # waits for an update in progress; holds off any other until the record
-        return _attack_locked(run, argv, key_fn, record, failure_message, what, runtime, which)
+        return _attack_locked(run, argv, key_fn, record, failure_message, what, runtime, which, timeout)
     finally:
         lock.release()
 
 
-def _attack_locked(run, argv, key_fn, record, failure_message, what, runtime, which):
+def _attack_locked(run, argv, key_fn, record, failure_message, what, runtime, which, timeout):
     before = key_fn()
-    r = run(argv, ATTACK_TIMEOUT)
+    r = run(argv, timeout)
     out = r.out.strip()
     head = out + "\n" if out else ""
     if r.timed_out:
-        return False, head + f"bw: not recorded — the {what} attack timed out after {ATTACK_TIMEOUT} s"
+        return False, head + f"bw: not recorded — the {what} attack timed out after {timeout} s"
     if r.rc != 0 or not r.out.startswith("PASS"):
         return False, head + "bw: " + failure_message(r.out)
     if key_fn() != before:

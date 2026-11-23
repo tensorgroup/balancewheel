@@ -430,6 +430,177 @@ class EscapesUnderNono(EscapesUnderSeatbelt):
     backend = "nono"
 
 
+class SeatGrants(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(os.path.realpath(self.tmp.name)); self.root = root
+        repo = root / "app"; repo.mkdir()
+        git(repo, "init", "-q"); (repo / "f").write_text("x"); git(repo, "add", "."); git(repo, "commit", "-qm", "i")
+        self.project = resolve_project(str(repo), {"projects": {}, "default_profile": "d"})
+        self.state = str(root / "state"); os.mkdir(self.state)
+        self.state_link = str(root / "state-link"); os.symlink(self.state, self.state_link)
+        self.home = os.path.join(self.state, "seats", "homes", "s"); os.makedirs(self.home)
+        self.scratch = str(root / "scratch"); os.mkdir(self.scratch)
+        self.other = str(root / "other"); os.mkdir(self.other)
+        self.cred = os.path.join(self.home, "auth.json"); Path(self.cred).write_text("{}")
+        self.d = str(root)
+        self.none = sandbox.RuntimeGrants([], [], {}, False, ())
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def grants(self, rt=None, **kw):
+        return sandbox.seat_grants(self.project, self.home, rt or self.none, self.state, self.scratch, **kw)
+
+    def test_only_seat_home_is_writable(self):
+        g = self.grants(sandbox.RuntimeGrants([], [self.home + "/sub"], {}, True, ()))
+        self.assertEqual([r for r in g.rules if r[0] == "allow"],
+                         [("allow", "subpath", self.home), ("allow", "subpath", self.home + "/sub")])
+
+    def test_write_outside_home_refused(self):
+        with self.assertRaises(ValueError):
+            self.grants(sandbox.RuntimeGrants([], [self.other], {}, False, ()))
+
+    def test_code_paths_in_home_denied_and_credential_literal(self):
+        g = self.grants(sandbox.RuntimeGrants([], [], {}, False, [self.home + "/hooks"]), write_files=[self.cred])
+        self.assertIn(("deny", "subpath", self.home + "/hooks"), g.rules)
+        self.assertIn(("allow", "literal", self.cred), g.rules)
+        self.assertLess(g.rules.index(("deny", "subpath", self.home + "/hooks")),
+                        g.rules.index(("allow", "literal", self.cred)))
+
+    def test_symlinked_credential_refused(self):
+        link = os.path.join(self.home, "auth-link.json"); os.symlink(self.cred, link)
+        with self.assertRaises(ValueError):
+            self.grants(write_files=[link])
+
+    def test_missing_or_dir_credential_refused(self):
+        for p in (os.path.join(self.home, "absent.json"), self.other):
+            with self.assertRaises(ValueError):
+                self.grants(write_files=[p])
+
+    def test_symlinked_state_and_scratch_realpathed(self):
+        scratch_link = str(self.root / "scratch-link"); os.symlink(self.scratch, scratch_link)
+        g = sandbox.seat_grants(self.project, self.home, self.none, self.state_link, scratch_link)
+        self.assertIn(os.path.realpath(self.state_link), g.deny_read)
+        self.assertNotIn(self.state_link, g.deny_read)
+        self.assertEqual(list(g.reread), [self.home, self.scratch])
+
+    def test_state_and_scratch_root_read_denied_own_reread(self):
+        g = self.grants()
+        self.assertIn(self.state, g.deny_read)
+        self.assertIn(sandbox.seat_scratch_root(), g.deny_read)
+        self.assertEqual(list(g.reread), [self.home, self.scratch])
+        self.assertIn(self.project.worktree, g.read)
+        self.assertIn(self.project.common_dir, g.read)
+
+    def test_lead_session_stores_read_denied_unless_seat_writes_them(self):
+        fake_home = self.root / "user"
+        for s in sandbox.LEAD_SESSION_STORES[:2]:
+            (fake_home / s).mkdir(parents=True)
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            g = self.grants()
+            self.assertIn(str(fake_home / sandbox.LEAD_SESSION_STORES[0]), g.deny_read)
+            self.assertIn(str(fake_home / sandbox.LEAD_SESSION_STORES[1]), g.deny_read)
+            self.assertNotIn(str(fake_home / sandbox.LEAD_SESSION_STORES[2]), g.deny_read)  # absent
+            self.home = str(fake_home / ".codex")  # a seat whose home holds a lead store keeps it
+            g = self.grants()
+            self.assertNotIn(str(fake_home / ".codex" / "sessions"), g.deny_read)
+
+    def test_target_inside_state_refused(self):
+        inner = Path(self.state) / "repo"; inner.mkdir()
+        git(inner, "init", "-q"); (inner / "f").write_text("x"); git(inner, "add", "."); git(inner, "commit", "-qm", "i")
+        project = resolve_project(str(inner), {"projects": {}, "default_profile": "d"})
+        with self.assertRaises(ValueError):
+            sandbox.seat_grants(project, self.home, self.none, self.state, self.scratch)
+
+    def test_seatbelt_rereads_after_deny(self):
+        p = sandbox.seatbelt_profile(self.grants(), self.scratch)
+        self.assertLess(p.index(f'(deny file-read* (subpath "{self.state}"))'),
+                        p.index(f'(allow file-read* (subpath "{self.home}"))'))
+
+    def test_nono_without_allow_cwd(self):
+        argv, cleanup = sandbox.wrap(["x"], self.grants(), "nono", self.home, self.scratch, {}, allow_cwd=False)
+        cleanup()
+        self.assertNotIn("--allow-cwd", argv)
+
+    def test_lead_wrap_keeps_allow_cwd(self):
+        argv, cleanup = sandbox.wrap(["x"], self.grants(), "nono", self.home, self.scratch, {})
+        cleanup()
+        self.assertIn("--allow-cwd", argv)
+
+    def test_seat_env_allowlist(self):
+        src = {"PATH": "/bin", "HOME": "/h", "LANG": "C", "LC_ALL": "C", "TERM": "x", "OPENROUTER_API_KEY": "k",
+               "OTHER_API_KEY": "o", "ORCA_X": "1", "BW_GUARD_SOCK": "s", "BW_PANEL_VIEW": "v", "GIT_DIR": "/g"}
+        self.assertEqual(sandbox.seat_env(src, keep=["OPENROUTER_API_KEY"]),
+                         {"PATH": "/bin", "HOME": "/h", "LANG": "C", "LC_ALL": "C", "TERM": "x", "OPENROUTER_API_KEY": "k"})
+        self.assertNotIn("OPENROUTER_API_KEY", sandbox.seat_env(src))
+
+    def test_scratch_root_ignores_tmpdir(self):
+        with mock.patch.dict(os.environ, {"TMPDIR": self.d}):
+            root = sandbox.seat_scratch_root()
+        self.assertFalse(root.startswith(self.d))
+        self.assertEqual(root, os.path.realpath(root))
+        self.assertEqual(os.stat(root).st_mode & 0o777, 0o700)
+
+
+@unittest.skipUnless(shutil.which("sandbox-exec"), "macOS sandbox-exec required")
+class SeatEscapesUnderSeatbelt(unittest.TestCase):
+    """No model: a shell under a seat profile tries to write the target, read bw state, and read
+    another seat's scratch dir."""
+
+    backend = "sandbox-exec"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(os.path.realpath(self.tmp.name))
+        self.repo = root / "app"; self.repo.mkdir()
+        git(self.repo, "init", "-q"); (self.repo / "f").write_text("x"); git(self.repo, "add", "."); git(self.repo, "commit", "-qm", "i")
+        self.state = root / "state"; self.state.mkdir()
+        (self.state / "inbox.jsonl").write_text("secret-state\n")
+        self.home = self.state / "seats" / "homes" / "s"; (self.home / "hooks").mkdir(parents=True)
+        self.scratch = tempfile.mkdtemp(dir=sandbox.seat_scratch_root())
+        self.other = tempfile.mkdtemp(dir=sandbox.seat_scratch_root())
+        Path(self.other, "brief").write_text("other-seat\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.scratch, ignore_errors=True); shutil.rmtree(self.other, ignore_errors=True)
+        self.tmp.cleanup()
+
+    def sh(self, script):
+        rt = sandbox.RuntimeGrants([], [], {}, True, [str(self.home / "hooks")])
+        project = resolve_project(str(self.repo), {"projects": {}, "default_profile": "d"})
+        g = sandbox.seat_grants(project, str(self.home), rt, str(self.state), self.scratch)
+        argv, cleanup = sandbox.wrap(["/bin/sh", "-c", script], g, self.backend, str(self.home), self.scratch, {},
+                                     allow_cwd=False)
+        try:
+            return subprocess.run(argv, cwd=str(self.repo), capture_output=True, text=True)
+        finally:
+            cleanup()
+
+    def test_target_readable_not_writable(self):
+        r = self.sh(f"cat {self.repo}/f; echo; echo y > {self.repo}/f; echo z > {self.repo}/new")
+        self.assertEqual(r.stdout.splitlines()[:1], ["x"], r.stderr)
+        self.assertEqual((self.repo / "f").read_text(), "x")
+        self.assertFalse((self.repo / "new").exists())
+
+    def test_home_and_scratch_writable_code_paths_not(self):
+        r = self.sh(f"echo a > {self.home}/session; echo b > {self.scratch}/out; echo c > {self.home}/hooks/h;"
+                    f" cat {self.home}/session {self.scratch}/out")
+        self.assertEqual(r.stdout.splitlines(), ["a", "b"], r.stderr)
+        self.assertFalse((self.home / "hooks" / "h").exists())
+
+    def test_bw_state_and_other_seat_scratch_unreadable(self):
+        r = self.sh(f"cat {self.state}/inbox.jsonl; cat {self.other}/brief; ls {self.state}")
+        self.assertNotIn("secret-state", r.stdout)
+        self.assertNotIn("other-seat", r.stdout)
+        self.assertNotIn("inbox.jsonl", r.stdout)
+
+
+@unittest.skipUnless(shutil.which("nono"), "nono not installed")
+class SeatEscapesUnderNono(SeatEscapesUnderSeatbelt):
+    backend = "nono"
+
+
 class Containment(unittest.TestCase):
     def test_is_verified_requires_exact_key(self):
         with tempfile.TemporaryDirectory() as state:

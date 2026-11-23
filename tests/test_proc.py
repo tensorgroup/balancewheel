@@ -1,6 +1,7 @@
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -18,6 +19,20 @@ def alive(pid):
 
 
 class ProcRunTest(unittest.TestCase):
+    def test_out_dir_holds_the_output_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            real = tempfile.TemporaryFile
+            dirs = []
+
+            def spy(*a, **kw):
+                dirs.append(kw.get("dir"))
+                return real(*a, **kw)
+
+            with mock.patch.object(proc.tempfile, "TemporaryFile", side_effect=spy):
+                r = proc.run([sys.executable, "-c", "print('x')"], 10, out_dir=d)
+            self.assertEqual(r.out, "x\n")
+            self.assertEqual(dirs, [d, d])
+
     def test_success(self):
         r = proc.run(["true"], 5)
         self.assertEqual((r.rc, r.timed_out), (0, False))

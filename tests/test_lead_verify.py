@@ -105,6 +105,21 @@ class Verify(unittest.TestCase):
         self.assertEqual(self.store("containment.json"), {})
         self.assertEqual([c[1] for c in run.calls if c[0][0].endswith("guard_attack.sh")], [900])
 
+    def test_attack_passes_its_timeout_to_run(self):
+        run = FakeRun("PASS — evidence in /t")
+        ok, msg = verify._attack(self.state, run, ["x.sh"], lambda: "k", lambda key, ev: None,
+                                 verify.sandbox_failure_message, "containment", "pi", "sandbox-exec", timeout=7)
+        self.assertTrue(ok, msg)
+        self.assertEqual(run.calls, [(["x.sh"], 7)])
+
+    def test_timeout_message_names_the_timeout(self):
+        def run(argv, timeout, **kw):
+            return Result(124, "", "", True)
+        ok, msg = verify._attack(self.state, run, ["x.sh"], lambda: "k", lambda key, ev: None,
+                                 verify.sandbox_failure_message, "seat", "pi", "sandbox-exec", timeout=7)
+        self.assertFalse(ok)
+        self.assertIn("the seat attack timed out after 7 s", msg)
+
     def test_pass_not_recorded_when_key_changes_during_attack(self):
         for fn, store in ((verify.sandbox_verify, "containment.json"), (verify.guard_verify, "guard-verify.json")):
             ok, msg = fn(CONFIG, self.state, "pi", run=FakeRun("PASS — evidence in /x", after="tool 2.0"))
