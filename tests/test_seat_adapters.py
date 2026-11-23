@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from lead import sandbox
@@ -191,14 +192,27 @@ class Codex(unittest.TestCase):
         self.assertEqual(sorted(self.ad.hook_files(HOME)), sorted(g.deny_write))
 
     def test_home_env(self):
-        self.assertEqual(self.ad.home_env(HOME), {"CODEX_HOME": HOME})
+        with mock.patch.object(adapters, "CODEX_CA_BUNDLE", "/no/such/bundle.pem"):
+            self.assertEqual(self.ad.home_env(HOME), {"CODEX_HOME": HOME})
+
+    def test_ca_bundle_file_set_unless_the_user_set_one(self):
+        # Under nono, codex 0.164 cannot load the system root store: every HTTPS connect fails
+        # ("workspace routing discovery failed"). With SSL_CERT_FILE it loads the PEM bundle and runs.
+        with tempfile.NamedTemporaryFile(suffix=".pem") as f, \
+                mock.patch.object(adapters, "CODEX_CA_BUNDLE", f.name), \
+                mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(self.ad.home_env(HOME), {"CODEX_HOME": HOME, "SSL_CERT_FILE": f.name})
+            for key in ("SSL_CERT_FILE", "CODEX_CA_CERTIFICATE"):
+                with mock.patch.dict(os.environ, {key: "/user/ca.pem"}):
+                    self.assertEqual(self.ad.home_env(HOME), {"CODEX_HOME": HOME})  # the user's CA wins
+        self.assertEqual(sorted(self.ad.env_keys), ["CODEX_CA_CERTIFICATE", "SSL_CERT_FILE"])
+        self.assertEqual(adapters.CODEX_CA_BUNDLE, "/etc/ssl/cert.pem")
 
     def test_credentials_refresh(self):  # R11: auth.json holds a refresh token
         [(real, name, refreshes)] = self.ad.credentials
         self.assertEqual(name, "auth.json")
         self.assertTrue(real.endswith("/auth.json"))
         self.assertTrue(refreshes)
-        self.assertEqual(self.ad.env_keys, [])
 
     def test_permission_flag_present(self):  # R19
         self.assertTrue(has_run(self.ad.argv(self.SEAT, "/s/i", False), RECORDED_PERMISSION_FLAG["codex"]))

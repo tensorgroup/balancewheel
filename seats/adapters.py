@@ -225,6 +225,20 @@ def _codex_tool_results(stdout_lines):
     return out
 
 
+# codex 0.164 under nono cannot load the macOS system root store, so every HTTPS connect fails
+# ("workspace routing discovery failed"). With SSL_CERT_FILE it loads this PEM bundle instead. A CA
+# the user set (SSL_CERT_FILE or CODEX_CA_CERTIFICATE, kept through env_keys) wins.
+CODEX_CA_BUNDLE = "/etc/ssl/cert.pem"
+CODEX_CA_ENV = ["CODEX_CA_CERTIFICATE", "SSL_CERT_FILE"]
+
+
+def _codex_home_env(seat_home):
+    env = {"CODEX_HOME": seat_home}
+    if os.path.isfile(CODEX_CA_BUNDLE) and not any(os.environ.get(k) for k in CODEX_CA_ENV):
+        env["SSL_CERT_FILE"] = CODEX_CA_BUNDLE
+    return env
+
+
 def _codex_login():
     return os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "auth.json")
 
@@ -240,7 +254,7 @@ CODEX = SeatAdapter(
     answer=_codex_answer,
     errors=_codex_errors,
     grants=lambda seat, seat_home: _grants(seat_home, seat_home, CODEX_CODE, {"CODEX_HOME": seat_home}),
-    home_env=lambda seat_home: {"CODEX_HOME": seat_home},
+    home_env=_codex_home_env,
     credentials=[(_codex_login(), "auth.json", True)],  # auth.json holds a refresh token (R11)
     hook_files=lambda seat_home: [os.path.join(seat_home, n) for n in CODEX_CODE],
     project_code=lambda target, argv=(): _present(target, CODEX_PROJECT_CODE),
@@ -249,7 +263,7 @@ CODEX = SeatAdapter(
     version_argv=["codex", "--version"],
     prompt_via="stdin",
     ignore_flags=[],  # no flag makes codex skip project config
-    env_keys=[],
+    env_keys=CODEX_CA_ENV,
     tool_results=_codex_tool_results,
     state_dirs=[],
     installs=["codex"],  # ~/.local/bin/codex links into the package dir under ~/.codex/packages

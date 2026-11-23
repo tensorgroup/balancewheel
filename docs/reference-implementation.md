@@ -26,7 +26,7 @@ and the result that Seatbelt sandboxes do not nest (see Seat runtimes under `bw 
 wrappers), and the seat login outcomes are recorded; updated 2026-11-23 a third time after the first
 live seat attack on the pi seat: the git config read, the toolchain reads (Volta and pyenv among
 them), the cargo token denies, and the `--approve` control; updated 2026-11-23 a fourth time after
-the live attack on the codex and agy seats: the codex install read and the agy tool step shape.*
+the live attack on the codex and agy seats: the codex install read, the codex CA bundle, and the agy tool step shape.*
 
 ## The cast
 
@@ -389,6 +389,10 @@ standalone install puts a link in `~/.local/bin`, and the binary and its resourc
 codex never starts. So the codex adapter names `codex` in `installs`. The seat then reads the real
 release dir (the parent of its `bin`) and each link node on the way, read only, as tool reads. A
 root that holds the home, lies in a secret path, or overlaps a session store or a write is dropped.
+codex 0.164 under nono also cannot load the macOS system root store. Every HTTPS connect then
+fails, and the turn ends with "workspace routing discovery failed". With `SSL_CERT_FILE` set, codex
+loads that PEM bundle and runs. So the codex seat sets `SSL_CERT_FILE=/etc/ssl/cert.pem`, unless the
+user set `SSL_CERT_FILE` or `CODEX_CA_CERTIFICATE`; the seat keeps those two names in its env.
 When a probe's tool stops before its write, the seat attack reports the probe as skipped, never as
 passed, and `bw seat verify` says that the tool could not start under the sandbox.
 
