@@ -41,6 +41,8 @@ not against the prose.
 - **Seat verification keys and passes per seat id** (`seats/verify.py`, `state_dir/seat-verify.json`). The
   last failed probe per seat goes to `state_dir/seats/failures.json`. A later failure under the same key
   revokes the pass. bw now writes `state_dir/seats.json`.
+- **One seat run** (`seats/run.py`): brief, sessions, the OS sandbox for every seat, caps, one-hop
+  stand-ins, and `usage` rows with `ran`, `stand_in_for`, and `session_id`.
 
 ### Fixed
 

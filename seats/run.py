@@ -1,0 +1,331 @@
+"""One seat run: the brief, the session, the OS sandbox, the cap, one stand-in hop, and the usage row.
+
+`run_seat` is the core of `bw seat` and of the panel, which calls it in-process. Every return gives a
+`SeatResult`. A seat that did not run gets one `ran: false` usage row; a run that happened gets one
+`ran: true` row. Exit statuses: the CLI's own status, 124 on the wall-clock cap, 75 when bw refuses
+or cannot start the seat.
+"""
+import os
+import shutil
+import stat
+import sys
+import tempfile
+import time
+from collections import namedtuple
+
+from lead import locks, proc, sandbox
+from lead.guard.redact import redact
+from lead.guard.review import safe
+from lead.projects import resolve_project
+from metrics import store
+from seats import adapters, caps, sessions, verify
+from seats import brief as seat_brief
+
+SeatResult = namedtuple("SeatResult",
+    "seat requested stand_in_for runtime model ran ok reason exit_code session_id mode dir duration_s "
+    "tokens_in tokens_out cost_usd rate_limits answer")
+REFUSED = 75
+TIMEOUT = 124
+REASON_MAX = 200
+READING_RULE = ("## Reading rule\n\nOpen a file only to verify a claim, follow a caller, or read what the task "
+                "names. Do not survey the repository.")
+TASK_HEADING = "## Task"
+SANDBOX_ERROR_PREFIXES = ("sandbox-exec:", "nono")
+ROW_OPTIONAL = ("session_id", "stand_in_for", "tokens_in", "tokens_out", "cost_usd")
+
+
+class Tampered(Exception):
+    """A seat home component is a symlink or not a dir, or a credential name is not bw's link."""
+
+
+def _stderr(line):
+    print(line, file=sys.stderr)
+
+
+def _real_dir(path, name):
+    """Make `path` 0700 when absent. Refuse it when it is a symlink or not a dir (lstat, no follow)."""
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        os.mkdir(path, 0o700)
+        st = os.lstat(path)
+    if not stat.S_ISDIR(st.st_mode):
+        raise Tampered(name)
+
+
+def safe_home(state, seat) -> str:
+    """`state_dir/seats/homes/<seat>`. Every component from `seats/` down must be a real dir, never
+    a symlink. Raises Tampered with the name of the bad component."""
+    path = state
+    os.makedirs(state, exist_ok=True)
+    for part in ("seats", "homes", seat):
+        path = os.path.join(path, part)
+        _real_dir(path, part)
+    os.chmod(path, 0o700)
+    return path
+
+
+def _link_credentials(home, credentials):
+    """A link in the seat home to each login file. A name is linked only when lstat shows it absent;
+    an existing name that is not the expected link is refused."""
+    for real, name, _ in credentials:
+        d = home
+        for part in name.split("/")[:-1]:
+            d = os.path.join(d, part)
+            _real_dir(d, name)
+        link = os.path.join(home, name)
+        try:
+            st = os.lstat(link)
+        except FileNotFoundError:
+            os.symlink(real, link)
+            continue
+        if not stat.S_ISLNK(st.st_mode) or os.readlink(link) != real:
+            raise Tampered(name)
+
+
+def _write_private(path, text):
+    """Write `text` to `path` atomically, mode 0600."""
+    d = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".bw-seat-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _row(r) -> dict:
+    row = {"type": "usage", "seat": r.seat, "model": r.model, "mode": r.mode, "dir": r.dir,
+           "duration_s": r.duration_s, "ok": r.ok, "reason": r.reason, "ran": r.ran}
+    for k in ROW_OPTIONAL:
+        v = getattr(r, k)
+        if v is not None:
+            row[k] = v
+    return row
+
+
+def result_json(result) -> dict:
+    """The result as JSON: `{"v": 1, ...}`, every field except `answer`."""
+    d = {"v": 1, **result._asdict()}
+    del d["answer"]
+    return d
+
+
+def _error_reason(line):
+    return ("error: " + safe(redact(line)))[:REASON_MAX]
+
+
+def _input_text(prompt, brief_text):
+    if brief_text is None:
+        return prompt
+    return f"{brief_text.rstrip()}\n\n{READING_RULE}\n\n{TASK_HEADING}\n\n{prompt}"
+
+
+class _Run:
+    """One attempt at one seat: steps 3 to 9. `refuse` and `finish` append the usage row."""
+
+    def __init__(self, config, state, seat, prompt, where, opts, run, now, say, standin_for):
+        self.config, self.state, self.seat, self.prompt, self.where = config, state, seat, prompt, where
+        self.opts, self.run, self.now, self.say = opts, run, now, say
+        self.s = config["seats"][seat]
+        self.runtime = self.s["runtime"]
+        self.adapter = adapters.SEAT_ADAPTERS[self.runtime]
+        self.base = {"seat": seat, "requested": standin_for or seat, "stand_in_for": standin_for,
+                     "runtime": self.runtime, "model": self.s["model"]}
+
+    def _append(self, r):
+        store.append(store.log_path(self.config), _row(r))
+        return r
+
+    def refuse(self, reason, d=None):
+        """The seat did not run: exit 75 and one `ran: false` row."""
+        return self._append(SeatResult(**self.base, ran=False, ok=False, reason=reason, exit_code=REFUSED,
+                                       session_id=None, mode=None, dir=d or self.where, duration_s=0,
+                                       tokens_in=None, tokens_out=None, cost_usd=None, rate_limits=None,
+                                       answer=""))
+
+    def finish(self, ok, reason, exit_code, sid, mode, d, duration, usage, answer):
+        return self._append(SeatResult(**self.base, ran=True, ok=ok, reason=reason, exit_code=exit_code,
+                                       session_id=sid, mode=mode, dir=d, duration_s=duration,
+                                       tokens_in=usage.get("tokens_in"), tokens_out=usage.get("tokens_out"),
+                                       cost_usd=usage.get("cost_usd"), rate_limits=usage.get("rate_limits"),
+                                       answer=answer))
+
+    def locked(self):
+        """Step 3: the shared runtime lock before the verification check, held to the end of the run."""
+        lock = locks.RuntimeLock(self.state, self.runtime)
+        try:
+            lock.shared()
+            if not (self.opts["attack"] and verify.check_token(self.state, self.seat, self.now())):
+                if not verify.is_verified(self.config, self.state, self.seat, self.run):
+                    key = verify.seat_key(self.config, self.state, self.seat, self.run)
+                    if key.get("runtime_version") == "unreadable":
+                        return self.refuse(f"unverified: {self.runtime} version unreadable")
+                    return self.refuse("unverified")
+            return self.target()
+        finally:
+            lock.release()
+
+    def target(self):
+        """Step 4: the worktree, the hostile-repo check, and the per-seat, per-directory lock."""
+        try:
+            project = resolve_project(self.where, self.config, self.run)
+        except ValueError:
+            return self.refuse("refused: not a git worktree")
+        wt = project.worktree
+        hostile = self.adapter.project_code(wt)
+        if hostile:
+            name = safe(os.path.relpath(hostile[0], wt))
+            return self.refuse(f"hostile: {name} loads code for {self.runtime}", wt)
+        try:
+            with sessions.run_lock(self.state, self.seat, wt):
+                return self.home(project)
+        except sessions.Busy:
+            return self.refuse("busy", wt)
+
+    def home(self, project):
+        """Step 5: the seat home and the scratch dir, removed at the end."""
+        wt = project.worktree
+        try:
+            home = safe_home(self.state, self.seat)
+            _link_credentials(home, self.adapter.credentials)
+            adapters.make_code_dirs(self.runtime, home)
+        except (Tampered, OSError) as e:
+            return self.refuse(f"sandbox: seat home tampered: {safe(e)}", wt)
+        try:
+            scratch = tempfile.mkdtemp(prefix=f"{self.seat}-", dir=sandbox.seat_scratch_root())
+        except ValueError as e:
+            return self.refuse(f"sandbox: {safe(e)}", wt)
+        try:
+            return self.execute(project, home, scratch)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+    def session(self, wt):
+        """Step 6: the session to resume, or None for a new one."""
+        sid = self.opts["session_id"]
+        if sid is None and self.opts["resume"]:
+            sid = sessions.get(self.state, self.seat, wt, self.s["model"])
+            if sid is None:
+                self.say(f"bw seat: no session for {self.seat} in {safe(wt)}; starting a new one")
+        return sid if adapters.valid_session(sid) else None
+
+    def brief_text(self, wt):
+        if self.opts["brief_file"]:
+            with open(self.opts["brief_file"], encoding="utf-8", errors="replace") as f:
+                return f.read()
+        if self.opts["brief"]:
+            with open(seat_brief.build(self.state, wt), encoding="utf-8", errors="replace") as f:
+                return f.read()
+        return None
+
+    def execute(self, project, home, scratch):
+        """Steps 6 to 9: the input file, the grants and wrap, the run, the parse, and the row."""
+        wt = project.worktree
+        sid = self.session(wt)
+        mode = "resume" if sid else "new"
+        text = _input_text(self.prompt, None if sid else self.brief_text(wt))
+        input_path = os.path.join(scratch, "input.md")
+        _write_private(input_path, text)
+        deep = self.opts["deep"]
+        argv = (self.adapter.resume_argv(self.s, sid, input_path, deep) if sid
+                else self.adapter.argv(self.s, input_path, deep))
+
+        rg = self.adapter.grants(self.s, home)
+        backend = "sandbox-exec" if self.adapter.backend == "sandbox-exec" else sandbox.backend()
+        home_dir = home if rg.private_home else os.path.expanduser("~")
+        env = sandbox.seat_env(os.environ, keep=self.adapter.env_keys)
+        env.update({"TMPDIR": scratch, "NODE_COMPILE_CACHE": scratch})
+        env.update(self.adapter.home_env(home))
+        try:
+            grants = sandbox.seat_grants(project, home, rg, self.state, scratch,
+                                         credentials=[p for p, _, refreshes in self.adapter.credentials if refreshes],
+                                         state_dirs=self.adapter.state_dirs)
+            full, cleanup = sandbox.wrap(argv, grants, backend, home_dir, scratch, {},
+                                         sandbox.denied_ports(self.config), allow_cwd=False)
+        except ValueError as e:
+            return self.refuse(f"sandbox: {safe(e)}", wt)
+
+        cap_s = self.config["panel"]["deep_cap_min" if deep else "cap_min"] * 60
+        start = self.now()
+        try:
+            with open(input_path, encoding="utf-8") as stdin:
+                r = self.run(full, cap_s, cwd=wt, env=env, stdin=stdin, out_dir=scratch)
+        except (KeyboardInterrupt, SystemExit):
+            self.finish(False, "interrupted", None, sid, mode, wt, round(self.now() - start, 1), {}, "")
+            raise
+        finally:
+            cleanup()
+        duration = round(self.now() - start, 1)
+        return self.parse(r, text, sid, mode, wt, duration)
+
+    def parse(self, r, text, sid, mode, wt, duration):
+        """Step 8 and 9: read the run with the adapter and append its row."""
+        out_l, err_l = r.out.splitlines(), r.err.splitlines()
+        if self.opts["transcript"]:
+            _write_private(self.opts["transcript"], r.out + r.err)
+        if r.rc != 0 and not r.timed_out:
+            first = next((line.strip() for line in err_l if line.strip()), "")
+            if first.startswith(SANDBOX_ERROR_PREFIXES):
+                return self.refuse(f"sandbox: {safe(redact(first))}"[:REASON_MAX], wt)
+        usage = self.adapter.usage(out_l) or {}
+        answer = self.adapter.answer(out_l)
+        new_sid = self.adapter.session_id(out_l, err_l) or sid
+        if self.opts["out"]:
+            _write_private(self.opts["out"], answer)
+        if r.timed_out:
+            return self.finish(False, "timeout", TIMEOUT, new_sid, mode, wt, duration, usage, answer)
+        if r.rc == 0:
+            if new_sid:
+                sessions.put(self.state, self.seat, wt, new_sid, self.s["model"], self.now())
+            return self.finish(True, "ok", 0, new_sid, mode, wt, duration, usage, answer)
+        echo = {line.strip() for line in text.splitlines() if line.strip()}
+        errors = [e for e in self.adapter.errors(out_l, err_l) if e.strip() not in echo]
+        if self.adapter.usage_limit(errors):
+            caps.arm(self.state, self.seat, self.now(), self.config["rotation"]["cap_expiry_hours"])
+            return self.finish(False, "usage cap", r.rc, new_sid, mode, wt, duration, usage, answer)
+        first = next((e.strip() for e in errors if e.strip()), f"{self.runtime} exited {r.rc}")
+        return self.finish(False, _error_reason(first), r.rc, new_sid, mode, wt, duration, usage, answer)
+
+
+def run_seat(config, state, seat, prompt, *, target=None, brief=False, brief_file=None, resume=False,
+             session_id=None, deep=False, fallback=True, out=None, transcript=None, attack=False,
+             run=proc.run, now=time.time, say=None, _standin_for=None) -> SeatResult:
+    """One run of `seat` on `target` (default: the current dir). An unknown seat raises KeyError.
+    `_standin_for` is internal: only this function's own one-hop stand-in call sets it."""
+    say = say or _stderr
+    s = config["seats"][seat]
+    where = os.path.realpath(target or os.getcwd())
+    opts = {"brief": brief, "brief_file": brief_file, "resume": resume, "session_id": session_id, "deep": deep,
+            "out": out, "transcript": transcript, "attack": attack}
+    attempt = _Run(config, state, seat, prompt, where, opts, run, now, say, _standin_for)
+    if not s.get("enabled", True):
+        return attempt.refuse("disabled")
+    can_stand_in = (fallback and _standin_for is None and not os.environ.get("BW_SEAT_STANDIN")
+                    and s.get("fallback") in config["seats"])
+
+    def stand_in(why):
+        fb = s["fallback"]
+        say(f"bw seat: {seat} capped ({why}); {fb} stands in")
+        # A stand-in starts its own session: the original's session id is not the stand-in's.
+        return run_seat(config, state, fb, prompt, target=target, brief=brief, brief_file=brief_file, resume=resume,
+                        session_id=None, deep=deep, fallback=fallback, out=out, transcript=transcript,
+                        attack=attack, run=run, now=now, say=say, _standin_for=seat)
+
+    why = caps.capped(config, state, seat, now())
+    if why:
+        refused = attempt.refuse("usage cap")
+        return stand_in(why) if can_stand_in else refused
+    missing = adapters.login_missing(s["runtime"], os.environ)
+    if missing:
+        return attempt.refuse(missing)
+    result = attempt.locked()
+    if result.ran and result.reason == "usage cap" and can_stand_in:
+        # The original ran and has its own row: no extra `ran: false` row for it.
+        return stand_in(caps.capped(config, state, seat, now()) or f"seat {seat} capped")
+    return result
