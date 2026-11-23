@@ -31,8 +31,10 @@ TOP_EFFORT = {"codex": "max", "pi": "xhigh", "kimi": "max"}
 # deny writes to them inside the seat home (R14); the seat key manifests them.
 CLAUDE_CODE = ["settings.json", "settings.local.json", "CLAUDE.md", "hooks", "agents", "commands", "plugins", "skills", ".mcp.json"]
 CODEX_CODE = ["config.toml", "AGENTS.md", "prompts", "hooks.json", "skills", "rules"]
-# agy's names are relative to its state dir under the real home (see the agy section below).
-AGY_CODE = ["settings.json", "GEMINI.md", "extensions", "bin", "builtin", "updater"]
+# agy's names are relative to its state dir under the real home (see the agy section below). The
+# last four are persistent memory that later sessions read as prompt text, lead sessions included.
+AGY_CODE = ["settings.json", "GEMINI.md", "extensions", "bin", "builtin", "updater",
+            "knowledge", "brain", "implicit", "annotations"]
 # Quota and usage wording only (moderator's call, plan panel: R21). A bare 429 or "rate limit" with no quota
 # word is a transient error, not a cap.
 USAGE_LIMIT = re.compile(r"usage limit|quota (exceeded|exhausted|reached)|exceeded your (current )?quota|"
@@ -390,11 +392,13 @@ CLAUDE = SeatAdapter(
 
 # ---- pi: `pi -p --mode json`, the input on stdin ----
 # HOME stays the real one, because a Volta shim finds its tools under $HOME. PI_CODING_AGENT_DIR
-# moves pi's config dir and session store to the seat home. For OpenRouter the login is
-# OPENROUTER_API_KEY in the env; no credential file. pi has no approval prompts, so it needs no
-# permission flag. pi echoes the prompt as a user message: errors come from assistant messages only.
+# moves pi's config dir and session store to the seat home. A pi seat runs on OpenRouter only for
+# now, so its login env key is OPENROUTER_API_KEY (in env_keys); no credential file. pi has no
+# approval prompts, so it needs no permission flag. pi echoes the prompt as a user message: errors
+# come from assistant messages only, and stderr counts only when the run failed.
 
-PI_IGNORE = ["--no-extensions", "--no-approve"]
+# Extensions, MCP servers, skills, and project-local files off (pi 1.6.0 --help).
+PI_IGNORE = ["--no-extensions", "--no-mcp", "--no-skills", "--no-approve"]
 PI_PROJECT_CODE = [".pi/settings.json", ".pi/extensions", ".pi/skills", ".pi/prompts", ".pi/themes", ".pi/SYSTEM.md",
                    ".pi/npm", ".pi/git"]
 PI_WARNING = "Warning:"  # an stderr line that starts with this is not an error (an unknown model id, for one)
@@ -437,8 +441,12 @@ def _pi_usage(stdout_lines):
 
 
 def _pi_errors(stdout_lines, stderr_lines):
+    """Assistant error messages. stderr lines (minus Warning: lines) count only when the run failed:
+    an error message or no answer. A stray notice on a good run is not an error."""
     errs = [_str(m.get("errorMessage")) or "error" for m in _pi_assistant(stdout_lines) if m.get("stopReason") == "error"]
-    return errs + [s for s in (line.strip() for line in stderr_lines) if s and not s.startswith(PI_WARNING)]
+    if errs or not _pi_answer(stdout_lines):
+        errs += [s for s in (line.strip() for line in stderr_lines) if s and not s.startswith(PI_WARNING)]
+    return errs
 
 
 def _pi_tool_results(stdout_lines):
@@ -572,9 +580,11 @@ def _agy_state():
 
 
 def _agy_config():
-    """Files outside the state dir that agy loads as code; already read-only, but in the seat key."""
+    """Paths outside the state dir that agy loads as code or policy; already read-only, but in the
+    seat key, so the key changes when they change."""
     gemini = os.path.join(os.path.expanduser("~"), ".gemini")
-    return [os.path.join(gemini, "settings.json"), os.path.join(gemini, "config", "mcp_config.json")]
+    return [os.path.join(gemini, "settings.json"), os.path.join(gemini, "config", "mcp_config.json"),
+            os.path.join(gemini, "skills"), os.path.join(gemini, "policies")]
 
 
 def _agy_argv(seat, input_path, deep):
@@ -618,9 +628,13 @@ def _agy_usage(stdout_lines):
 
 
 def _agy_errors(stdout_lines, stderr_lines):
+    """Results whose status is not SUCCESS. stderr lines count only when the run failed: such a
+    result or no answer. A stray notice on a good run is not an error."""
     errs = [_str(r.get("error")) or _str(r.get("status")) or "error"
             for r in _agy_bodies(stdout_lines, "result") if r.get("status") != AGY_OK]
-    return errs + [line.strip() for line in stderr_lines if line.strip()]
+    if errs or not _agy_answer(stdout_lines):
+        errs += [line.strip() for line in stderr_lines if line.strip()]
+    return errs
 
 
 def _agy_tool_results(stdout_lines):

@@ -399,13 +399,22 @@ Checked again on agy 1.5.15 (2026-11-23), with no model call:
 - So the agy seat is the one exception to "a seat writes only its own home". It keeps the real
   `HOME`. It writes only its state dir, `~/.gemini/antigravity-cli/`, which the adapter declares in
   `state_dirs`. The code names in that dir (`settings.json`, `bin`, `builtin`, `updater`, and more)
-  stay read-only. The seat can read the agy lead's transcripts in that dir.
+  stay read-only. The memory dirs `knowledge`, `brain`, `implicit`, and `annotations` also stay
+  read-only, because later sessions read them as prompt text, lead sessions included.
+- The agy seat must write `conversations/`, `conversation_summaries.db`, and `history.jsonl` for its
+  own resume. These hold the agy lead's sessions too. Residual risk: an agy seat can read and edit
+  an agy lead's conversation. Other seats cannot read these three paths: they are lead session
+  stores, and every other seat profile denies reads of them.
+- No run has confirmed that agy still works with the memory dirs read-only. The seat attack
+  (Task 13) must confirm it, on a fresh run and on a resume.
 - `--model <variant id> --effort <other level>` fails before the model call: "conflicts with
   --effort". The help text says `--model` also takes a base model name, and `--effort` then picks the
   variant. The config takes only a model id for agy, so the seat adapter passes no `--effort`.
 
 **pi seat.** The seat keeps the real `HOME`, because a Volta shim finds its tools under `$HOME`.
-`PI_CODING_AGENT_DIR` moves the config dir and the session store to the seat home.
+`PI_CODING_AGENT_DIR` moves the config dir and the session store to the seat home. The pi seat
+runs on OpenRouter only for now, so its login is `OPENROUTER_API_KEY` in the env. pi 1.6.0 has
+`--no-mcp` and `--no-skills`; the seat passes both, with `--no-extensions` and `--no-approve`.
 
 ## Driver mode (the same CLIs as the working agent)
 

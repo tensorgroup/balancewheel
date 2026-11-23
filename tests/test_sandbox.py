@@ -567,6 +567,31 @@ class SeatGrants(unittest.TestCase):
         self.assertLess(g.rules.index(allow), g.rules.index(deny))  # the code deny comes after the allow
         self.assertFalse(any(r[2] == str(fake_home / ".gemini") for r in g.rules))
 
+    def test_agy_lead_stores_read_denied_except_for_the_agy_seat(self):
+        from seats import adapters
+        fake_home = self.root / "user"; (fake_home / ".gemini" / "antigravity-cli").mkdir(parents=True)
+        agy_stores = [".gemini/antigravity-cli/conversations", ".gemini/antigravity-cli/conversation_summaries.db",
+                      ".gemini/antigravity-cli/history.jsonl"]
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            for name in ("codex", "claude-code"):
+                g = self.grants(adapters.SEAT_ADAPTERS[name].grants({"model": "m"}, self.home))
+                for s in agy_stores:
+                    self.assertIn(str(fake_home / s), g.deny_read, (name, s))
+            agy = adapters.SEAT_ADAPTERS["agy"]
+            state = adapters._agy_state()
+            g = self.grants(agy.grants({"model": "m"}, self.home), state_dirs=[state])
+            profile = sandbox.seatbelt_profile(g, self.scratch)
+        for s in agy_stores:  # inside its own state dir: the agy seat reads and writes them
+            self.assertNotIn(str(fake_home / s), g.deny_read)
+            self.assertNotIn(f'(deny file-read* (subpath "{fake_home / s}"))', profile)
+        self.assertIn(str(fake_home / ".gemini" / "tmp"), g.deny_read)
+        allow = f'(allow file-write* (subpath "{state}"))'
+        self.assertIn(allow, profile)
+        for n in adapters.AGY_CODE:  # knowledge, brain, implicit, annotations included
+            deny = f'(deny file-write* (subpath "{os.path.join(state, n)}"))'
+            self.assertIn(deny, profile, n)
+            self.assertLess(profile.index(allow), profile.index(deny))
+
     def test_state_dir_refused_outside_home_in_bw_paths_or_holding_secrets(self):
         fake_home = self.root  # bw state, the target, and the seat home all lie under it
         (fake_home / ".gemini" / "s").mkdir(parents=True)

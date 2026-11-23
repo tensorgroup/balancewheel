@@ -52,7 +52,8 @@ SECRET_READS = [".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker/confi
                 ".cc-switch"]  # its DB holds Codex auth and copies of every vendor config
 # Session stores of the lead runtimes (home-relative): a seat never reads a lead's transcripts.
 LEAD_SESSION_STORES = [".claude/projects", ".codex/sessions", ".pi/agent/sessions", ".kimi-code/sessions",
-                       ".gemini/tmp"]
+                       ".gemini/tmp", ".gemini/antigravity-cli/conversations",
+                       ".gemini/antigravity-cli/conversation_summaries.db", ".gemini/antigravity-cli/history.jsonl"]
 # The env a seat gets is an allowlist: these names, every LC_* name, and the adapter's env_keys.
 SEAT_ENV_ALLOW = ("PATH", "HOME", "TMPDIR", "LANG", "TERM")
 SEAT_ENV_PREFIX = "LC_"

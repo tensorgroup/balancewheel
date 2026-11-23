@@ -399,8 +399,8 @@ class Pi(unittest.TestCase):
 
     def test_argv_and_deep(self):
         self.assertEqual(self.ad.argv(self.SEAT, "/s/input.md", False),
-                         ["pi", "-p", "--mode", "json", "--model", "m-test", "--no-extensions", "--no-approve",
-                          "--thinking", "high"])
+                         ["pi", "-p", "--mode", "json", "--model", "m-test", "--no-extensions", "--no-mcp",
+                          "--no-skills", "--no-approve", "--thinking", "high"])
         self.assertTrue(has_run(self.ad.argv(self.SEAT, "/s/i", True), ["--thinking", adapters.TOP_EFFORT["pi"]]))
         self.assertNotIn("--thinking", self.ad.argv({"runtime": "pi", "model": "m-test"}, "/s/i", False))
 
@@ -485,8 +485,14 @@ class Pi(unittest.TestCase):
 
     def test_ignore_flags_in_argv(self):
         argv = self.ad.argv(self.SEAT, "/s/i", False)
-        self.assertEqual(self.ad.ignore_flags, ["--no-extensions", "--no-approve"])
+        self.assertEqual(self.ad.ignore_flags, ["--no-extensions", "--no-mcp", "--no-skills", "--no-approve"])
         self.assertTrue(all(f in argv for f in self.ad.ignore_flags))
+
+    def test_stray_stderr_on_a_good_run_is_not_an_error(self):
+        out, _ = fixture("pi", "ok")
+        self.assertEqual(self.ad.errors(out, ["notice: usage limit reached on another key"]), [])
+        failed = [json.dumps({"type": "message_end", "message": {"role": "user", "content": "x"}})]  # no answer
+        self.assertEqual(self.ad.errors(failed, ["fatal: no answer"]), ["fatal: no answer"])
 
     def test_pi_env_keys(self):
         self.assertIn(RECORDED_ENV_KEY["pi"], self.ad.env_keys)
@@ -691,8 +697,21 @@ class Agy(unittest.TestCase):
         g = self.ad.grants(self.SEAT, HOME)
         state = adapters._agy_state()
         self.assertEqual(sorted(g.deny_write), sorted(os.path.join(state, n) for n in adapters.AGY_CODE))
-        self.assertNotIn(os.path.join(state, "conversations"), g.deny_write)
+        for memory in ("knowledge", "brain", "implicit", "annotations"):  # prompt-bearing state a lead reads later
+            self.assertIn(os.path.join(state, memory), g.deny_write)
+        for own in ("conversations", "conversation_summaries.db", "history.jsonl"):  # the seat's own resume
+            self.assertNotIn(os.path.join(state, own), g.deny_write)
         self.assertTrue(set(g.deny_write) <= set(self.ad.hook_files(HOME)))
+
+    def test_hook_files_outside_state(self):
+        gemini = os.path.join(os.path.expanduser("~"), ".gemini")
+        for p in ("settings.json", "config/mcp_config.json", "skills", "policies"):
+            self.assertIn(os.path.join(gemini, p), self.ad.hook_files(HOME))
+
+    def test_stray_stderr_on_a_good_run_is_not_an_error(self):
+        out, _ = fixture("agy", "ok")
+        self.assertEqual(self.ad.errors(out, ["notice: usage limit reached on another plan"]), [])
+        self.assertEqual(self.ad.errors([], ["Error: no result"]), ["Error: no result"])  # no answer: stderr counts
 
     def test_permission_flag_present(self):  # R19
         self.assertTrue(has_run(self.ad.argv(self.SEAT, "/s/i", False), RECORDED_PERMISSION_FLAG["agy"]))

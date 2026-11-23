@@ -34,6 +34,10 @@ not against the prose.
   seat adapter declares (agy only) is writable; the code names in it stay read-only. bw refuses a dir that
   is a symlink, is missing, is the home itself, lies outside the home, overlaps bw state, the seat home,
   the seat scratch root, or the target, lies under a code path, or overlaps a secret path.
+- **agy lead session stores are read-denied to seats.** `conversations`, `conversation_summaries.db`, and
+  `history.jsonl` under `~/.gemini/antigravity-cli/` join the lead session stores. The agy seat keeps
+  them, because they lie in its declared state dir. Its memory dirs (`knowledge`, `brain`, `implicit`,
+  `annotations`) stay read-only.
 
 ### Fixed
 
