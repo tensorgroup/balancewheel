@@ -430,7 +430,8 @@ class StartCase(unittest.TestCase):
 
     def calls_of(self, run, **kw):
         order = []
-        with mock.patch.object(seat_verify, "changed_seats", side_effect=lambda *a, **k: order.append("changed") or ["s1"]), \
+        with mock.patch.object(seat_verify, "changed_seats", side_effect=lambda *a, **k: order.append("changed")), \
+                mock.patch.object(seat_verify, "seat_key", side_effect=lambda *a, **k: order.append("key")), \
                 mock.patch.object(start, "_workspace", side_effect=lambda *a, **k: order.append("workspace") or 0), \
                 mock.patch.object(seat_verify, "spawn_verify",
                                   side_effect=lambda *a, **k: order.append("spawn") or True):
@@ -440,45 +441,34 @@ class StartCase(unittest.TestCase):
     def test_lead_opens_before_seat_verify(self):
         run = FakeRun()
         order, out = self.calls_of(run)
-        self.assertEqual(order, ["changed", "workspace", "spawn"])
+        self.assertEqual(order, ["workspace", "spawn"])  # no changed_seats, no seat_key on the start path
         self.assertEqual([c for c in run.calls if "seat_readonly" in c[0][0]], [])  # no seat attack
-
-    def test_changed_seats_before_workspace(self):
-        order, _ = self.calls_of(FakeRun())
-        self.assertEqual(order.index("changed"), 0)
-        self.assertLess(order.index("changed"), order.index("workspace"))
-        self.assertLess(order.index("workspace"), order.index("spawn"))
 
     def test_spawn_line(self):
         _, out = self.calls_of(FakeRun())
-        self.assertIn("bw start: seats: verifying 1 in the background (s1); log: ", out)
+        self.assertIn("bw start: checking seats in the background (log: ", out)
         self.assertIn("verify-log.txt", out)
 
     def test_already_running(self):
-        with mock.patch.object(seat_verify, "changed_seats", return_value=["s1"]), \
-                mock.patch.object(seat_verify, "spawn_verify", return_value=False):
+        with mock.patch.object(seat_verify, "spawn_verify", return_value=False):
             _, out = self.start(FakeRun(), update=False)
-        self.assertIn("bw start: seats: 1 unverified; a verify is already running", out)
+        self.assertIn("bw start: seats: a verify is already running", out)
 
     def test_no_verify(self):
-        with mock.patch.object(seat_verify, "changed_seats", return_value=["s1"]), \
-                mock.patch.object(seat_verify, "spawn_verify") as sp:
+        with mock.patch.object(seat_verify, "spawn_verify") as sp:
             _, out = self.start(FakeRun(), update=False, verify=False)
-        self.assertIn("bw start: seats: 1 unverified (--no-verify)", out)
+        self.assertIn("bw start: seats: not checked (--no-verify)", out)
         sp.assert_not_called()
 
-    def test_nothing_changed(self):
-        with mock.patch.object(seat_verify, "changed_seats", return_value=[]), \
+    def test_dry_run_reads_no_seat_keys(self):
+        with mock.patch.object(seat_verify, "changed_seats") as ch, \
+                mock.patch.object(seat_verify, "seat_key") as key, \
                 mock.patch.object(seat_verify, "spawn_verify") as sp:
-            _, out = self.start(FakeRun(), update=False)
-        self.assertNotIn("bw start: seats:", out)
-        sp.assert_not_called()
-
-    def test_dry_run_lists_seats(self):
-        with mock.patch.object(seat_verify, "changed_seats") as ch:
             _, out = self.start(FakeRun(), dry_run=True)
         ch.assert_not_called()
-        self.assertIn("bw start: seats: would verify s1 in the background", out)
+        key.assert_not_called()
+        sp.assert_not_called()
+        self.assertIn("bw start: would check seats in the background", out)
 
     def test_quota_and_lead_lines(self):
         run = FakeRun()

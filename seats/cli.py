@@ -103,11 +103,10 @@ def _verify(argv, config, state, run, out, err):
     if unknown:
         _line(err, f"unknown seat {unknown[0]!r}; configured: {', '.join(config['seats'])}")
         return USAGE_ERROR
-    fd = verify._try_lock(state)  # one verify at a time; spawn_verify sees this lock
-    if fd is None:
-        _line(err, "another seat verify is running")
-        return BUSY
-    try:
+    with verify.hold_lock(state) as free:  # one verify at a time; spawn_verify sees this lock
+        if not free:
+            _line(err, "another seat verify is running")
+            return BUSY
         if a.changed:
             return _verify_changed(config, state, run, out)
         passed = True
@@ -116,8 +115,6 @@ def _verify(argv, config, state, run, out, err):
             print(msg, file=out)
             passed = passed and ok
         return 0 if passed else 1
-    finally:
-        verify._unlock(fd)
 
 
 def _verify_changed(config, state, run, out):

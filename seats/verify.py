@@ -6,6 +6,7 @@ A pass is valid only for the exact seat key it was recorded against. Passes go t
 probe per seat goes to `state_dir/seats/failures.json`. A failure under the same key that is later
 than the pass revokes the pass. `state_dir/seats.json` is derived from both and from the current keys.
 """
+import contextlib
 import fcntl
 import json
 import os
@@ -76,28 +77,33 @@ def _lock_path(state):
     return os.path.join(_seats_dir(state), "verify.lock")
 
 
-def _try_lock(state):
-    """The fd of `state_dir/seats/verify.lock` held exclusively, or None when another process holds it."""
+@contextlib.contextmanager
+def hold_lock(state):
+    """Hold `state_dir/seats/verify.lock` exclusively for the `with` body. Yields True when taken and
+    False, at once and without waiting, when another process holds it (the body then must not run)."""
     fd = os.open(_lock_path(state), os.O_RDONLY | os.O_CREAT | os.O_CLOEXEC, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        os.close(fd)
-        return None
-    return fd
-
-
-def _unlock(fd) -> None:
-    os.close(fd)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        yield True
+    finally:
+        os.close(fd)  # closing releases the flock
 
 
 def spawn_verify(config, state, seats=None, bw=None) -> bool:
     """Start one detached `bw seat verify` child (`--changed` unless `seats` names ids) and return at
-    once. The child holds `verify.lock` for its whole run. False, and no child, when the lock is held."""
-    fd = _try_lock(state)
-    if fd is None:
-        return False
-    _unlock(fd)  # the child takes it; a start in the gap is refused by the child's own lock
+    once. The child holds `verify.lock` for its whole run. False, and no child, when the lock is held.
+
+    Known race (documented, not closed): the parent only checks the lock, then spawns; the child takes
+    it on its own. Two spawns in that gap start two children, and the second exits with status 75 on
+    the child's own lock, so one verify still runs at a time. The fd is not passed down: the child's
+    own `hold_lock` would then block on its parent's open file description."""
+    with hold_lock(state) as free:
+        if not free:
+            return False
     argv = [sys.executable, bw or BW, "seat", "verify", *(seats or ["--changed"])]
     with open(os.path.join(_seats_dir(state), "verify-log.txt"), "ab") as log:
         subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,

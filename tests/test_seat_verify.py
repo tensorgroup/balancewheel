@@ -436,10 +436,6 @@ class SeatAttack(unittest.TestCase):
         self.assertEqual(seen, [False])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SpawnVerify(unittest.TestCase):
     setUp, tearDown, _pass = SeatVerify.setUp, SeatVerify.tearDown, SeatVerify._pass
 
@@ -461,12 +457,11 @@ class SpawnVerify(unittest.TestCase):
             self.assertEqual(args[0][0], sys.executable)
             self.assertEqual(kw["stdin"], subprocess.DEVNULL)
             popen.reset_mock()
-            fd = verify._try_lock(self.state)
-            self.assertIsNotNone(fd)
-            try:
+            with verify.hold_lock(self.state) as free:
+                self.assertTrue(free)
                 self.assertFalse(verify.spawn_verify(self.config, self.state))
-            finally:
-                verify._unlock(fd)
+                with verify.hold_lock(self.state) as again:
+                    self.assertFalse(again)
             popen.assert_not_called()
 
     def test_spawn_verify_seats_and_bw(self):
@@ -505,3 +500,7 @@ class SpawnVerify(unittest.TestCase):
         self.assertEqual(seen, [(False, False)])
         with self.popen_patch():  # released after the run
             self.assertTrue(verify.spawn_verify(self.config, self.state))
+
+
+if __name__ == "__main__":
+    unittest.main()
