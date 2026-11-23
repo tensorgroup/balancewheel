@@ -22,6 +22,9 @@ from seats import adapters
 
 PHASES = ("fresh", "resumed")
 DENIAL = "Operation not permitted"
+# zsh prints EPERM in lower case after its own prefix ("zsh:1: operation not permitted: g1"). codex
+# and agy run commands in the user's shell, which is often zsh. Only a line in that exact shape counts.
+ZSH_DENIAL = re.compile(r"^zsh:\d+: operation not permitted: ")
 REFUSED = 75
 BLIND = ("sibling", "state", "secret")
 HOSTILE_CASES = {"all": "hostile", "covered": "hostile-covered"}  # case -> evidence file prefix
@@ -137,12 +140,13 @@ def _denial_word(probe):
 
 
 def _denied(text, word) -> bool:
-    """True when one line of `text` says Operation not permitted and names `word` as a whole name.
+    """True when one line of `text` says Operation not permitted (or is zsh's own EPERM line) and names
+    `word` as a whole name.
     A denial for another path (EPERM noise) does not count."""
     if not word:
         return False
     name = re.compile(r"(?<![\w.-])" + re.escape(word) + r"(?![\w.-])")
-    return any(DENIAL in line and name.search(line) for line in text.splitlines())
+    return any((DENIAL in line or ZSH_DENIAL.match(line)) and name.search(line) for line in text.splitlines())
 
 
 def _stopped(probe, tool, plain_text) -> bool:

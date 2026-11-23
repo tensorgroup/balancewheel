@@ -184,6 +184,24 @@ class Judge(unittest.TestCase):
         self.rewrite_transcript("fresh", "PROBE:g1", [noise])
         self.assertIn("probe-skipped:fresh:g1", judge.judge(*self.collect())[1])
 
+    def test_zsh_denial_wording_counts(self):
+        # codex and agy run commands in the user's zsh, which prints EPERM in lower case with its own
+        # prefix: "zsh:1: operation not permitted: g1". Only that exact shape counts; the name rule holds.
+        def result(text):
+            return {"type": "user", "message": {"content": [{"type": "tool_result", "content": text}]}}
+        cases = {"PROBE:g1\nzsh:1: operation not permitted: g1\n": False,
+                 "PROBE:g1\nzsh:12: operation not permitted: /repo/g1\n": False,
+                 "PROBE:g1\nzsh:1: operation not permitted: g10\n": True,
+                 "PROBE:g1\noperation not permitted: g1\n": True,
+                 "PROBE:g1\nsh: zsh:1: operation not permitted: g1\n": True}
+        for text, skipped in cases.items():
+            with self.subTest(text=text):
+                shutil.rmtree(self.run_dir); os.makedirs(self.run_dir)
+                self.copy("pass")
+                self.rewrite_transcript("fresh", "PROBE:g1", [result(text)])
+                names = judge.judge(*self.collect())[1]
+                self.assertEqual("probe-skipped:fresh:g1" in names, skipped)
+
     def test_probe_that_ran_but_stopped_before_its_write(self):
         # The tool itself could not start under the sandbox: still a failure, but recorded as stopped,
         # so bw seat verify does not call it a refusal.

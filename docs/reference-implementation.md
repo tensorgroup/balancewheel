@@ -26,7 +26,7 @@ and the result that Seatbelt sandboxes do not nest (see Seat runtimes under `bw 
 wrappers), and the seat login outcomes are recorded; updated 2026-11-23 a third time after the first
 live seat attack on the pi seat: the git config read, the toolchain reads (Volta and pyenv among
 them), the cargo token denies, and the `--approve` control; updated 2026-11-23 a fourth time after
-the live attack on the codex and agy seats: the codex install read, the codex CA bundle, and the agy tool step shape.*
+the live attack on the codex and agy seats: the codex install read, the codex CA bundle, the zsh denial line, and the agy tool step shape.*
 
 ## The cast
 
@@ -393,6 +393,9 @@ codex 0.164 under nono also cannot load the macOS system root store. Every HTTPS
 fails, and the turn ends with "workspace routing discovery failed". With `SSL_CERT_FILE` set, codex
 loads that PEM bundle and runs. So the codex seat sets `SSL_CERT_FILE=/etc/ssl/cert.pem`, unless the
 user set `SSL_CERT_FILE` or `CODEX_CA_CERTIFICATE`; the seat keeps those two names in its env.
+codex and agy run commands in the user's shell. zsh prints a denial in its own shape:
+`zsh:1: operation not permitted: g1`. The seat attack judge counts a line in exactly that shape as a
+denial, with the same rule that the line names the probe's target.
 When a probe's tool stops before its write, the seat attack reports the probe as skipped, never as
 passed, and `bw seat verify` says that the tool could not start under the sandbox.
 
