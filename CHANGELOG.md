@@ -19,6 +19,8 @@ not against the prose.
   (defaults 12, 30, 2, 4).
 - **`seats.*.tier`**: `default` or `reserved`.
 - **Reserved seat names.** The seat names `verify` and `list` are reserved for `bw seat`.
+- **`seats/` package.** Per-seat sessions (`state_dir/seats/sessions/`) and seat caps
+  (`state_dir/seats/caps/`).
 
 ### Changed
 
