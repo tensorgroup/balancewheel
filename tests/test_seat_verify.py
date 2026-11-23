@@ -144,6 +144,38 @@ class SeatVerify(unittest.TestCase):
         verify.record_failure(self.state, "astra", key, "probe-skipped:fresh:g1", time.time() + 1)
         self.assertFalse(verify.is_verified(self.config, self.state, "astra", run=FAKE))
 
+    def test_revocation_survives_failure_under_other_key(self):  # R7: K pass, K fail, K2 fail, back on K
+        key = self._pass("astra", ts=100.0)
+        verify.record_failure(self.state, "astra", key, "blind-read:state", 200.0)
+        self.assertNotIn("astra", json.loads(Path(self.state, "seat-verify.json").read_text()))
+        self.config["seats"]["astra"]["model"] = "other-model"
+        key2 = verify.seat_key(self.config, self.state, "astra", run=FAKE)
+        verify.record_failure(self.state, "astra", key2, "blind-write:target", 300.0)
+        self.config["seats"]["astra"]["model"] = "gpt-6-astra"
+        self.assertEqual(verify.seat_key(self.config, self.state, "astra", run=FAKE), key)
+        self.assertFalse(verify.is_verified(self.config, self.state, "astra", run=FAKE))
+        self.assertEqual(verify.write_seats_json(self.config, self.state, run=FAKE)["astra"]["failed_probe"], "key changed")
+
+    def test_failure_under_other_key_keeps_pass(self):
+        key = self._pass("astra", ts=100.0)
+        verify.record_failure(self.state, "astra", {"other": 1}, "blind-read:state", 200.0)
+        self.assertEqual(json.loads(Path(self.state, "seat-verify.json").read_text())["astra"]["key"], key)
+        self.assertTrue(verify.is_verified(self.config, self.state, "astra", run=FAKE))
+
+    def test_non_numeric_ts_reads_as_zero(self):
+        key = verify.seat_key(self.config, self.state, "astra", run=FAKE)
+        Path(self.state, "seat-verify.json").write_text(json.dumps({"astra": {"key": key, "ts": "soon"}}))
+        Path(self.state, "seats").mkdir(exist_ok=True)
+        Path(self.state, "seats", "failures.json").write_text(json.dumps({"gem": {"key": {}, "probe": "p", "ts": None}}))
+        out = verify.write_seats_json(self.config, self.state, run=FAKE)
+        self.assertEqual((out["astra"]["verified"], out["astra"]["verified_at"]), (True, "1970-01-01T00:00:00Z"))
+        self.assertEqual(out["gem"]["failed_probe"], "key changed")
+
+    def test_private_dirs(self):
+        verify.issue_token(self.state, "astra", 100.0, 60)
+        for d in (Path(self.state, "seats"), Path(self.state, "seats", "attack-tokens")):
+            self.assertEqual(stat.S_IMODE(os.stat(d).st_mode), 0o700)
+
     def test_earlier_failure_does_not_revoke_pass(self):
         key = verify.seat_key(self.config, self.state, "astra", run=FAKE)
         verify.record_failure(self.state, "astra", key, "blind-read:state", time.time() - 10)
