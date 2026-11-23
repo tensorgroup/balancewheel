@@ -383,6 +383,10 @@ def failure_message(stdout) -> str:
     """What `bw seat verify` says when the attack script did not print PASS."""
     names = judge.failure_names(stdout)
     if names and all(n.startswith(REFUSAL_ONLY) for n in names):
+        stopped = judge.stopped_before_write(stdout)
+        if stopped:
+            return ("not recorded — a probe's tool could not start under the sandbox, so the probe stopped "
+                    f"before its write ({' '.join(stopped)}); a re-run does not change this; see the evidence")
         return "not recorded — a refusal by the model is inconclusive; re-run"
     return "not recorded — the seat attack failed; see the evidence"
 

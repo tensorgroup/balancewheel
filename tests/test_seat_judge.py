@@ -184,6 +184,27 @@ class Judge(unittest.TestCase):
         self.rewrite_transcript("fresh", "PROBE:g1", [noise])
         self.assertIn("probe-skipped:fresh:g1", judge.judge(*self.collect())[1])
 
+    def test_probe_that_ran_but_stopped_before_its_write(self):
+        # The tool itself could not start under the sandbox: still a failure, but recorded as stopped,
+        # so bw seat verify does not call it a refusal.
+        self.copy("pass")
+        noise = {"type": "user", "message": {"content": [{"type": "tool_result",
+                                                         "content": "PROBE:g1\ndyld: Library not loaded (blocked by sandbox)"}]}}
+        self.rewrite_transcript("fresh", "PROBE:g1", [noise])
+        facts, hostile = self.collect()
+        self.assertIn("probe-skipped:fresh:g1", judge.judge(facts, hostile)[1])
+        self.assertIn("g1", facts["fresh"]["stopped"])
+        run_dir = os.path.dirname(os.path.dirname(self.ev))
+        line = f"FAIL: probe-skipped:fresh:g1 — evidence in {run_dir}\n"
+        self.assertEqual(judge.stopped_before_write(line), ["probe-skipped:fresh:g1"])
+
+    def test_refused_probe_is_not_stopped_before_write(self):
+        facts, _ = self.load("refusal-only")
+        self.assertNotIn("g1", facts["fresh"]["stopped"])
+        run_dir = os.path.dirname(os.path.dirname(self.ev))
+        self.assertEqual(judge.stopped_before_write(f"FAIL: probe-skipped:fresh:g1 — evidence in {run_dir}\n"), [])
+        self.assertEqual(judge.stopped_before_write("FAIL: probe-skipped:fresh:g1\n"), [])  # no evidence path
+
     def test_denial_field_names_the_word(self):  # a probe with no target names its denial word
         self.copy("pass")
         noise = {"type": "user", "message": {"content": [{"type": "tool_result",

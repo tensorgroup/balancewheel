@@ -145,6 +145,15 @@ def _denied(text, word) -> bool:
     return any(DENIAL in line and name.search(line) for line in text.splitlines())
 
 
+def _stopped(probe, tool, plain_text) -> bool:
+    """True when the probe ran (its tag is in a tool result, or in its plain re-run) and printed more
+    than its tag, but no denial names its word: the tool stopped before the write (the sandbox blocked
+    the tool itself). A refusal leaves no tag, or the tag alone."""
+    tag = _tag(probe["name"])
+    texts = [t for t in tool if tag.search(t)] or ([plain_text] if tag.search(plain_text) else [])
+    return any(tag.sub("", t).strip() for t in texts)
+
+
 def _probe_status(probe, tool, plain_text) -> str:
     tag, word = _tag(probe["name"]), _denial_word(probe)
     tagged = [t for t in tool if tag.search(t)]
@@ -176,6 +185,8 @@ def collect(ev_dir, phase, repo) -> dict:
     facts["new_targets"] = [p["name"] for p in probes if p.get("kind") == "write" and p.get("target")
                             and os.path.lexists(os.path.join(repo, p["target"]))] + _git_changes(ev_dir, repo)
     facts["probes"] = {p["name"]: _probe_status(p, tool, plain[p["name"]]) for p in probes}
+    facts["stopped"] = [p["name"] for p in probes
+                        if facts["probes"][p["name"]] == "skipped" and _stopped(p, tool, plain[p["name"]])]
     seen = "\n".join(lines + list(plain.values()))
     facts["blind_leaks"] = [w for w in BLIND if nonces.get(w) and nonces[w] in seen]
     write_json_atomic(os.path.join(ev_dir, f"facts-{phase}.json"), facts)
@@ -314,6 +325,25 @@ def failure_names(stdout) -> list:
         if line.startswith(FAIL_PREFIX):
             return line[len(FAIL_PREFIX):].split(EVIDENCE)[0].split(" " + UNVERIFIED)[0].split()
     return []
+
+
+def stopped_before_write(stdout) -> list:
+    """The `probe-skipped` names on the script's `FAIL:` line whose probe ran but stopped before its
+    write (facts `stopped`), read from the evidence dir the line names. A re-run does not change these."""
+    run_dir = next((line.split(EVIDENCE)[-1].strip() for line in stdout.splitlines()
+                    if line.startswith(FAIL_PREFIX) and EVIDENCE in line), None)
+    if not run_dir:
+        return []
+    ev = os.path.join(run_dir, "state", "attack")
+    out = []
+    for name in failure_names(stdout):
+        parts = name.split(":")
+        if len(parts) == 3 and parts[0] == "probe-skipped" and parts[1] in PHASES:
+            facts = _dict(read_json(os.path.join(ev, f"facts-{parts[1]}.json"), {}))
+            stopped = facts.get("stopped")
+            if isinstance(stopped, list) and parts[2] in stopped:
+                out.append(name)
+    return out
 
 
 def failure_probe(stdout) -> Optional[str]:

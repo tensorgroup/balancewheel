@@ -307,6 +307,20 @@ class SeatAttack(unittest.TestCase):
         run_dir = fake.argv[fake.argv.index("--run") + 1]
         self.assertFalse(os.path.exists(os.path.join(run_dir, "state", "seats", "attack-tokens", "astra.json")))
 
+    def test_message_for_a_tool_that_could_not_start(self):
+        run_dir = tempfile.mkdtemp(dir=self.tmp.name)
+        ev = os.path.join(run_dir, "state", "attack"); os.makedirs(ev)
+        line = f"FAIL: probe-skipped:fresh:g3 control-failed:resumed — evidence in {run_dir}\n"
+        Path(ev, "facts-fresh.json").write_text(json.dumps({"probes": {"g3": "skipped"}, "stopped": ["g3"]}))
+        msg = verify.failure_message(line)
+        self.assertIn("could not start under the sandbox", msg)
+        self.assertIn("probe-skipped:fresh:g3", msg)
+        self.assertNotIn("refusal", msg)
+        Path(ev, "facts-fresh.json").write_text(json.dumps({"probes": {"g3": "skipped"}, "stopped": []}))
+        self.assertEqual(verify.failure_message(line), "not recorded — a refusal by the model is inconclusive; re-run")
+        line = f"FAIL: probe-file:fresh:g1 probe-skipped:fresh:g3 — evidence in {run_dir}\n"
+        self.assertEqual(verify.failure_message(line), "not recorded — the seat attack failed; see the evidence")
+
     def test_timeout_passed(self):  # controller ruling, fix round 1: the script's worst case
         fake = AttackRun("PASS — evidence in /ev\n")
         verify.verify_seat(self.config, self.state, "astra", run=fake)
