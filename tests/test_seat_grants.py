@@ -137,8 +137,8 @@ class SeatGrants(unittest.TestCase):
         self.assertEqual(sorted(g.tool_read), [str(fake_home / ".local/bin")])  # the toolchain dir only
 
     def test_cargo_registry_tokens_are_secrets(self):
-        self.assertIn(".cargo/credentials", sandbox.SECRET_READS)
-        self.assertIn(".cargo/credentials.toml", sandbox.SECRET_READS)
+        self.assertIn(".cargo/credentials", grants.SEAT_SECRET_READS)
+        self.assertIn(".cargo/credentials.toml", grants.SEAT_SECRET_READS)
 
     def test_state_and_scratch_root_read_denied_own_reread(self):
         g = self.grants()
@@ -249,8 +249,8 @@ class SeatGrants(unittest.TestCase):
         os.symlink("../dots/git", fake_home / ".config" / "git")
         (dots / "git" / "ignore").write_text("*.o\n"); (dots / "git" / "credentials").write_text("tok\n")
         with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
-            reads = sandbox.git_config_reads()
-            self.assertIn(str(dots / "git" / "credentials"), sandbox.secret_paths())
+            reads = grants.seat_git_config_reads()
+            self.assertIn(str(dots / "git" / "credentials"), grants.secret_paths())
         self.assertEqual(sorted(reads), sorted([str(dots / ".gitconfig"), str(fake_home / ".gitconfig"),
                                                 str(dots / "git" / "ignore"), str(fake_home / ".config" / "git")]))
         self.assertNotIn(str(dots / "git"), reads)
@@ -258,7 +258,7 @@ class SeatGrants(unittest.TestCase):
     def test_secrets_and_stores_follow_moved_runtime_homes(self):
         moved = self.root / "codex-home"; kimi = self.root / "kimi-home"
         with mock.patch.dict(os.environ, {"CODEX_HOME": str(moved), "KIMI_CODE_HOME": str(kimi)}):
-            secrets = sandbox.secret_paths()
+            secrets = grants.secret_paths()
             g = self.grants()
         self.assertIn(str(moved / "auth.json"), secrets)
         self.assertIn(str(kimi / "credentials"), secrets)
@@ -266,7 +266,19 @@ class SeatGrants(unittest.TestCase):
             self.assertIn(str(p), g.deny_read)
         for name in (".git-credentials", ".config/git/credentials", ".npmrc", ".pypirc",
                      ".gemini/antigravity-cli/antigravity-oauth-token", ".kimi-code/oauth"):
-            self.assertIn(name, sandbox.SECRET_READS)
+            self.assertIn(name, grants.SEAT_SECRET_READS)
+
+    def test_seat_only_secrets_denied_in_both_profiles(self):
+        fake_home = self.root / "user"; fake_home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            g = self.grants()
+            belt = sandbox.seatbelt_profile(g, self.scratch)
+            nono = "".join(sandbox.nono_profile(g, self.scratch)["unsafe_macos_seatbelt_rules"])
+        for name in (".npmrc", ".pypirc", ".git-credentials", ".config/git/credentials", ".cargo/credentials",
+                     ".kimi-code/oauth", ".gemini/antigravity-cli/antigravity-oauth-token"):
+            deny = f'(deny file-read* (subpath "{fake_home / name}"))'
+            self.assertIn(deny, belt, name)
+            self.assertIn(deny, nono, name)
 
     def test_target_inside_a_secret_refused(self):
         fake_home = self.root / "user"

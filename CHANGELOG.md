@@ -54,14 +54,18 @@ not against the prose.
 
 ### Fixed
 
-- **Seat containment** (`seats/grants.py`, `lead/sandbox.py`). A seat can no longer rename the parent
-  of a code name (a literal write deny on each dir node from the seat home down). Seats cannot connect
-  to an SSH or GPG agent socket, and, except agy, cannot ask the keychain. `~/.git-credentials`,
-  `~/.config/git/credentials`, `~/.npmrc`, `~/.pypirc`, `~/.kimi-code/oauth`, and agy's
-  `antigravity-oauth-token` are secrets; the global git config is granted as files only. The prompt
-  histories, session indexes, and file snapshots of the lead runtimes are lead stores, also under a moved
-  `CODEX_HOME` or `KIMI_CODE_HOME`. A target inside a secret path, or a directory outside its own git
-  worktree, is refused. nono denies a secret inside any read grant. The codex code names gain
+- **Seat containment** (`seats/grants.py`). A seat can no longer rename the parent of a code name (a
+  literal write deny on each dir node from the seat home down). Seats cannot connect to an SSH or GPG
+  agent socket, and, except agy, cannot ask the keychain. A seat has its own secret list
+  (`SEAT_SECRET_READS`): the lead list plus `~/.git-credentials`, `~/.config/git/credentials`, `~/.npmrc`,
+  `~/.pypirc`, the crates.io token files, `~/.kimi-code/oauth`, and agy's `antigravity-oauth-token`, also
+  under a moved `CODEX_HOME` or `KIMI_CODE_HOME`, denied on both backends. A seat reads the global git
+  config as files only (`~/.gitconfig`, `~/.config/git/config`, `ignore`, `attributes`). Leads keep the
+  secret list and the git config read (`~/.gitconfig` and the `~/.config/git` dir) they had before seats
+  existed, so a lead's `git push` through a credential store and its private registries still work. The
+  prompt histories, session indexes, and file snapshots of the lead runtimes are lead stores, also under a
+  moved `CODEX_HOME` or `KIMI_CODE_HOME`. A target inside a secret path, or a directory outside its own
+  git worktree, is refused. The codex code names gain
   `AGENTS.override.md` and the pi code names gain `APPEND_SYSTEM.md` (`lead/codepaths.py`: pi and Kimi
   leads re-verify).
 - **The agy seat writes nothing under the real `~/.gemini`.** It runs on `<seat home>/gemini`

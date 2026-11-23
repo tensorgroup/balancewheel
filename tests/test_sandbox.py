@@ -37,6 +37,27 @@ class Grants(unittest.TestCase):
     def rules(self, g, action):
         return [(k, p) for a, k, p in g.rules if a == action]
 
+    def test_lead_secret_list_and_git_config_read_unchanged(self):
+        # A lead pushes and installs: its git credential store, registry tokens, and the whole
+        # ~/.config/git dir (an [include] may name any file there) stay as they were before the seats.
+        self.assertEqual(sandbox.SECRET_READS, [
+            ".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker/config.json", ".codex/auth.json",
+            ".claude/.credentials.json", ".kimi-code/credentials", ".pi/agent/auth.json",
+            ".gemini/oauth_creds.json", ".config/gcloud", ".cc-switch"])
+        home = self.root / "user"; (home / ".config" / "git").mkdir(parents=True)
+        (home / ".config" / "git" / "work.inc").write_text("[user]\n")
+        (home / ".gitconfig").write_text("[include]\n")
+        from unittest import mock as _mock
+        with _mock.patch.dict(os.environ, {"HOME": str(home)}):
+            g = self.grants(self.wt)
+            belt = sandbox.seatbelt_profile(g, str(self.root / "scratch"))
+            nono = sandbox.nono_profile(g, str(self.root / "scratch"))
+        self.assertIn(str(home / ".config" / "git"), g.read)
+        self.assertIn(str(home / ".gitconfig"), g.read)
+        rules = "".join(nono["unsafe_macos_seatbelt_rules"]) + belt
+        for name in (".npmrc", ".pypirc", ".git-credentials", ".config/git/credentials", ".cargo/credentials"):
+            self.assertNotIn(str(home / name), rules, name)
+
     def test_linked_lead_writes_worktree_runtime_state_and_handoffs_only(self):
         g = self.grants(self.wt)
         allows = [p for _, p in self.rules(g, "allow")]

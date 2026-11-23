@@ -426,7 +426,10 @@ covered kind whose control loaded.
   not stop `mv <home>/.claude elsewhere`.
 - More secrets: `~/.git-credentials`, `~/.config/git/credentials`, `~/.npmrc`, `~/.pypirc`,
   `~/.kimi-code/oauth`, and agy's `antigravity-oauth-token`. The global git config is granted as files
-  only (`~/.gitconfig`, `~/.config/git/config`, `ignore`, `attributes`), never as the dir.
+  only (`~/.gitconfig`, `~/.config/git/config`, `ignore`, `attributes`), never as the dir. These are
+  seat-only (`SEAT_SECRET_READS`, `seat_git_config_reads`): a lead keeps its old list, because it may
+  push through git's credential store or install from a private registry, and it reads the whole
+  `~/.config/git` dir, where an `[include]` may name any file.
 - More lead stores: the prompt histories (`history.jsonl`, `user-history`), the session indexes, the
   file snapshots, `~/.gemini/history`, and agy's `brain/`. A secret or store under a `CODEX_HOME` or
   `KIMI_CODE_HOME` that the user moved is denied too.

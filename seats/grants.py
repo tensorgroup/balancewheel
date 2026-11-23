@@ -2,14 +2,63 @@
 
 The seat-only rules live here, not in lead/sandbox.py, so a seat change never resets a lead key
 (the lead key hashes lead/sandbox.py; the seat key hashes this file). The profile builders and the
-shared helpers (SECRET_READS, git_config_reads, check_path) stay in lead/sandbox.py.
+shared helpers (SECRET_READS, check_path) stay in lead/sandbox.py. A seat's secret list and git config
+read are its own (SEAT_SECRET_READS, seat_git_config_reads): a lead's stay as they were.
 """
 import os
 import shutil
 import stat
 import sys
 
-from lead.sandbox import Grants, _inside, _real, check_path, git_config_reads, refuse_overlap, secret_paths
+from lead.sandbox import SECRET_READS, Grants, _inside, _real, check_path, refuse_overlap
+
+# The secrets a seat never reads: every lead secret, plus the stores a lead may need and a reviewer
+# never does (registry tokens, git's credential store), agy's token file, and Kimi's oauth dir.
+SEAT_SECRET_READS = SECRET_READS + [".kimi-code/oauth", ".gemini/antigravity-cli/antigravity-oauth-token",
+                                    ".cargo/credentials", ".cargo/credentials.toml",  # crates.io tokens
+                                    ".git-credentials", ".config/git/credentials",  # git's credential store
+                                    ".npmrc", ".pypirc"]  # package registry tokens
+# Secrets under a runtime home that an env var moves: (env name, names under that dir).
+SECRET_ENV_HOMES = [("CODEX_HOME", ("auth.json",)), ("KIMI_CODE_HOME", ("credentials", "oauth"))]
+# A seat's read of the global git config: files only, so ~/.config/git/credentials stays unread.
+GIT_CONFIG_FILES = [".gitconfig", ".config/git/config", ".config/git/ignore", ".config/git/attributes"]
+
+
+def secret_paths(home=None):
+    """Every seat secret as a real path: SEAT_SECRET_READS under the home, plus the secrets under a
+    runtime home that CODEX_HOME or KIMI_CODE_HOME moves (the adapters honor both)."""
+    home = home or os.path.expanduser("~")
+    out = [os.path.join(home, s) for s in SEAT_SECRET_READS]
+    for env, names in SECRET_ENV_HOMES:
+        moved = os.environ.get(env)
+        if moved:
+            out += [os.path.join(os.path.expanduser(moved), n) for n in names]
+    return list(dict.fromkeys(os.path.realpath(p) for p in out))
+
+
+def seat_git_config_reads():
+    """The user's global git config files that exist (GIT_CONFIG_FILES), as real paths, plus the link
+    node of each symlinked file or config dir (dotfiles). Files only: a dir grant would reach
+    ~/.config/git/credentials. Read only."""
+    home = os.path.expanduser("~")
+    out = []
+    for rel in GIT_CONFIG_FILES:
+        given = os.path.join(home, rel)
+        if not os.path.isfile(given):
+            continue
+        out.append(_real(given))
+        for node in (given, os.path.dirname(given)):
+            if os.path.islink(node):
+                out.append(check_path(os.path.abspath(node)))
+    return list(dict.fromkeys(out))
+
+
+def secret_denies(user_home, own):
+    """Raw read denies for every seat secret on both backends: the lead profile denies only
+    SECRET_READS, and nono's own list misses a token inside a granted toolchain dir. A secret at or
+    under one of `own` (the seat's write grants and declared credentials) is left out."""
+    return [f'(deny file-read* (subpath "{check_path(p)}"))' for p in secret_paths(user_home)
+            if not _inside(p, own)]
 
 # Language toolchains under the home that a seat reads, so it can run the repo's tools: a version
 # manager's shims load their interpreters from here, and nono denies reads under the home by default.
@@ -244,7 +293,7 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
         rules.append(("allow", "literal", real))
         creds.append(real)
     reads = ([_real(target.worktree), _real(target.common_dir)] + [_real(p) for p in runtime_grants.read]
-             + git_config_reads())  # a review seat runs git log and git diff
+             + seat_git_config_reads())  # a review seat runs git log and git diff
     # Denied whether or not a store exists yet: a lead may create it while the seat runs.
     stores = [check_path(p) for p in lead_store_paths(user_home) if not _inside(p, [home] + writes)]
     denied = [state, scratch_root] + stores + [_real(p) for p in deny_read]
@@ -252,8 +301,10 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
     tools = _toolchain_reads(user_home, forbidden_reads)
     tools += [p for p in _install_reads(installs, user_home, forbidden_reads) if p not in tools]
     # A credential inside a secret dir is read again after the secret deny.
+    own = [home] + writes + creds
     return Grants(rules, reads, denied, [home, own_scratch] + creds, tools,
-                  ipc_denies(user_home, keychain) + _path_metadata([(state, home), (scratch_root, own_scratch)]))
+                  secret_denies(user_home, own) + ipc_denies(user_home, keychain)
+                  + _path_metadata([(state, home), (scratch_root, own_scratch)]))
 
 
 def _path_metadata(pairs):
