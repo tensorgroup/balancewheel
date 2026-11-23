@@ -608,7 +608,8 @@ KIMI = SeatAdapter(
 # its own state dir, which `state_dirs` declares; the AGY_CODE names in that dir stay read-only.
 # Its vendor sandbox stays off (no --sandbox): Seatbelt profiles do not nest. No effort flag:
 # --effort conflicts with a model id that names a variant (observed), and the config takes only
-# model ids for agy. The event key is `event`, not `type`. Tool step shapes are UNVERIFIED.
+# model ids for agy. The event key is `event`, not `type`. A tool step has step_type `tool` and its
+# output in `tool_info.output` (observed: read_file on agy 1.5.15, run_command on an earlier agy).
 
 AGY_PERMISSION = ["--dangerously-skip-permissions"]
 AGY_PROJECT_CODE = [".agents/hooks.json", ".agents/plugins.json", ".agents/plugins", ".agents/skills",
@@ -680,7 +681,9 @@ def _agy_errors(stdout_lines, stderr_lines):
 
 
 def _agy_tool_results(stdout_lines):
-    return [_str(s.get("output")) for s in _agy_bodies(stdout_lines, "step_update")
+    """The output of each finished tool step, from `tool_info.output` (observed on agy 1.5.15). An
+    ERROR step is left out: its message names a path the model chose, and nothing ran."""
+    return [_str((s.get("tool_info") if isinstance(s.get("tool_info"), dict) else {}).get("output")) for s in _agy_bodies(stdout_lines, "step_update")
             if s.get("state") == "DONE" and s.get("step_type") not in AGY_TEXT_STEPS]
 
 

@@ -699,11 +699,25 @@ class Agy(unittest.TestCase):
                  json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "usage limit reached"}})]
         self.assertEqual(self.ad.errors(lines, []), [])
 
-    def test_tool_results_not_prose(self):  # the tool step shape is unverified
+    def test_tool_results_not_prose(self):
         out, _ = fixture("agy", "ok")
         results = self.ad.tool_results(out)
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0].startswith("PROBE:g1\n"))
+
+    def test_tool_output_is_under_tool_info(self):
+        # Observed on agy 1.5.15: a tool step has step_type "tool" and its output in tool_info.output.
+        # A failed step's error names a path the model chose, and the command line is model text:
+        # neither shows that anything ran, so neither is a tool result.
+        def step(state, info):
+            return json.dumps({"event": "step_update", "step_update": {"state": state, "step_type": "tool",
+                                                                       "tool_name": "run_command", "tool_info": info}})
+        lines = [step("DONE", {"parameters": {"CommandLine": "echo N1"}, "output": "Command output:\nN1"}),
+                 step("ERROR", {"parameters": {"CommandLine": "echo N2"},
+                                "error": {"type": "TOOL_ERROR", "message": "open /x/N2: operation not permitted"}}),
+                 step("DONE", {"parameters": {"CommandLine": "echo N3"}}),
+                 step("DONE", "x")]
+        self.assertEqual(self.ad.tool_results(lines), ["Command output:\nN1", "", ""])
 
     def test_hostile_lines(self):
         lines = [json.dumps({"event": "init", "init": "x", "conversation_id": "a b"}),

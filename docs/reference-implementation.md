@@ -26,7 +26,7 @@ and the result that Seatbelt sandboxes do not nest (see Seat runtimes under `bw 
 wrappers), and the seat login outcomes are recorded; updated 2026-11-23 a third time after the first
 live seat attack on the pi seat: the git config read, the toolchain reads (Volta and pyenv among
 them), the cargo token denies, and the `--approve` control; updated 2026-11-23 a fourth time after
-the live attack on the codex and agy seats: the codex install read.*
+the live attack on the codex and agy seats: the codex install read and the agy tool step shape.*
 
 ## The cast
 
@@ -461,6 +461,13 @@ Checked again on agy 1.5.15 (2026-11-23), with no model call:
   stores, and every other seat profile denies reads of them.
 - No run has confirmed that agy still works with the memory dirs read-only. The seat attack
   attack must confirm it, on a fresh run and on a resume.
+- The first live seat attack (2026-11-23) found these facts. A tool step has `step_type` `tool`,
+  and its output is in `tool_info.output`. A failed step has `state` `ERROR` and
+  `tool_info.error.message`; the seat adapter does not count that message as a tool result,
+  because nothing ran. Each `run_command` call first writes the shim `bin/agentapi` in the state
+  dir. `bin` is read-only for the seat, so every `run_command` fails ("failed to write agentapi
+  script") and the seat can run no shell command. The file tools (`read_file`, `write_file`) still
+  run. agy logs a failed `mkdir` under `brain/` and goes on; the resume reached the model.
 - `--model <variant id> --effort <other level>` fails before the model call: "conflicts with
   --effort". The help text says `--model` also takes a base model name, and `--effort` then picks the
   variant. The config takes only a model id for agy, so the seat adapter passes no `--effort`.
