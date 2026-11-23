@@ -119,8 +119,9 @@ checkpoint, ask, and panel request.
 - Test: `tests/test_guard_rules.py`, `tests/test_guard_launch.py`
 
 **Interfaces:**
-- Produces: `RuleContext` with a new last field `checkpoint_dir`, default `None`
-  (`namedtuple(..., defaults=(None,))`), so every existing constructor keeps working.
+- Produces: `RuleContext` with three new last fields, `checkpoint_dir`, `lead_env`, and `panel_wait`,
+  each default `None` (`namedtuple(..., defaults=(None, None, None))`), so every existing constructor
+  keeps working (build ruling, 2026-11-23).
 - Produces: `_Env.in_checkpoint(real: str) -> bool` — true when `ctx.checkpoint_dir` is set and the
   realpath `real` is strictly under the realpath of the checkpoint dir (not equal to it).
 - Produces: `RuleContext` field `lead_env` (default `None`): a dict of exactly the variables bw set
@@ -147,13 +148,21 @@ path check. A word expands only when that variable is its only unexpanded part
 Because the expansion is sound only while the lead cannot change those variables, any segment that
 assigns, exports, unsets, or declares one of the four names (`BW_PANEL=...`, `export`, `unset`,
 `declare`, `typeset`, `readonly`, `env BW_...=`, `set --`-free forms included) is a rule `ask` with
-rule `ask:bw-env`, which the judge cannot lift.
+rule `ask:bw-env`, which the judge cannot lift. The rule covers every name that starts with `BW_`, not
+only the names in `ctx.lead_env`: the lead protocol tells the lead never to set any `BW_` variable
+(build ruling, 2026-11-23).
 
 Also (moderator's call, for Plan 6): `RuleContext` gains `panel_wait` (the realpath of the lead's own
 `inbox-view/<key>/panels/bw-panel-wait`, or None). The exact command `python3 <that path>` with no
 other words is `allow` by rule: bw writes the file and the lead cannot write that dir. Any other
-argument, pipe, or redirection keeps the normal rules. Add test `test_panel_wait_helper_allowed` and
-`test_panel_wait_with_extra_args_is_gray`.
+argument, pipe, or redirection keeps the normal rules. The tests `test_panel_wait_helper_allowed` and
+`test_panel_wait_with_extra_args_is_gray` are in the Step 1 block (build ruling, 2026-11-23).
+
+Wiring (build ruling, 2026-11-23): Plan 6 Task 11 computes `Session.wait_path` and `Session.lead_env`
+(the `BW_CHECKPOINT`, `BW_ASKS`, `BW_INBOX`, `BW_PANEL` dict) in `Session.__init__`, before
+`_guard_start` runs. This task passes both from `_guard_start`: `launch.rule_context(...,
+checkpoint_dir=..., lead_env=self.lead_env, panel_wait=self.wait_path)`. This task owns
+`test_wait_command_matches_guard_path`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_guard_rules.py`, class `CheckpointDirTests`.
   `setUp` makes a fake home, a worktree, and `cp = <tmp>/state/handoffs/k` outside the worktree, with
@@ -206,6 +215,31 @@ def test_changing_a_lead_env_variable_is_a_rule_ask(self):            # G-h
         d = decide(shell(cmd), self.ctx(lead_env=env))
         self.assertEqual((d.decision, d.source, d.rule), ("ask", "rule", "ask:bw-env"))
 
+def test_setting_any_bw_name_is_a_rule_ask(self):                     # build ruling, 2026-11-23
+    env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+    for cmd in ("export BW_PANEL_VIEW=/tmp/x", "BW_OTHER=1 true", "unset BW_STATE_DIR"):   # names not in lead_env
+        d = decide(shell(cmd), self.ctx(lead_env=env))
+        self.assertEqual((d.decision, d.source, d.rule), ("ask", "rule", "ask:bw-env"))
+
+def test_quoted_panel_commands_from_plan_6(self):                     # build ruling, 2026-11-23
+    # the protocol renders shell paths with shlex.quote; test a checkpoint dir with a space
+    cp = self.cp_with_space                     # setUp also makes "<tmp>/s d/handoffs/k" with panel/ inside
+    q = shlex.quote(os.path.join(cp, "panel"))
+    d = decide(shell(f"mv {q}/.tmp-x {q}/x.request"), self.ctx(checkpoint_dir=cp))
+    self.assertEqual(d.decision, "allow")
+    w = os.path.join(self.tmp, "s d", "inbox-view", "k", "panels", "bw-panel-wait")
+    d = decide(shell(f"python3 {shlex.quote(w)}"), self.ctx(checkpoint_dir=cp, panel_wait=os.path.realpath(w)))
+    self.assertEqual((d.decision, d.source), ("allow", "rule"))
+
+def test_panel_wait_helper_allowed(self):                             # build ruling, 2026-11-23
+    w = os.path.realpath(self.wait)             # setUp writes <tmp>/state/inbox-view/k/panels/bw-panel-wait
+    self.assertEqual(decide(shell(f"python3 {w}"), self.ctx(panel_wait=w)).decision, "allow")
+
+def test_panel_wait_with_extra_args_is_gray(self):                    # build ruling, 2026-11-23
+    w = os.path.realpath(self.wait)
+    for cmd in (f"python3 {w} x", f"python3 {w} | cat", f"python3 {w} > /tmp/o"):
+        self.assertNotEqual(decide(shell(cmd), self.ctx(panel_wait=w)).decision, "allow")
+
 def test_bw_owned_files_are_not_allowed(self):                        # G-i
     for name in ("guard-unreachable", "cap-signal"):
         self.assertNotEqual(decide(write_call(os.path.join(self.cp, name)), self.ctx()).decision, "allow")
@@ -222,30 +256,42 @@ def test_without_checkpoint_dir_today_s_decision(self):
 ```
 
   In `tests/test_guard_launch.py`: `test_rule_context_carries_checkpoint_dir` asserts
-  `launch.rule_context(project, profile, head, checkpoint_dir=cp).checkpoint_dir == cp`.
+  `launch.rule_context(project, profile, head, checkpoint_dir=cp).checkpoint_dir == cp`, and
+  `test_rule_context_carries_lead_env_and_panel_wait` asserts the same for `lead_env` and `panel_wait`
+  (build ruling, 2026-11-23).
+
+  In `tests/test_runner.py` (moved from Plan 6 Task 11; build ruling, 2026-11-23):
+
+```python
+    def test_wait_command_matches_guard_path(self):
+        # a guarded lead (lb, pi) with the real broker: the prompt's "python3 <path>" path ==
+        # broker rules_ctx.panel_wait == session.wait_path == realpath(<state>/inbox-view/<key>/panels/bw-panel-wait),
+        # and broker rules_ctx.lead_env == session.lead_env; the state dir is behind a symlink
+        # (macOS /var -> /private/var); the real rule_context call raises nothing (P6-8)
+```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-  Run: `python3 -m unittest tests.test_guard_rules.CheckpointDirTests tests.test_guard_launch -v`
+  Run: `python3 -m unittest tests.test_guard_rules.CheckpointDirTests tests.test_guard_launch tests.test_runner -v`
   Expected: FAIL (`RuleContext` has no field `checkpoint_dir`).
 
 - [ ] **Step 3: Implement** the fields, `_Env.in_checkpoint`, the expansion (one helper,
   `_Env.expand(word) -> Word`, called before every path test), the `ask:bw-env` rule in `_s_ask`, the
   `tee` handler, the five call sites, the `rule_context` parameters, `Session._guard_start` passing
-  `checkpoint_dir(ctx.state, ctx.project.worktree_key)` and `lead_env` = the `BW_CHECKPOINT`,
-  `BW_ASKS`, `BW_INBOX` (and `BW_PANEL` once Plan 6 sets it) values `_launch` puts in the lead's env
-  (build that dict once and use it for both), and the standalone `--checkpoint-dir` flag (default none).
+  `checkpoint_dir(ctx.state, ctx.project.worktree_key)`, `lead_env=self.lead_env`, and
+  `panel_wait=self.wait_path` (both set in `Session.__init__` by Plan 6 Task 11; do not build a second
+  dict) (build ruling, 2026-11-23), and the standalone `--checkpoint-dir` flag (default none).
 
 - [ ] **Step 4: Run the guard suites to verify they pass**
 
-  Run: `python3 -m unittest tests.test_guard_rules tests.test_guard_launch tests.test_guard_broker -v`
+  Run: `python3 -m unittest tests.test_guard_rules tests.test_guard_launch tests.test_guard_broker tests.test_runner -v`
   Expected: PASS, no existing test changed.
 
 - [ ] **Step 5: Regenerate and commit**
 
 ```bash
 python3 docs/usage-map/generate.py
-git add lead/guard/rules.py lead/guard/launch.py lead/guard/broker.py lead/runner.py tests/test_guard_rules.py tests/test_guard_launch.py docs/usage-map/data.generated.js CHANGELOG.md
+git add lead/guard/rules.py lead/guard/launch.py lead/guard/broker.py lead/runner.py tests/test_guard_rules.py tests/test_guard_launch.py tests/test_runner.py docs/usage-map/data.generated.js CHANGELOG.md
 git commit -m "feat: the guard allows a lead's writes into its own checkpoint dir by rule"
 ```
 
@@ -291,8 +337,9 @@ def test_evidence_key_drops_runtime_version(self):
 def test_evidence_key_has_judge_fields(self):
     self.assertNotEqual(record.evidence_key(dec("a")), record.evidence_key(dict(dec("b"), prompt_hash="other")))
 
-def test_policy_digest_ignores_on_judge_failure(self):          # G-f: two arguments, as today
-    self.assertEqual(record.policy_digest(["main"], []), record.policy_digest(["main"], []))
+def test_policy_digest_ignores_on_judge_failure(self):          # G-f: two arguments, as today (build ruling, 2026-11-23)
+    self.assertEqual(list(inspect.signature(record.policy_digest).parameters), ["protected_branches", "deploy_commands"])
+    self.assertEqual(record.policy_digest(["main"], []), "eab241176238")   # the value before this task, at 032ec44
 
 def test_pick_samples_judge_allows_as_allows(self):
     seed(self.state, [dec("j1", decision="allow", source="judge") | {"rule_decision": "ask"}])
@@ -1106,6 +1153,11 @@ def test_no_judge_model_never_promotes(self):                                   
   change here. `tests/test_guard_review.py`: `test_promotion_line_names_all_six_conditions`;
   `test_status_says_no_judge_when_model_unset`; `test_status_after_a_demotion_says_why_and_what_is_needed`
   (G-m). `tests/test_status.py`: `test_status_passes_config_and_now_to_guard_lines` (G-g).
+  The `status_lines` signature change reaches every caller in this task (build ruling, 2026-11-23):
+  Task 2's `test_legacy_rows_load_and_stay_out_of_the_new_key` becomes
+  `review.status_lines(CFG, self.state, NOW)`; the existing call at `tests/test_guard_review.py:115`
+  changes the same way; `lead/status.py:125` passes `config` and `now`. Run `grep -rn "status_lines("
+  lead cockpit metrics bin tests` before Step 4: every call has three arguments.
   `tests/test_runner.py` (runnable now, because they use a `shadow` profile, which the loader already
   accepts): `test_gate_runs_before_the_broker_is_built` (G-n: a fake `gate.decide` sees the guard key
   and the broker gets its mode); `test_shadow_profile_runs_shadow_through_the_gate`;

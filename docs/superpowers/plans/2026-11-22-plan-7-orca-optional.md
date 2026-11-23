@@ -208,13 +208,13 @@ def test_terminal_canvas_ignores_a_running_orca(self):
     code, out = self.start(run, verify=False, update=False)
     self.assertEqual(code, 0, out)
     self.assertEqual([a for a in run.argvs() if a[0] == "orca"], [])
-    self.assertEqual(run.argvs()[-1][:3], ["open", "-a", "Terminal"])
-    self.assertNotIn("orca", out.lower())
+    self.assertEqual(run.argvs()[-1][:3], ["open", "-a", "Terminal"])   # plan 5 Task 14 reads seat keys before
+    self.assertNotIn("orca", out.lower())                                # _workspace and spawns verify by Popen (build ruling, 2026-11-23)
 
 def test_terminal_canvas_dry_run_runs_only_git(self):
     run = FakeRun(orca="running")
     code, out = self.start(run, dry_run=True)
-    self.assertEqual({a[0] for a in run.argvs()}, {"git"})
+    self.assertEqual({a[0] for a in run.argvs()}, {"git"})   # plan 5 Task 14's dry run reads no seat keys (build ruling, 2026-11-23)
     self.assertIn("would run: open -a Terminal", out)
 
 def test_terminal_canvas_never_reads_the_orca_app_version(self):

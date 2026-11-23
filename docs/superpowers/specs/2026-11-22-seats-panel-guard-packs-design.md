@@ -11,6 +11,9 @@ spec disagree, this document wins for the parts it names. It builds on
 `2026-10-25-bw-guard-design.md` (the guard). Vendor CLI facts not verified on this date are marked
 "to verify".*
 
+*Amended 2026-11-23 by the build rulings from the pre-flight scan of plans 5 to 9; each change is marked
+"(build ruling, 2026-11-23)".*
+
 ## Intent and why
 
 The user's words, paraphrased: "Knock out the planned work: seats, panel, packs, and guard acting. Design
@@ -190,8 +193,9 @@ usage-limit, prompt echo, timeout, resume).
 ```python
 SeatAdapter = namedtuple("SeatAdapter",
     "argv resume_argv session_id usage_limit usage grants home_env inner_sandbox backend version_argv")
-# argv(seat, brief_path, prompt, deep) -> list   headless; brief by file or stdin, never argv
-# resume_argv(seat, session_id, prompt, deep) -> list
+# argv(seat, input_path, deep) -> list   headless; input by file or stdin, never argv (build ruling, 2026-11-23)
+# resume_argv(seat, session_id, input_path, deep) -> list
+# (build ruling, 2026-11-23: plan 5 adds fields to this tuple; the prompt and brief still never go on argv)
 # session_id(stdout_lines, stderr_lines) -> str | None
 # usage_limit(error_lines) -> bool                error lines only, never the prompt echo
 # usage(stdout_lines) -> {tokens_in, tokens_out, cost_usd, rate_limits} (each optional)
@@ -419,9 +423,10 @@ unsandboxed parent, ingests it in its poll loop (`lead/inbox.py:58-59`, `lead/ru
   `.tmp-<id>` and renames it to `<id>.request`, where `<id>` is its own random id.
 - **Responses** (moderator's call, panel 2026-11-22): bw writes `responses/<id>.json` in the view dir:
   `{"ok": true, "panel": "p3f9a1c2"}` or `{"ok": false, "error": "..."}`.
-- **Results**: `state_dir/panel-view/<worktree key>/<panel id>/`. It follows the inbox-view pattern:
-  the parent `panel-view/` is a read deny, and the lead's own key is re-read (`lead/sandbox.py:101-104`,
-  `:135-137`). `$BW_PANEL_VIEW` names it. No write grant covers it.
+- **Results**: `state_dir/inbox-view/<worktree key>/panels/<panel id>/`. It reuses the lead's existing
+  inbox-view read grant (`lead/sandbox.py:101-104`, `:135-137`), so the lead-key reset needs no new grant
+  (build ruling, 2026-11-23). `$BW_PANEL_VIEW` names `inbox-view/<worktree key>/panels/`. No write grant
+  covers it.
 - **Limits**: at most 3 open panels and 20 `ask` requests per panel per session, as the inbox caps asks
   (`MAX_ASKS_PER_SESSION`, `lead/inbox.py:41`).
 
@@ -469,8 +474,11 @@ checkpoint. A standard panel never runs a reserved seat. Packs read `tier` for t
 
 `bw lead` starts the panel child with `start_new_session`, stdin from `/dev/null`, stdout and stderr to
 `log.txt` in the panel's state dir, never a thread (the runner must have no thread alive when it forks a
-lead, `lead/runner.py:232-234`). The poll loop reaps it. A watchdog kills it at `deep_cap_min` plus 5
-minutes. A dead or killed child sets the panel `failed` and writes its `panel_run` event (moderator's
+lead, `lead/runner.py:232-234`). The poll loop reaps it. A watchdog kills it at a deadline that counts
+every possible run: `(ceil(originals / max_parallel) + ceil(fallbacks / max_parallel) + 1) * cap + 300`
+seconds for round 1, where `cap` is the tier's cap and the `+ 1` is the first-verification wait; `cap +
+300` seconds for an ask. A fixed `deep_cap_min` plus 5 minutes would kill an honest panel whose roster is
+larger than `max_parallel` (build ruling, 2026-11-23). A dead or killed child sets the panel `failed` and writes its `panel_run` event (moderator's
 call, panel 2026-11-22).
 
 1. **Brief.** One brief from `seats/brief.py`, plus `panel/templates/brief-<checkpoint>.md`, the target,
@@ -565,7 +573,7 @@ re-verify a named sample and `amend` the record.
 pure), `panel/record.py` (record from findings plus verdicts; pure), `panel/render.py`, and
 `panel/templates/`: `brief-<checkpoint>.md` for each of the five checkpoints, and `next.md`
 (verification gate, substance bar, claim-only rule, triage, how to log, the summary). `bin/bw-panel-wait`
-is the wait helper (below). One `tests/test_panel_*.py` per module; `tests/fixtures/panel/` holds
+is the wait helper (below); `bw lead` copies it into the lead's view dir. One `tests/test_panel_*.py` per module; `tests/fixtures/panel/` holds
 synthetic seat outputs (clean, unparsed, duplicate-heavy, bloat). The templates are plain markdown, so
 they also serve a lead bw did not start (`docs/roadmap.md`, "Planned shape").
 
@@ -580,16 +588,18 @@ the profile's checkpoints. `panel.md`, in substance:
 - Write a named request, read its response, and keep working. Do not act on the checkpoint's output
   (build a design, merge a branch) until the panel is logged.
 - At each task boundary, read `status.json` of any open panel. When it is `ready`, follow `next.md`.
-- When you have nothing else to do, run `bw-panel-wait <panel id>`. It polls `status.json` and returns
-  within 10 minutes (moderator's call, panel 2026-11-22). bw never writes into your terminal.
+- When you have nothing else to do, run `python3 <view dir>/bw-panel-wait`, with no argument. It polls
+  `status.json` of every open panel and returns within 110 seconds; exit status 3 means still working, so
+  run it again (build ruling, 2026-11-23). bw never writes into your terminal.
 - Verify every finding against the code yourself. A seat's confidence is not evidence.
 - Relay one claim at a time. Never paste a seat's output to another seat.
 - Log every panel, short and failed ones too. An unlogged panel does not count.
 - Tell the user three lines: the seats and who was absent; the counts and the change that matters most;
   any dispute and how you ruled.
 
-`bw-panel-wait` is a short, readable script in the bw checkout. A contained lead can read and run it only
-if its sandbox grants that read; the builder adds the grant, or the lead polls `status.json` itself. A
+`bw-panel-wait` is a short, readable script in the bw checkout. `bw lead` copies it, read-only, into
+`inbox-view/<worktree key>/panels/`, which the lead can already read, so no new grant is needed (build
+ruling, 2026-11-23). A
 profile with no checkpoints gets no `panel.md`.
 
 ### Automation in `bw lead`
@@ -961,8 +971,10 @@ bw pack export --to <pack dir> [--dry-run]
 
 ### What it generates
 
-One entry per enabled seat reachable from a profile checkpoint or the reserved tier, and one per lead in
-any `lead_order`:
+One entry per enabled seat reachable from a profile checkpoint, a `fallback` of such a seat, or the
+reserved tier, and one per lead in any `lead_order`. A stand-in seat runs on real panels, so it belongs in
+the catalog. The export uses the same reachability walk as seat verification (`seats.verify.seat_items`)
+(build ruling, 2026-11-23):
 
 ```yaml
   - name: "Planning seat (reference roster, 2026-11, gpt-6-astra via codex)"
@@ -1062,7 +1074,8 @@ wrapper generator; `panel/` is templates **plus** the mechanics code behind `bw 
 - Each seat adapter's headless flags, resume flags, session-id location, config-dir variable, and
   error-line patterns, verified on the installed versions, with synthetic transcripts as fixtures.
 - Whether each vendor's own sandbox nests inside `bw sandbox` (the attack decides).
-- The read grant that lets a contained lead run `bw-panel-wait`, or the fallback to polling.
+- (Settled by build ruling, 2026-11-23: `bw-panel-wait` is copied into the lead's inbox-view dir, so
+  the existing read grant covers it.)
 - The grouping thresholds (start at ±5 lines and Jaccard 0.5).
 - The brief templates and `next.md` wording.
 - The judge prompt and output budget; the eval set (at least 15 cases per class).

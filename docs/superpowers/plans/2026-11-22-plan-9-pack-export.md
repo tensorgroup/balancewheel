@@ -68,7 +68,8 @@ Plan 5 owns `seats.*.tier` (`2026-11-22-plan-5-seats.md`, Task 5): `SEAT_TIERS`,
 - Test: `tests/test_config_v2.py`
 
 **Interfaces:**
-- Consumes: `config["seats"][name]["tier"] in {"default", "reserved"}` from Plan 5 Task 5.
+- Consumes: `config["seats"][name]["tier"] in config.SEAT_TIERS` from Plan 5 Task 5. Plan 5 Task 5 defines and
+  names `SEAT_TIERS`; import it, do not write the set again (build ruling, 2026-11-23).
 - Produces: every resolved seat dict gains `"title"` (str or `None`, default `None`). Accepted at schema 2 and 3 only (it joins `V2_SEAT_KEYS`).
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_config_v2.py`, class `SchemaV2`, using the file's `v2()` and `load_obj()` helpers.
@@ -138,14 +139,14 @@ git commit -m "feat: seat key title, and a real policy on every example seat"
 - Test: `tests/test_pack_export.py`
 
 **Interfaces:**
-- Consumes: resolved config from Task 1 and Plan 5 Task 5 (`seats.*.tier`, `seats.*.title`, `seats.*.effort`, `leads.*.plan`, `seats.*.policy`, `seats.*.enabled`, `seats.*.roles`, `seats.*.runtime`, `seats.*.model`, `profiles.*.checkpoints.*.seats`, `profiles.*.lead_order`, `default_profile`, `leads.*`, `watches.redundant_min_panels`); `store.load()` output; `summary.seat_rows(data, config)` and `summary.lead_rows(data, inbox_items)`; `quota.read_model(state, plan) -> str | None` (`lead/quota.py:261`), the resolved model a Claude Code lead's statusline recorded.
+- Consumes: resolved config from Task 1 and Plan 5 Task 5 (`seats.*.tier`, `seats.*.title`, `seats.*.effort`, `leads.*.plan`, `seats.*.policy`, `seats.*.enabled`, `seats.*.roles`, `seats.*.runtime`, `seats.*.model`, `profiles.*.checkpoints.*.seats`, `profiles.*.lead_order`, `default_profile`, `leads.*`, `watches.redundant_min_panels`); `store.load()` output; `summary.seat_rows(data, config)` and `summary.lead_rows(data, inbox_items)`; `quota.lead_model(state, lead) -> (model, resolved)`, the one helper for the model a lead runs as, from Plan 6 Task 9 (build ruling, 2026-11-23); `seats.verify.seat_items(config)` from Plan 5 Task 10, the one reachability walk (build ruling, 2026-11-23).
 - Produces:
   - `class PackError(Exception)` — every refusal; the message is the one line the user sees.
-  - `exported_seats(config) -> list[str]` — enabled seats, in config order, named in any profile checkpoint's `seats`, named as the `fallback` of such a seat, or with `tier == "reserved"` (moderator's call: the stand-in is real policy and the seat verification scope includes it). Add test `test_fallback_only_seat_is_exported`.
+  - `exported_seats(config) -> list[str]` — returns `seats.verify.seat_items(config)`: enabled seats named in any profile checkpoint's `seats`, every enabled `fallback` of such a seat (followed until no new name), and every enabled seat with `tier == "reserved"` (moderator's call: the stand-in is real policy and the seat verification scope includes it). Fallback-only seats stay in the export. Do not repeat the walk here; call `seat_items` (build ruling, 2026-11-23). Add test `test_fallback_only_seat_is_exported`.
   - `model_panels(panels, seat, model) -> list[dict]` — every panel, sorted by `ts`, where `p["seats"].get(seat) == model`. A model that returns keeps its earlier panels (spec: "only panels where the seat ran its current model count").
   - `seat_role(config, seat) -> str`
   - `seat_entry(config, data, seat) -> dict` with keys `name`, `status`, `notes`.
-  - `lead_model(config, state, lead) -> str` — for a `claude-code` lead, `quota.read_model(state, lead["plan"])` when it returns a value, else the configured model; for every other runtime, the configured model. This is the rule `lead/runner.py:217-221` uses when it logs a session, so the export matches the logged `model`.
+  - `lead_model(config, state, lead) -> str` — the model part of `quota.lead_model(state, lead)` (Plan 6 Task 9). That helper holds the rule: for a `claude-code` lead, `quota.read_model(state, lead["plan"])` when it returns a value, else the configured model; for every other runtime, the configured model. `lead/runner.py` calls the same helper when it logs a session, so the export matches the logged `model`. Do not repeat the rule here (build ruling, 2026-11-23).
   - `lead_entries(config, data, state) -> list[dict]` (same keys).
   - `entries(config, data, state) -> list[dict]` — seat entries, then lead entries, with names made unique (below).
 
@@ -171,6 +172,12 @@ def test_exported_seats_are_enabled_and_reachable(self):
 def test_fallback_only_seat_is_exported(self):
     c = make_config(alpha={"fallback": "idle"})
     self.assertEqual(export.exported_seats(c), ["alpha", "beta", "gamma", "eps", "idle"])
+
+def test_exported_seats_is_seat_items(self):                         # build ruling, 2026-11-23
+    c = make_config(alpha={"fallback": "idle"})
+    with mock.patch("seats.verify.seat_items", return_value=["beta"]) as si:
+        self.assertEqual(export.exported_seats(c), ["beta"])
+    si.assert_called_once_with(c)
 
 def test_role_names(self):
     c = make_config()
@@ -283,7 +290,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'packs'`.
 
 - [ ] **Step 3: Implement the functions in `packs/export.py`**
 
-Signatures as in the Interfaces block. Import `summary` after `from lead import paths  # noqa: F401`, as `cockpit/views.py` does, and `from lead import quota` for `read_model`. Do not write `seat_rows` again: filter `data` and call it.
+Signatures as in the Interfaces block. Import `summary` after `from lead import paths  # noqa: F401`, as `cockpit/views.py` does, `from lead import quota` for `lead_model`, and `from seats import verify` for `seat_items` (build ruling, 2026-11-23). Do not write `seat_rows`, the reachability walk, or the lead-model rule again: call them.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
