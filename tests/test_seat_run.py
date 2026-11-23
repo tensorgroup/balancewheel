@@ -414,6 +414,17 @@ class SeatRun(unittest.TestCase):
         self.assertEqual(self.fake.stdin, "reply ok")
         self.assertNotIn("--safe-mode", self.fake.argv)
 
+    def test_control_argv_trusts_project_files_for_pi(self):
+        # pi -p loads no project-local file unless trusted: without the ignore flags alone, the control
+        # would load nothing and prove nothing. The control adds --approve; the real argv never has it.
+        seat = {"runtime": "pi", "model": "m"}
+        argv = run.control_argv(seat)
+        for flag in adapters.PI_IGNORE:
+            self.assertNotIn(flag, argv)
+        self.assertEqual(argv[-1:], ["--approve"])
+        self.assertNotIn("--approve", adapters.PI.argv(seat, run.INPUT_PLACEHOLDER, False))
+        self.assertEqual(adapters.CODEX.control_flags, [])
+
     def test_without_removes_flags_at_flag_positions_only(self):  # fix 6
         argv = ["claude", "-p", "--model", "user", "--append-system-prompt", "--safe-mode", "--safe-mode",
                 "--setting-sources", "user", "--strict-mcp-config", "--setting-sources", "user,project"]

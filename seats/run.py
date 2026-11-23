@@ -405,10 +405,11 @@ def _without(argv, flags):
 
 
 def control_argv(seat_cfg) -> list:
-    """The seat's own new-session argv without its ignore flags: the hostile-repo positive control.
-    INPUT_PLACEHOLDER stands for the input file."""
+    """The seat's own new-session argv without its ignore flags, plus the adapter's control flags:
+    the hostile-repo positive control. INPUT_PLACEHOLDER stands for the input file."""
     adapter = adapters.SEAT_ADAPTERS[seat_cfg["runtime"]]
-    return _without(adapter.argv(seat_cfg, INPUT_PLACEHOLDER, False), list(adapter.ignore_flags))
+    return (_without(adapter.argv(seat_cfg, INPUT_PLACEHOLDER, False), list(adapter.ignore_flags))
+            + list(adapter.control_flags))
 
 
 def exec_sandboxed(config, state, seat, target, argv, run=proc.run, input_text=None, now=time.time) -> proc.Result:

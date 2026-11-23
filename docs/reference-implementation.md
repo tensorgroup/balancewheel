@@ -23,7 +23,8 @@ and a Gemini lead joined the lead order after the OpenAI lead (see Seat wrappers
 2026-11-23 with the flags and event shapes of the five seat CLIs, checked on the installed versions,
 and the result that Seatbelt sandboxes do not nest (see Seat runtimes under `bw seat`); updated
 2026-11-23 again: `bw seat` now does each seat wrapper step in this repo (step map in Seat
-wrappers), and the seat login outcomes are recorded.*
+wrappers), and the seat login outcomes are recorded; updated 2026-11-23 a third time after the first
+live seat attack on the pi seat: the Volta read, the git config read, and the `--approve` control.*
 
 ## The cast
 
@@ -372,6 +373,12 @@ uses Seatbelt: Codex runs with `--dangerously-bypass-approvals-and-sandbox`, and
 `--sandbox`. The `inner_sandbox` field holds those "off" flags. `bw sandbox` is then the only
 enforcer, as the design requires.
 
+**Home reads under nono.** nono denies reads under the home by default; sandbox-exec does not. A
+tool that needs a file there stops before it does any work. git exits when `~/.gitconfig` exists
+but is unreadable, so every seat reads the user's global git config (read only, as a lead does).
+An interpreter from a version manager under the home (pyenv, for one) cannot load its libraries.
+The seat attack reports such a probe as skipped, never as passed.
+
 **codex.** `codex exec resume` has no `-s`, `-C`, or `-p` flag. A resume therefore cannot set the
 sandbox with `-s`, and it cannot set the target with `-C`: run it from the target directory. The flag
 `--dangerously-bypass-approvals-and-sandbox` exists on both paths, so one flag sets the same state
@@ -448,6 +455,9 @@ Checked again on agy 1.5.15 (2026-11-23), with no model call:
 **pi seat.** The seat keeps the real `HOME`, because a Volta shim finds its tools under `$HOME`.
 The seat reads `~/.volta` (read only). nono denies reads under the home by default, and without
 that grant the shim stops before pi starts ("Could not create directory").
+`pi -p` loads no project-local file (extensions, skills, settings) unless the run trusts them:
+pi 1.6.0 loaded a planted `.pi/extensions` file with `--approve` and did not load it with neither
+flag. So the seat attack's positive control adds `--approve` after it drops the ignore flags.
 `PI_CODING_AGENT_DIR` moves the config dir and the session store to the seat home. The pi seat
 runs on OpenRouter only for now, so its login is `OPENROUTER_API_KEY` in the env. pi 1.6.0 has
 `--no-mcp` and `--no-skills`; the seat passes both, with `--no-extensions` and `--no-approve`.
