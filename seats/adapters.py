@@ -425,7 +425,7 @@ CLAUDE = SeatAdapter(
 
 # ---- pi: `pi -p --mode json`, the input on stdin ----
 # HOME stays the real one, because a Volta shim finds its tools under $HOME. nono denies reads under
-# the home by default, so the seat reads ~/.volta (read only, as the pi lead does). PI_CODING_AGENT_DIR
+# the home by default; the seat reads ~/.volta through SEAT_TOOLCHAIN_READS (read only). PI_CODING_AGENT_DIR
 # moves pi's config dir and session store to the seat home. A pi seat runs on OpenRouter only for
 # now, so its login env key is OPENROUTER_API_KEY (in env_keys); no credential file. pi has no
 # approval prompts, so it needs no permission flag. pi echoes the prompt as a user message: errors
@@ -500,7 +500,7 @@ PI = SeatAdapter(
     usage=_pi_usage,
     answer=_pi_answer,
     errors=_pi_errors,
-    grants=lambda seat, seat_home: RuntimeGrants(read=["~/.volta"], write=[seat_home], env={"PI_CODING_AGENT_DIR": seat_home},
+    grants=lambda seat, seat_home: RuntimeGrants(read=[], write=[seat_home], env={"PI_CODING_AGENT_DIR": seat_home},
                                                  private_home=False,
                                                  deny_write=[os.path.join(seat_home, n) for n in PI_CODE]),
     home_env=lambda seat_home: {"PI_CODING_AGENT_DIR": seat_home},

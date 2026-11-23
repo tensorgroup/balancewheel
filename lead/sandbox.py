@@ -24,10 +24,11 @@ import sys
 import tempfile
 from collections import namedtuple
 
-Grants = namedtuple("Grants", "rules read deny_read reread")    # rules: [(allow|deny, subpath|literal, path)]
+Grants = namedtuple("Grants", "rules read deny_read reread tool_read")    # rules: [(allow|deny, subpath|literal, path)]
 # deny_read: paths no read grant reaches (bw's sealed copies, the inbox record, the answers views);
-# reread: paths inside a deny_read that are readable again (the lead's own answers view), emitted after it
-Grants.__new__.__defaults__ = ((), ())
+# reread: paths inside a deny_read that are readable again (the lead's own answers view), emitted after it;
+# tool_read: a seat's toolchain reads (SEAT_TOOLCHAIN_READS). Unlike `read`, they never lift a secret deny.
+Grants.__new__.__defaults__ = ((), (), ())
 RuntimeGrants = namedtuple("RuntimeGrants", "read write env private_home deny_write")
 RuntimeGrants.__new__.__defaults__ = ((),)  # deny_write: paths inside `write` that stay read-only
 
@@ -49,7 +50,15 @@ DEFAULT_COCKPIT_PORT = 8765
 SECRET_READS = [".ssh", ".aws", ".gnupg", ".netrc", ".config/gh", ".docker/config.json",
                 ".codex/auth.json", ".claude/.credentials.json", ".kimi-code/credentials", ".pi/agent/auth.json",
                 ".gemini/oauth_creds.json", ".config/gcloud",
-                ".cc-switch"]  # its DB holds Codex auth and copies of every vendor config
+                ".cc-switch",  # its DB holds Codex auth and copies of every vendor config
+                ".cargo/credentials", ".cargo/credentials.toml"]  # crates.io registry tokens
+# Language toolchains under the home that a seat reads, so it can run the repo's tools: a version
+# manager's shims load their interpreters from here, and nono denies reads under the home by default.
+# A toolchain dir holds code, not secrets. Rules: read only (no write rule covers one); only dirs that
+# exist, at their real paths, plus the link node of a symlinked one; a secret path inside one stays
+# denied on both backends (SECRET_READS wins). A name that resolves into a secret path, holds the home,
+# or overlaps bw's paths, the seat's writes, or a lead session store is not granted.
+SEAT_TOOLCHAIN_READS = [".pyenv", ".volta", ".nvm", ".rbenv", ".cargo", ".rustup", ".local/bin", ".local/lib"]
 # Session stores of the lead runtimes (home-relative): a seat never reads a lead's transcripts.
 LEAD_SESSION_STORES = [".claude/projects", ".codex/sessions", ".pi/agent/sessions", ".kimi-code/sessions",
                        ".gemini/tmp", ".gemini/antigravity-cli/conversations",
@@ -191,6 +200,28 @@ def _inside(p, roots):
     return any(p == r or p.startswith(r.rstrip("/") + "/") for r in roots)
 
 
+def _toolchain_reads(user_home, forbidden):
+    """The SEAT_TOOLCHAIN_READS dirs that exist, as real paths, plus each symlinked one's link node.
+    A dir is dropped when its real path lies inside a secret path, holds the home, or overlaps one of
+    `forbidden` (bw's paths, the seat's writes, the lead session stores)."""
+    home = os.path.realpath(user_home)
+    secrets = [os.path.realpath(os.path.join(user_home, s)) for s in SECRET_READS]
+    out = []
+    for rel in SEAT_TOOLCHAIN_READS:
+        given = os.path.join(user_home, rel)
+        if not os.path.isdir(given):
+            continue
+        real = _real(given)
+        if _inside(home, [real]) or _inside(real, secrets):
+            continue
+        if any(_inside(real, [f]) or _inside(f, [real]) for f in forbidden):
+            continue
+        out.append(real)
+        if os.path.islink(given):
+            out.append(check_path(os.path.abspath(given)))
+    return out
+
+
 def _regular_file(f):
     given = os.path.abspath(os.path.expanduser(f))
     if os.path.islink(given) or not os.path.isfile(given):
@@ -270,8 +301,9 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
     stores = [os.path.realpath(os.path.join(user_home, s)) for s in LEAD_SESSION_STORES]
     stores = [check_path(p) for p in stores if not _inside(p, [home] + writes + dirs)]
     denied = [state, scratch_root] + stores
+    tools = _toolchain_reads(user_home, bw_paths + [home] + writes + dirs + stores)
     # A credential inside a secret dir is read again after the secret deny.
-    return Grants(rules, reads, denied, [home, own_scratch] + creds)
+    return Grants(rules, reads, denied, [home, own_scratch] + creds, tools)
 
 
 def _rule(action, kind, path):
@@ -311,7 +343,16 @@ def seatbelt_profile(grants, scratch, ports=None):
     return "".join(parts)
 
 
+def _tool_secret_denies(grants):
+    """nono: a read deny for each secret path inside a toolchain read. nono's own secret list does not
+    name these (a registry token in ~/.cargo), and the read grant would otherwise reach them."""
+    home = os.path.expanduser("~")
+    secrets = [os.path.realpath(os.path.join(home, s)) for s in SECRET_READS]
+    return [f'(deny file-read* (subpath "{check_path(s)}"))' for s in secrets if _inside(s, list(grants.tool_read))]
+
+
 def nono_profile(grants, scratch, ports=None):
+    reads = list(grants.read) + list(grants.tool_read)
     first_allows, ordered = [], []
     seen_deny = False
     for r in grants.rules:
@@ -327,10 +368,11 @@ def nono_profile(grants, scratch, ports=None):
         "groups": {"exclude": ["system_write_macos"]},
         "filesystem": {"allow": [check_path(os.path.realpath(scratch))] + first_allows,
                        "write": ["/dev"],
-                       "read": [p for p in grants.read if not os.path.islink(p) and not os.path.isfile(p)],
-                       "read_file": [p for p in grants.read if not os.path.islink(p) and os.path.isfile(p)]},
+                       "read": [p for p in reads if not os.path.islink(p) and not os.path.isfile(p)],
+                       "read_file": [p for p in reads if not os.path.islink(p) and os.path.isfile(p)]},
         # nono resolves grants to real paths; the link node itself needs a raw read rule.
-        "unsafe_macos_seatbelt_rules": [f'(allow file-read* (literal "{p}"))' for p in grants.read if os.path.islink(p)]
+        "unsafe_macos_seatbelt_rules": [f'(allow file-read* (literal "{p}"))' for p in reads if os.path.islink(p)]
+                                       + _tool_secret_denies(grants)
                                        + ordered + _read_denies(grants)  # nono's default reads $TMPDIR
                                        + IPC_DENIES + canvas_denies(denied_ports() if ports is None else ports),
     }

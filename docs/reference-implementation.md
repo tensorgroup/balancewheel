@@ -24,7 +24,8 @@ and a Gemini lead joined the lead order after the OpenAI lead (see Seat wrappers
 and the result that Seatbelt sandboxes do not nest (see Seat runtimes under `bw seat`); updated
 2026-11-23 again: `bw seat` now does each seat wrapper step in this repo (step map in Seat
 wrappers), and the seat login outcomes are recorded; updated 2026-11-23 a third time after the first
-live seat attack on the pi seat: the Volta read, the git config read, and the `--approve` control.*
+live seat attack on the pi seat: the git config read, the toolchain reads (Volta and pyenv among
+them), the cargo token denies, and the `--approve` control.*
 
 ## The cast
 
@@ -377,7 +378,12 @@ enforcer, as the design requires.
 tool that needs a file there stops before it does any work. git exits when `~/.gitconfig` exists
 but is unreadable, so every seat reads the user's global git config (read only, as a lead does).
 An interpreter from a version manager under the home (pyenv, for one) cannot load its libraries.
-The seat attack reports such a probe as skipped, never as passed.
+So every seat reads one fixed list of toolchain dirs, read only, when they exist: `~/.pyenv`,
+`~/.volta`, `~/.nvm`, `~/.rbenv`, `~/.cargo`, `~/.rustup`, `~/.local/bin`, `~/.local/lib`
+(`SEAT_TOOLCHAIN_READS` in `lead/sandbox.py`). The secret denies still win inside them: the crates.io
+token files `~/.cargo/credentials` and `~/.cargo/credentials.toml` stay unreadable on both backends.
+When a probe's tool stops before its write, the seat attack reports the probe as skipped, never as
+passed, and `bw seat verify` says that the tool could not start under the sandbox.
 
 **codex.** `codex exec resume` has no `-s`, `-C`, or `-p` flag. A resume therefore cannot set the
 sandbox with `-s`, and it cannot set the target with `-C`: run it from the target directory. The flag
@@ -453,8 +459,8 @@ Checked again on agy 1.5.15 (2026-11-23), with no model call:
   variant. The config takes only a model id for agy, so the seat adapter passes no `--effort`.
 
 **pi seat.** The seat keeps the real `HOME`, because a Volta shim finds its tools under `$HOME`.
-The seat reads `~/.volta` (read only). nono denies reads under the home by default, and without
-that grant the shim stops before pi starts ("Could not create directory").
+The seat reads `~/.volta` through the toolchain list (see Home reads under nono). Without that
+read, nono stops the shim before pi starts ("Could not create directory").
 `pi -p` loads no project-local file (extensions, skills, settings) unless the run trusts them:
 pi 1.6.0 loaded a planted `.pi/extensions` file with `--approve` and did not load it with neither
 flag. So the seat attack's positive control adds `--approve` after it drops the ignore flags.

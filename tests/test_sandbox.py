@@ -504,6 +504,33 @@ class SeatGrants(unittest.TestCase):
             self.assertIn(p, g.read)
         self.assertNotIn(str(fake_home / ".gitconfig"), [r[2] for r in g.rules])  # never a write grant
 
+    def test_toolchain_dirs_read_only_existing_real_paths(self):
+        fake_home = self.root / "user"
+        for rel in (".pyenv", ".cargo", ".local/lib", "tools/rbenv"):
+            (fake_home / rel).mkdir(parents=True)
+        os.symlink("tools/rbenv", fake_home / ".rbenv")
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            g = self.grants()
+        self.assertEqual(sorted(g.tool_read), sorted([str(fake_home / ".pyenv"), str(fake_home / ".cargo"),
+                                                      str(fake_home / ".local/lib"), str(fake_home / "tools/rbenv"),
+                                                      str(fake_home / ".rbenv")]))  # the link node as well
+        self.assertNotIn(str(fake_home / ".nvm"), g.tool_read)  # missing: not granted
+        written = [r[2] for r in g.rules]
+        self.assertFalse([p for p in g.tool_read if any(p == w or p.startswith(w + "/") for w in written)])
+        self.assertEqual(sorted(sandbox.SEAT_TOOLCHAIN_READS),
+                         sorted([".pyenv", ".volta", ".nvm", ".rbenv", ".cargo", ".rustup", ".local/bin", ".local/lib"]))
+
+    def test_toolchain_dir_in_a_secret_or_holding_the_home_dropped(self):
+        fake_home = self.root / "user"; (fake_home / ".ssh" / "py").mkdir(parents=True)
+        os.symlink(".ssh/py", fake_home / ".pyenv")  # a toolchain name that resolves into a secret dir
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+            g = self.grants()
+        self.assertEqual(list(g.tool_read), [])
+
+    def test_cargo_registry_tokens_are_secrets(self):
+        self.assertIn(".cargo/credentials", sandbox.SECRET_READS)
+        self.assertIn(".cargo/credentials.toml", sandbox.SECRET_READS)
+
     def test_state_and_scratch_root_read_denied_own_reread(self):
         g = self.grants()
         self.assertIn(self.state, g.deny_read)
@@ -740,6 +767,23 @@ class SeatEscapesUnderSeatbelt(unittest.TestCase):
         self.assertEqual(auth.read_text(), "new-login\n")
         self.assertEqual(sibling.read_text(), "cfg\n")
         self.assertFalse((codex / "planted").exists())
+
+    def test_toolchain_readable_not_writable_secrets_in_it_denied(self):
+        fake_home = Path(os.path.realpath(self.tmp.name)) / "user"
+        (fake_home / ".pyenv").mkdir(parents=True); (fake_home / ".pyenv" / "x").write_text("tool-code\n")
+        (fake_home / ".cargo").mkdir(); (fake_home / ".ssh").mkdir()
+        (fake_home / ".cargo" / "credentials.toml").write_text("cargo-token-toml\n")
+        (fake_home / ".cargo" / "credentials").write_text("cargo-token-old\n")
+        (fake_home / ".ssh" / "id").write_text("ssh-key\n")
+        r = self.sh(f"cat {fake_home}/.pyenv/x; cat {fake_home}/.cargo/credentials.toml {fake_home}/.cargo/credentials;"
+                    f" cat {fake_home}/.ssh/id; echo bad > {fake_home}/.pyenv/y; echo bad > {fake_home}/.cargo/z",
+                    user_home=str(fake_home))
+        self.assertIn("tool-code", r.stdout, r.stderr)
+        self.assertNotIn("cargo-token", r.stdout)
+        if self.backend == "sandbox-exec":  # nono's own secret denies follow the real HOME, not this fake one
+            self.assertNotIn("ssh-key", r.stdout)
+        self.assertFalse((fake_home / ".pyenv" / "y").exists())
+        self.assertFalse((fake_home / ".cargo" / "z").exists())
 
     def test_bw_state_and_other_seat_scratch_unreadable(self):
         r = self.sh(f"cat {self.state}/inbox.jsonl; cat {self.other}/brief; ls {self.state}")
