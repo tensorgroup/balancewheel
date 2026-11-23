@@ -200,25 +200,71 @@ def _inside(p, roots):
     return any(p == r or p.startswith(r.rstrip("/") + "/") for r in roots)
 
 
+def _tool_read_ok(real, user_home, forbidden):
+    """False when a tool read's real path lies inside a secret path, holds the home, or overlaps one
+    of `forbidden` (bw's paths, the seat's writes, the lead session stores)."""
+    secrets = [os.path.realpath(os.path.join(user_home, s)) for s in SECRET_READS]
+    if _inside(os.path.realpath(user_home), [real]) or _inside(real, secrets):
+        return False
+    return not any(_inside(real, [f]) or _inside(f, [real]) for f in forbidden)
+
+
 def _toolchain_reads(user_home, forbidden):
     """The SEAT_TOOLCHAIN_READS dirs that exist, as real paths, plus each symlinked one's link node.
-    A dir is dropped when its real path lies inside a secret path, holds the home, or overlaps one of
-    `forbidden` (bw's paths, the seat's writes, the lead session stores)."""
-    home = os.path.realpath(user_home)
-    secrets = [os.path.realpath(os.path.join(user_home, s)) for s in SECRET_READS]
+    A dir is dropped when `_tool_read_ok` refuses its real path."""
     out = []
     for rel in SEAT_TOOLCHAIN_READS:
         given = os.path.join(user_home, rel)
         if not os.path.isdir(given):
             continue
         real = _real(given)
-        if _inside(home, [real]) or _inside(real, secrets):
-            continue
-        if any(_inside(real, [f]) or _inside(f, [real]) for f in forbidden):
+        if not _tool_read_ok(real, user_home, forbidden):
             continue
         out.append(real)
         if os.path.islink(given):
             out.append(check_path(os.path.abspath(given)))
+    return out
+
+
+def _link_nodes(path):
+    """Each symlink met while resolving `path` (a link in a middle component included), as absolute
+    link-node paths, in order."""
+    nodes, todo, seen = [], os.path.abspath(path), set()
+    while todo not in seen:
+        seen.add(todo)
+        parts, cur = todo.split("/")[1:], "/"
+        for i, part in enumerate(parts):
+            cur = os.path.join(cur, part)
+            if os.path.islink(cur):
+                nodes.append(cur)
+                target = os.path.join(os.path.dirname(cur), os.readlink(cur))
+                todo = os.path.normpath(os.path.join(target, *parts[i + 1:]))
+                break
+        else:
+            return nodes
+    return nodes
+
+
+def _install_reads(cmds, user_home, forbidden):
+    """For each command on PATH that is a symlink: its install root, as a real path, plus each link
+    node on the way. The root is the real binary's dir, or that dir's parent when it is named `bin`
+    (a package keeps its resources next to `bin`). A plain file on PATH adds nothing. A root that
+    `_tool_read_ok` refuses is dropped, with its link nodes."""
+    out = []
+    for cmd in cmds:
+        found = shutil.which(cmd)
+        if not found:
+            continue
+        nodes = _link_nodes(found)
+        if not nodes:
+            continue
+        root = os.path.dirname(os.path.realpath(found))
+        if os.path.basename(root) == "bin":
+            root = os.path.dirname(root)
+        root = _real(root)
+        if not _tool_read_ok(root, user_home, forbidden):
+            continue
+        out += [root] + [check_path(n) for n in nodes]
     return out
 
 
@@ -249,7 +295,8 @@ def _state_dir(d, user_home, bw_paths, code):
     return real
 
 
-def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_files=(), credentials=(), state_dirs=()):
+def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_files=(), credentials=(), state_dirs=(),
+                installs=()):
     """Ordered write rules and read grants for a review seat on `target` (a lead.projects.Project).
     The seat writes only its own home (minus the runtime's code-loading names) and the credential
     files it refreshes. It reads the target, its git dir, and the user's global git config, and nothing
@@ -259,7 +306,9 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
     Pass only the adapter's declared credentials here, never a generic write file.
     `state_dirs`: the CLI's own state dirs under the user's home, for a runtime that cannot run on a
     private home (agy: ruling S-agy). Each one is writable as a subpath; the code names in
-    `runtime_grants.deny_write` stay read-only inside it. Pass only the adapter's declared dirs."""
+    `runtime_grants.deny_write` stay read-only inside it. Pass only the adapter's declared dirs.
+    `installs`: the commands whose install a seat reads, read only, as tool reads (`_install_reads`):
+    a CLI linked into PATH from a package dir under the home cannot start when nono denies that dir."""
     state, home, own_scratch = _real(state_dir), _real(seat_home), _real(scratch)
     scratch_root = seat_scratch_root()
     if not own_scratch.startswith(scratch_root + "/"):
@@ -301,7 +350,9 @@ def seat_grants(target, seat_home, runtime_grants, state_dir, scratch, write_fil
     stores = [os.path.realpath(os.path.join(user_home, s)) for s in LEAD_SESSION_STORES]
     stores = [check_path(p) for p in stores if not _inside(p, [home] + writes + dirs)]
     denied = [state, scratch_root] + stores
-    tools = _toolchain_reads(user_home, bw_paths + [home] + writes + dirs + stores)
+    forbidden_reads = bw_paths + [home] + writes + dirs + stores
+    tools = _toolchain_reads(user_home, forbidden_reads)
+    tools += [p for p in _install_reads(installs, user_home, forbidden_reads) if p not in tools]
     # A credential inside a secret dir is read again after the secret deny.
     return Grants(rules, reads, denied, [home, own_scratch] + creds, tools)
 

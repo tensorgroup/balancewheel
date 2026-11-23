@@ -25,7 +25,8 @@ and the result that Seatbelt sandboxes do not nest (see Seat runtimes under `bw 
 2026-11-23 again: `bw seat` now does each seat wrapper step in this repo (step map in Seat
 wrappers), and the seat login outcomes are recorded; updated 2026-11-23 a third time after the first
 live seat attack on the pi seat: the git config read, the toolchain reads (Volta and pyenv among
-them), the cargo token denies, and the `--approve` control.*
+them), the cargo token denies, and the `--approve` control; updated 2026-11-23 a fourth time after
+the live attack on the codex and agy seats: the codex install read.*
 
 ## The cast
 
@@ -382,6 +383,12 @@ So every seat reads one fixed list of toolchain dirs, read only, when they exist
 `~/.volta`, `~/.nvm`, `~/.rbenv`, `~/.cargo`, `~/.rustup`, `~/.local/bin`, `~/.local/lib`
 (`SEAT_TOOLCHAIN_READS` in `lead/sandbox.py`). The secret denies still win inside them: the crates.io
 token files `~/.cargo/credentials` and `~/.cargo/credentials.toml` stay unreadable on both backends.
+A seat CLI that links into PATH from a package dir under the home also needs that dir. The codex
+standalone install puts a link in `~/.local/bin`, and the binary and its resources live under
+`~/.codex/packages`. Without a read of that dir, `env` says "codex: No such file or directory" and
+codex never starts. So the codex adapter names `codex` in `installs`. The seat then reads the real
+release dir (the parent of its `bin`) and each link node on the way, read only, as tool reads. A
+root that holds the home, lies in a secret path, or overlaps a session store or a write is dropped.
 When a probe's tool stops before its write, the seat attack reports the probe as skipped, never as
 passed, and `bw seat verify` says that the tool could not start under the sandbox.
 

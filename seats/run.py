@@ -143,7 +143,7 @@ def _contained(config, state, seat, project, home, scratch, argv):
     env.update(adapter.home_env(home))
     grants = sandbox.seat_grants(project, home, rg, state, scratch,
                                  credentials=[p for p, _, refreshes in adapter.credentials if refreshes],
-                                 state_dirs=adapter.state_dirs)
+                                 state_dirs=adapter.state_dirs, installs=adapter.installs)
     full, cleanup = sandbox.wrap(argv, grants, backend, home_dir, scratch, {}, sandbox.denied_ports(config),
                                  allow_cwd=False)
     return full, cleanup, env

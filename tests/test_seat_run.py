@@ -414,6 +414,15 @@ class SeatRun(unittest.TestCase):
         self.assertEqual(self.fake.stdin, "reply ok")
         self.assertNotIn("--safe-mode", self.fake.argv)
 
+    def test_seat_reads_the_install_its_adapter_names(self):
+        # codex links into PATH from a package dir under the home; under nono the seat must read it.
+        real = sandbox.seat_grants
+        with mock.patch.object(sandbox, "seat_grants", side_effect=real) as spy:
+            self.assertTrue(self.seat().ok)
+        self.assertEqual(spy.call_args.kwargs["installs"], ["codex"])
+        self.assertEqual(adapters.CODEX.installs, ["codex"])
+        self.assertEqual([n for n, a in adapters.SEAT_ADAPTERS.items() if a.installs], ["codex"])
+
     def test_control_argv_trusts_project_files_for_pi(self):
         # pi -p loads no project-local file unless trusted: without the ignore flags alone, the control
         # would load nothing and prove nothing. The control adds --approve; the real argv never has it.

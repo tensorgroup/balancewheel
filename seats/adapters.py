@@ -22,8 +22,8 @@ from lead.sandbox import RuntimeGrants
 SeatAdapter = namedtuple("SeatAdapter",
     "argv resume_argv session_id usage_limit usage answer errors grants home_env credentials "
     "hook_files project_code inner_sandbox backend version_argv prompt_via ignore_flags env_keys tool_results "
-    "state_dirs control_flags")
-SeatAdapter.__new__.__defaults__ = ([],)  # control_flags
+    "state_dirs control_flags installs")
+SeatAdapter.__new__.__defaults__ = ([], [])  # control_flags, installs
 # project_code(target, argv=()): the hostile project files present that `argv` would load. A file the
 # argv's ignore flags neutralize is not reported (ruling H-ignore); with no argv, every present file
 # is reported (fail closed).
@@ -31,6 +31,8 @@ SeatAdapter.__new__.__defaults__ = ([],)  # control_flags
 # cannot run on a private home (agy). They go to lead.sandbox.seat_grants(..., state_dirs=...).
 # control_flags: flags the hostile-repo positive control adds after it drops the ignore flags, for a
 # CLI that loads no project file by default without them (pi trusts project files only with --approve).
+# installs: commands whose install the seat reads, read only (lead.sandbox.seat_grants(..., installs=...)),
+# for a CLI linked into PATH from a package dir under the home that nono would deny (codex standalone).
 
 TOP_EFFORT = {"codex": "max", "pi": "xhigh", "kimi": "max"}
 # Seat-only code lists (R17): names under a runtime's config dir that load as code. A seat's grants
@@ -250,6 +252,7 @@ CODEX = SeatAdapter(
     env_keys=[],
     tool_results=_codex_tool_results,
     state_dirs=[],
+    installs=["codex"],  # ~/.local/bin/codex links into the package dir under ~/.codex/packages
 )
 
 

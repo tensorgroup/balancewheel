@@ -527,6 +527,43 @@ class SeatGrants(unittest.TestCase):
             g = self.grants()
         self.assertEqual(list(g.tool_read), [])
 
+    def _codex_install(self, fake_home, real_bin):
+        """`.local/bin/codex` -> `.codex/packages/standalone/current/bin/codex`, where `current` links
+        to a release dir (the codex standalone layout). Returns the PATH dir."""
+        real = fake_home / real_bin; real.parent.mkdir(parents=True); real.write_text("#!/bin/sh\n")
+        real.chmod(0o755)
+        path_dir = fake_home / ".local" / "bin"; path_dir.mkdir(parents=True)
+        return path_dir, real
+
+    def test_install_of_a_symlinked_binary_read_through_its_links(self):
+        # The codex standalone install puts a link in ~/.local/bin; the binary and its resources live
+        # under ~/.codex/packages. nono denies those reads, and `env` then says "codex: No such file".
+        fake_home = self.root / "user"
+        path_dir, real = self._codex_install(fake_home, ".codex/packages/standalone/releases/1.0/bin/codex")
+        current = fake_home / ".codex/packages/standalone/current"; os.symlink(str(real.parent.parent), current)
+        os.symlink(str(current / "bin" / "codex"), path_dir / "codex")
+        (fake_home / ".codex" / "sessions").mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home), "PATH": str(path_dir)}):
+            g = self.grants(installs=["codex"])
+        release = str(fake_home / ".codex/packages/standalone/releases/1.0")
+        self.assertIn(release, g.tool_read)
+        self.assertIn(str(current), g.tool_read)  # the link node in the middle of the path
+        self.assertIn(str(path_dir / "codex"), g.tool_read)
+        self.assertNotIn(str(fake_home / ".codex"), g.tool_read)
+        self.assertNotIn(release, g.read)  # a tool read never lifts a secret deny
+        self.assertFalse([r for r in g.rules if r[2].startswith(str(fake_home / ".codex"))])  # no write rule
+
+    def test_install_root_overlapping_a_store_or_not_a_symlink_dropped(self):
+        fake_home = self.root / "user"
+        path_dir, real = self._codex_install(fake_home, ".codex/bin/codex")  # root .codex holds sessions/
+        (fake_home / ".codex" / "sessions").mkdir()
+        os.symlink(str(real), path_dir / "codex")
+        (path_dir / "plain").write_text("#!/bin/sh\n"); (path_dir / "plain").chmod(0o755)
+        with mock.patch.dict(os.environ, {"HOME": str(fake_home), "PATH": str(path_dir)}):
+            g = self.grants(installs=["codex", "plain", "absent"])
+        self.assertFalse([p for p in g.tool_read if p.startswith(str(fake_home / ".codex"))])
+        self.assertEqual(sorted(g.tool_read), [str(fake_home / ".local/bin")])  # the toolchain dir only
+
     def test_cargo_registry_tokens_are_secrets(self):
         self.assertIn(".cargo/credentials", sandbox.SECRET_READS)
         self.assertIn(".cargo/credentials.toml", sandbox.SECRET_READS)
