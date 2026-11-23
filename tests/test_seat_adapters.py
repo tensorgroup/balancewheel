@@ -499,6 +499,13 @@ class Pi(unittest.TestCase):
         self.assertEqual(self.ad.credentials, [])
         self.assertEqual(self.ad.state_dirs, [])
 
+    def test_grants_read_the_volta_home(self):
+        # nono denies reads under the home by default. The pi shim is Volta's: without a read of
+        # ~/.volta it fails before pi starts ("Could not create directory"). Read only, never write.
+        g = self.ad.grants(self.SEAT, HOME)
+        self.assertEqual(g.read, ["~/.volta"])
+        self.assertNotIn("~/.volta", g.write)
+
     def test_code_paths_in_home_write_denied(self):  # R14
         g = self.ad.grants(self.SEAT, HOME)
         self.assertEqual(sorted(g.deny_write), sorted(f"{HOME}/{n}" for n in PI_CODE))

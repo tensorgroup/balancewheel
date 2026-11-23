@@ -446,6 +446,8 @@ Checked again on agy 1.5.15 (2026-11-23), with no model call:
   variant. The config takes only a model id for agy, so the seat adapter passes no `--effort`.
 
 **pi seat.** The seat keeps the real `HOME`, because a Volta shim finds its tools under `$HOME`.
+The seat reads `~/.volta` (read only). nono denies reads under the home by default, and without
+that grant the shim stops before pi starts ("Could not create directory").
 `PI_CODING_AGENT_DIR` moves the config dir and the session store to the seat home. The pi seat
 runs on OpenRouter only for now, so its login is `OPENROUTER_API_KEY` in the env. pi 1.6.0 has
 `--no-mcp` and `--no-skills`; the seat passes both, with `--no-extensions` and `--no-approve`.
