@@ -128,6 +128,47 @@ class Brief(unittest.TestCase):
             self.assertRaises(ValueError, brief.safe_paths, str(self.wt), [p])
         self.assertEqual(brief.safe_paths(str(self.wt), ["src/parser.py"]), ["src/parser.py"])
 
+    def test_clean_filter_in_info_attributes_not_run(self):
+        marker = self.root / "marker"
+        with open(self.wt / ".git/info/attributes", "a") as f:
+            f.write("*.py filter=evil\n")
+        for part in ("clean", "smudge", "process"):
+            git(self.wt, "config", f"filter.evil.{part}", f"touch {marker} #")
+        (self.wt / "src/parser.py").write_text("changed\n")
+        self.text()
+        self.assertFalse(marker.exists())
+
+    def test_fifo_instruction_file_does_not_hang(self):
+        (self.wt / "AGENTS.md").unlink()
+        os.mkfifo(self.wt / "AGENTS.md")
+        (self.wt / "CLAUDE.md").write_text("claude-text")
+        self.assertIn("claude-text", self.text())
+
+    def test_non_utf8_diff_builds(self):
+        (self.wt / "src/io.py").write_bytes(b"caf\xe9\n")
+        self.assertIn("## Diff", self.text())
+
+    def test_failed_git_is_not_cached(self):
+        real = brief._git_rc
+        def flaky(target, *args):
+            return (1, "", "boom") if args[0] == "diff" else real(target, *args)
+        with mock.patch.object(brief, "_git_rc", flaky):
+            path = brief.build(str(self.state), str(self.wt))
+        text = Path(path).read_text()
+        self.assertIn("(git diff failed: boom)", text)
+        self.assertNotIn("(no changes)", text.split("## Diff\n")[1].split("##")[0])
+        good = brief.build(str(self.state), str(self.wt))
+        self.assertNotEqual(good, path)
+        self.assertNotIn("git diff failed", Path(good).read_text())
+
+    def test_non_ascii_names_unquoted(self):
+        (self.wt / "caf\u00e9.txt").write_text("x")
+        self.assertIn("caf\u00e9.txt", self.text().split("## Untracked files")[1])
+
+    def test_paths_with_control_chars_or_dot_refused(self):
+        for p in ("a\nb", "a\x01b", "."):
+            self.assertRaises(ValueError, brief.safe_paths, str(self.wt), [p])
+
 
 if __name__ == "__main__":
     unittest.main()

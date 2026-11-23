@@ -75,6 +75,24 @@ class Handoff(unittest.TestCase):
         self.assertIn("checkpoint", protocol_text())
 
 
+    def test_git_does_not_run_a_clean_filter_from_info_attributes(self):
+        from lead.handoff import _git_rc
+        marker = self.root / "marker"
+        with open(self.repo / ".git/info/attributes", "a") as f:
+            f.write("* filter=evil\n")
+        for part in ("clean", "smudge", "process"):
+            git(self.repo, "config", f"filter.evil.{part}", f"touch {marker} #")
+        (self.repo / "a").write_text("changed")
+        _git_rc(str(self.repo), "diff", "HEAD"); _git_rc(str(self.repo), "status", "--porcelain")
+        self.assertFalse(marker.exists())
+
+    def test_git_output_with_non_utf8_bytes_does_not_raise(self):
+        from lead.handoff import _git_rc
+        (self.repo / "a").write_bytes(b"caf\xe9\n")
+        rc, out, _ = _git_rc(str(self.repo), "diff", "HEAD")
+        self.assertEqual(rc, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
 

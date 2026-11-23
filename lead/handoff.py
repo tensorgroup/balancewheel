@@ -20,17 +20,46 @@ SECTION_BYTES = 16 * 1024  # and bytes: the handoff can travel on argv (E2BIG mi
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # attributes read from here: no filters run
 
 
-def _git_rc(worktree, *args):
-    """(returncode, stdout, stderr), run the safe way: nothing the lead planted in the repo runs."""
+def _env():
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["GIT_OPTIONAL_LOCKS"] = "0"
     env["GIT_ATTR_SOURCE"] = EMPTY_TREE  # git >= 2.42: ignore the worktree's .gitattributes (clean/smudge filters)
+    return env
+
+
+def _filter_off(worktree, env):
+    """-c flags that blank every filter driver the repo config names.
+
+    .git/info/attributes is still read, and a worktree diff or status runs the clean filter of a
+    driver it names. Reading config runs nothing. An empty value disables the driver."""
     try:
-        r = subprocess.run(["git", "-C", worktree, *SAFE, *args], capture_output=True, text=True, env=env,
-                           timeout=GIT_TIMEOUT)
+        r = subprocess.run(["git", "-C", worktree, *SAFE, "config", "--get-regexp", r"^filter\."],
+                           capture_output=True, env=env, timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return []
+    names = set()
+    for line in r.stdout.decode("utf-8", "replace").split("\n"):
+        key = line.split(" ", 1)[0]
+        if key.startswith("filter.") and key.count(".") >= 2:
+            names.add(key[len("filter."):].rsplit(".", 1)[0])
+    flags = []
+    for n in sorted(names):
+        for part, val in (("clean", ""), ("smudge", ""), ("process", ""), ("required", "false")):
+            flags += ["-c", f"filter.{n}.{part}={val}"]
+    return flags
+
+
+def _git_rc(worktree, *args):
+    """(returncode, stdout, stderr), run the safe way: nothing the lead planted in the repo runs."""
+    env = _env()
+    try:
+        r = subprocess.run(["git", "-C", worktree, *SAFE, *_filter_off(worktree, env), *args],
+                           capture_output=True, env=env, timeout=GIT_TIMEOUT)
     except subprocess.TimeoutExpired:
         return 124, "", f"git {args[0]} timed out after {GIT_TIMEOUT}s"
-    return r.returncode, r.stdout.strip(), r.stderr.strip()
+    # not text=True: a non-UTF-8 diff must not raise
+    return (r.returncode, r.stdout.decode("utf-8", "replace").strip(),
+            r.stderr.decode("utf-8", "replace").strip())
 
 
 def _git(worktree, *args):

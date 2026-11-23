@@ -23,6 +23,12 @@ not against the prose.
   (`state_dir/seats/caps/`).
 - **The seat brief** (`seats/brief.py`), cached in `state_dir/seats/briefs/`.
 
+### Fixed
+
+- **bw's git calls blank every filter driver the repo config names** (`lead/handoff.py`). A clean filter
+  named in `.git/info/attributes` used to run on a worktree diff. Git output with non-UTF-8 bytes no
+  longer raises.
+
 ### Changed
 
 - **`usage` rows with `ran: false` are not counted as calls.** The seat rows, the dashboard totals,
