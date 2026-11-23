@@ -234,6 +234,7 @@ class _Run:
             home = safe_home(self.state, self.seat)
             _link_credentials(home, self.adapter.credentials())
             adapters.make_code_dirs(self.runtime, home)  # again: an attack run skips the seat key
+            adapters.scrub_dirs(self.runtime, home)  # nothing a run left to run as code persists
         except (Tampered, OSError) as e:
             return self.refuse(f"sandbox: seat home tampered: {safe(e)}", wt)
         try:
@@ -440,6 +441,7 @@ def exec_sandboxed(config, state, seat, target, argv, run=proc.run, input_text=N
         home = safe_home(state, seat)
         _link_credentials(home, adapter.credentials())
         adapters.make_code_dirs(runtime, home)
+        adapters.scrub_dirs(runtime, home)
         scratch = tempfile.mkdtemp(prefix=f"{seat}-", dir=grants.seat_scratch_root())
     except (Tampered, OSError, ValueError) as e:
         return proc.Result(REFUSED, "", f"sandbox: {safe(e)}", False)

@@ -409,6 +409,33 @@ class SeatRun(unittest.TestCase):
         self.assertEqual(self.fake.stdin, "reply ok")
         self.assertNotIn("--safe-mode", self.fake.argv)
 
+    def test_agy_bin_removed_before_each_run(self):
+        # The seat may write gemini/antigravity-cli/bin (agy rewrites agentapi there): nothing it
+        # leaves there may run in its next run.
+        home = os.path.join(self.state, "seats", "homes", "gem")
+        bin_dir = os.path.join(home, "gemini", "antigravity-cli", "bin")
+        os.makedirs(os.path.join(bin_dir, "sub"))
+        Path(bin_dir, "agentapi").write_text("#!/bin/sh\necho planted\n")
+        outside = os.path.join(self.tmp.name, "outside"); os.makedirs(outside)
+        Path(outside, "keep").write_text("x")
+        os.symlink(outside, os.path.join(bin_dir, "sub", "link"))
+        self.assertTrue(self.seat("gem").ok)
+        self.assertFalse(os.path.lexists(bin_dir))
+        self.assertTrue(Path(outside, "keep").exists())  # a link inside is unlinked, never followed
+        verify.issue_token(self.state, "gem", time.time(), 600)
+        os.makedirs(bin_dir); Path(bin_dir, "agentapi").write_text("x")
+        run.exec_sandboxed(self.config, self.state, "gem", self.wt, ["agy", "--version"], run=self.fake)
+        self.assertFalse(os.path.lexists(bin_dir))
+
+    def test_agy_bin_scrub_refuses_a_linked_parent(self):
+        from seats import adapters as ad
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as elsewhere:
+            os.makedirs(os.path.join(elsewhere, "antigravity-cli", "bin"))
+            os.symlink(elsewhere, os.path.join(d, "gemini"))
+            with self.assertRaises(OSError):
+                ad.scrub_dirs("agy", d)
+            self.assertTrue(os.path.isdir(os.path.join(elsewhere, "antigravity-cli", "bin")))
+
     def test_agy_runs_on_its_own_gemini_dir(self):
         # --gemini_dir moves agy's config and state into the seat home; the keychain login still loads.
         self.assertTrue(self.seat("gem").ok)

@@ -14,6 +14,7 @@ import json
 import math
 import os
 import re
+import stat
 from collections import namedtuple
 from typing import Optional
 
@@ -142,6 +143,51 @@ def make_code_dirs(runtime, seat_home):
                 nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
                 os.close(fd)
                 fd = nxt
+        finally:
+            os.close(fd)
+
+
+# Dirs the seat may write that run as code in its next run, per runtime, relative to the seat home.
+# bw removes each one before every run, so nothing a run leaves there persists. agy rewrites
+# `bin/agentapi` before each shell command, so `bin` cannot be read-only.
+SCRUB_DIRS = {"agy": ["gemini/antigravity-cli/bin"]}
+
+
+def _remove_at(dir_fd, name):
+    """Remove `name` under the open dir `dir_fd`, recursively, never through a symlink: a link is
+    unlinked, not followed."""
+    st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    if not stat.S_ISDIR(st.st_mode):
+        os.unlink(name, dir_fd=dir_fd)
+        return
+    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    try:
+        for entry in list(os.scandir(fd)):
+            _remove_at(fd, entry.name)
+    finally:
+        os.close(fd)
+    os.rmdir(name, dir_fd=dir_fd)
+
+
+def scrub_dirs(runtime, seat_home):
+    """Remove each SCRUB_DIRS entry under `seat_home` before a run. Each parent is opened with
+    O_NOFOLLOW: a component that is a symlink raises OSError (the seat home was tampered with)."""
+    for rel in SCRUB_DIRS.get(runtime, []):
+        parts = rel.split("/")
+        fd = os.open(seat_home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            for part in parts[:-1]:
+                try:
+                    nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                except FileNotFoundError:
+                    break
+                os.close(fd)
+                fd = nxt
+            else:
+                try:
+                    _remove_at(fd, parts[-1])
+                except FileNotFoundError:
+                    pass
         finally:
             os.close(fd)
 

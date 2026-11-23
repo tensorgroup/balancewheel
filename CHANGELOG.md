@@ -69,7 +69,8 @@ not against the prose.
   `AGENTS.override.md` and the pi code names gain `APPEND_SYSTEM.md` (`lead/codepaths.py`: pi and Kimi
   leads re-verify).
 - **The agy seat writes nothing under the real `~/.gemini`.** It runs on `<seat home>/gemini`
-  (`--gemini_dir`), so it can run shell commands (agy rewrites `bin/agentapi` there), it reads no agy lead
+  (`--gemini_dir`), so it can run shell commands (agy rewrites `bin/agentapi` there; bw removes that
+  `bin` before every agy run, through O_NOFOLLOW dir fds, so nothing persists into the next run), it reads no agy lead
   conversation, and an agy lead session no longer changes the agy seat key.
 - **bw's git calls blank every filter driver the repo config names** (`lead/handoff.py`). A clean filter
   named in `.git/info/attributes` used to run on a worktree diff. The blanks go through

@@ -505,8 +505,9 @@ the keychain item, and the sandbox stops that too. The code names that stay read
 `antigravity-cli/`, `settings.json`, `GEMINI.md`, `extensions`, `updater`, and the memory dirs
 `knowledge`, `implicit`, and `annotations`. agy logs a failed write of `mcp_config.json` and of
 `implicit/` and goes on. `bin`, `builtin`, and `brain` are writable: agy rewrites `bin/agentapi`
-before each `run_command`, so a read-only `bin` stops every shell command. A file there runs only in
-the seat's own next run, under the same sandbox. agy's SQLite resolves the real path of its dir, and
+before each `run_command`, so a read-only `bin` stops every shell command. bw removes that `bin`
+before every agy run (`adapters.SCRUB_DIRS`, never through a link), so nothing a run leaves there
+persists into the next run. agy's SQLite resolves the real path of its dir, and
 that needs a metadata read of each dir from bw's state dir down to the seat home. So every seat
 profile allows `file-read-metadata` (not a listing) on those nodes, and on the seat scratch root.
 The live seat attack then passed on the agy seat, fresh and resumed: its shell commands ran, and
