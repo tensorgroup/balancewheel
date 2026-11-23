@@ -1,0 +1,2 @@
+PROBE:w1
+/bin/sh: w1: Operation not permitted

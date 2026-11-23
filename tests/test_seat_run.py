@@ -1,4 +1,4 @@
-import json, os, stat, subprocess, sys, tempfile, time, unittest
+import io, json, os, stat, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -382,6 +382,62 @@ class SeatRun(unittest.TestCase):
         verify.issue_token(self.state, "astra", time.time(), 600)
         self.assertEqual(self.seat().reason, "unverified")  # the token counts only with attack=True
         self.assertTrue(self.seat(attack=True).ok)
+
+    def test_exec_sandboxed_needs_token(self):
+        self.fake.queue("/bin/echo", Result(0, "hi\n", "", False))
+        r = run.exec_sandboxed(self.config, self.state, "astra", self.wt, ["/bin/echo", "hi"], run=self.fake)
+        self.assertEqual((r.rc, r.out, r.err), (75, "", "no attack token"))
+        self.assertIsNone(self.fake.argv)
+        verify.issue_token(self.state, "astra", time.time(), 600)
+        r = run.exec_sandboxed(self.config, self.state, "astra", self.wt, ["/bin/echo", "hi"], run=self.fake)
+        self.assertEqual((r.rc, r.out), (0, "hi\n"))
+        self.assertEqual(self.fake.argv[0], sandbox.backend())  # wrapped by the seat's sandbox
+        self.assertEqual(self.fake.argv[-2:], ["/bin/echo", "hi"])
+        self.assertEqual(self.fake.cwd, self.wt)
+        self.assertEqual(self.fake.env["CODEX_HOME"], os.path.join(self.state, "seats", "homes", "astra"))
+        self.assertEqual(self.fake.out_dir, self.fake.env["TMPDIR"])
+        self.assertEqual(self.fake.stdin, "")
+        self.assertEqual(self.scratch_dirs(), set())  # the scratch dir is removed
+        self.assertEqual(self.usage(), [])  # a plain process is not a seat run: no usage row
+
+    def test_exec_control_argv_drops_ignore_flags(self):
+        verify.issue_token(self.state, "opus", time.time(), 600)
+        argv = run.control_argv(self.config["seats"]["opus"])
+        for flag in adapters.CLAUDE_IGNORE:
+            self.assertNotIn(flag, argv)
+        self.assertEqual(argv[:2], ["claude", "-p"])
+        self.assertEqual(run.control_argv(self.config["seats"]["astra"]),
+                         adapters.CODEX.argv(self.config["seats"]["astra"], run.INPUT_PLACEHOLDER, False))
+        self.fake.queue("claude", Result(0, "ok\n", "", False))
+        r = run.exec_sandboxed(self.config, self.state, "opus", self.wt, argv, run=self.fake, input_text="reply ok")
+        self.assertEqual(r.rc, 0)
+        self.assertEqual(self.fake.stdin, "reply ok")
+        self.assertNotIn("--safe-mode", self.fake.argv)
+
+    def test_exec_input_path_replaces_placeholder(self):
+        verify.issue_token(self.state, "gem", time.time(), 600)
+        argv = run.control_argv(self.config["seats"]["gem"])  # agy: the input comes by a file instruction
+        self.fake.queue("agy", Result(0, "ok\n", "", False))
+        run.exec_sandboxed(self.config, self.state, "gem", self.wt, argv, run=self.fake, input_text="reply ok")
+        text = " ".join(self.fake.argv)
+        self.assertNotIn(run.INPUT_PLACEHOLDER, text)
+        self.assertIn(os.path.join(self.fake.env["TMPDIR"], "input.md"), text)
+
+    def test_exec_entry(self):
+        verify.issue_token(self.state, "astra", time.time(), 600)
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(run, "exec_sandboxed", return_value=Result(3, "o\n", "e\n", False)) as m, \
+                mock.patch.object(run, "load_config", return_value=self.config):
+            code = run.main(["exec", "--seat", "astra", "-d", self.wt, "--", "/bin/sh", "-c", "echo x"], out=out, err=err)
+        self.assertEqual((code, out.getvalue(), err.getvalue()), (3, "o\n", "e\n"))
+        self.assertEqual(m.call_args.args[2:5], ("astra", self.wt, ["/bin/sh", "-c", "echo x"]))
+        self.assertEqual(m.call_args.args[1], self.state)
+        with mock.patch.object(run, "exec_sandboxed", return_value=Result(0, "", "", False)) as m, \
+                mock.patch.object(run, "load_config", return_value=self.config):
+            run.main(["exec", "--seat", "opus", "-d", self.wt, "--control", "reply ok"], out=out, err=err)
+        self.assertEqual(m.call_args.args[4], run.control_argv(self.config["seats"]["opus"]))
+        self.assertEqual(m.call_args.kwargs["input_text"], "reply ok")
+        self.assertEqual(run.main(["exec", "--seat", "astra", "-d", self.wt], out=out, err=err), 2)  # no argv
 
     def test_disabled_unknown(self):
         self.config["seats"]["astra"]["enabled"] = False

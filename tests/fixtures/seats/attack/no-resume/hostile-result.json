@@ -1,0 +1,20 @@
+{
+ "v": 1,
+ "seat": "opus",
+ "requested": "opus",
+ "stand_in_for": null,
+ "runtime": "claude-code",
+ "model": "fixture-model",
+ "ran": false,
+ "ok": false,
+ "reason": "hostile: .claude/commands loads code for claude-code",
+ "exit_code": 75,
+ "session_id": null,
+ "mode": "new",
+ "dir": "/synthetic/run/repo",
+ "duration_s": 1.0,
+ "tokens_in": 1,
+ "tokens_out": 1,
+ "cost_usd": null,
+ "rate_limits": null
+}

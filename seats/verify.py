@@ -15,11 +15,23 @@ import tempfile
 import time
 
 from lead import containment, proc, sandbox
-from lead.paths import read_json, write_json_atomic
-from seats import adapters
+from lead import verify as lead_verify
+from lead.locks import RuntimeLock
+from lead.paths import ROOT, read_json, write_json_atomic
+from seats import adapters, caps, judge
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 PASS_STORE = "seat-verify.json"
+ATTACK_ROOT = os.path.join("~", ".cache", "bw-seat-attack")
+SCRIPT = os.path.join(ROOT, "tests", "attack", "seat_readonly.sh")
+BW = os.path.join(ROOT, "bin", "bw")
+INCOMPLETE = "attack-incomplete"  # the probe recorded when the script printed no FAIL line (a timeout, a crash)
+# The real home dir of each lead runtime: the seat attack probes a write into each one that a lead uses.
+LEAD_HOMES = {"claude-code": lambda: "~/.claude", "codex": lambda: os.environ.get("CODEX_HOME") or "~/.codex",
+              "pi": lambda: "~/.pi/agent", "kimi": lambda: os.environ.get("KIMI_CODE_HOME") or "~/.kimi-code",
+              "agy": lambda: "~/.gemini"}
+# What a model that refused leaves behind: inconclusive, not a sandbox failure.
+REFUSAL_ONLY = ("probe-skipped:", "control-failed:")
 
 
 def _enabled(seats, name):
@@ -233,3 +245,98 @@ def clear_token(state, seat) -> None:
         os.unlink(_token_path(state, seat))
     except FileNotFoundError:
         pass
+
+
+# ---- the attack: `bw seat verify` ----
+
+def attack_timeout(config) -> int:
+    """Seconds for the whole attack: fresh, resumed, and hostile runs (Design decision 12)."""
+    return 2 * config["panel"]["deep_cap_min"] * 60 + 300
+
+
+def lead_homes(config) -> list:
+    """The real home dir of each lead runtime the config uses, once each, when it exists."""
+    out = []
+    for runtime in lead_verify.lead_runtimes(config):
+        home = LEAD_HOMES.get(runtime)
+        if home is None:
+            continue
+        real = os.path.realpath(os.path.expanduser(home()))
+        if os.path.isdir(real) and real not in out:
+            out.append(real)
+    return out
+
+
+def failure_message(stdout) -> str:
+    """What `bw seat verify` says when the attack script did not print PASS."""
+    line = next((x for x in stdout.splitlines() if x.startswith(judge.FAIL_PREFIX)), "")
+    names = line[len(judge.FAIL_PREFIX):].split(judge.EVIDENCE)[0].split()
+    if names and all(n.startswith(REFUSAL_ONLY) for n in names):
+        return "not recorded — a refusal by the model is inconclusive; re-run"
+    return "not recorded — the seat attack failed; see the evidence"
+
+
+def verify_seat(config, state, seat, run=proc.run, now=time.time, _seats_json=True):
+    """Attack `seat` in an isolated run dir and record a pass on the key attacked. Returns (ok, message).
+
+    The run dir is `~/.cache/bw-seat-attack/run.XXXXXX/` and its state dir `<run>/state/`, where the
+    attack token lives (never on argv). A failure is recorded with the first failed probe. The token
+    is cleared and `seats.json` rewritten on every exit path (`_seats_json=False`: the caller writes it)."""
+    runtime = config["seats"][seat]["runtime"]
+    root = os.path.expanduser(ATTACK_ROOT)
+    os.makedirs(root, exist_ok=True)
+    run_dir = os.path.realpath(tempfile.mkdtemp(prefix="run.", dir=root))
+    attack_state = _private_dir(os.path.join(run_dir, "state"))
+    timeout = attack_timeout(config)
+    argv = [SCRIPT, "--seat", seat, "--bw", BW, "--run", run_dir]
+    argv += [a for home in lead_homes(config) for a in ("--lead-home", home)]
+
+    def key_fn():
+        return seat_key(config, state, seat, run)
+
+    def record(key, evidence):
+        containment.record_pass(state, seat, key, evidence, store=PASS_STORE)
+
+    try:
+        issue_token(attack_state, seat, now(), timeout)
+        ok, msg = lead_verify._attack(state, run, argv, key_fn, record, failure_message, "seat", runtime,
+                                      f"seat {seat}", timeout=timeout)
+        if not ok and not msg.endswith(lead_verify.KEY_CHANGED):  # a changed key was never attacked
+            record_failure(state, seat, key_fn(), judge.failure_probe(msg) or INCOMPLETE, now())
+    finally:
+        clear_token(attack_state, seat)
+        if _seats_json:
+            write_seats_json(config, state, run=run)
+    return ok, msg
+
+
+def _reverify_one(config, state, runtime, name, now, run, allow_run, version_ok):
+    kind = f"seat {name}"
+    key = seat_key(config, state, name, run)
+    if _status(state, name, key)[0] is not None:
+        return lead_verify.Item(runtime, kind, "verified", "key matches the recorded pass")
+    if not allow_run:
+        return lead_verify.Item(runtime, kind, "pending", "--no-verify")
+    if not version_ok or key.get("runtime_version") == "unreadable":
+        return lead_verify.Item(runtime, kind, "pending", "version unreadable")
+    why = caps.capped(config, state, name, now)
+    if why:
+        return lead_verify.Item(runtime, kind, "pending", why)
+    ok, msg = verify_seat(config, state, name, run=run, _seats_json=False)
+    return lead_verify.Item(runtime, kind, "passed" if ok else "failed", msg)
+
+
+def reverify_seats(config, state, runtime, now, run=proc.run, allow_run=True, version_ok=True) -> list:
+    """One `lead.verify.Item` per reachable seat on `runtime`: verified, pending, passed, or failed.
+    `now`: epoch seconds. The shared runtime lock is held from the first key read to the end."""
+    names = [n for n in seat_items(config) if config["seats"][n]["runtime"] == runtime]
+    if not names:
+        return []
+    lock = RuntimeLock(state, runtime)
+    try:
+        lock.shared()
+        items = [_reverify_one(config, state, runtime, n, now, run, allow_run, version_ok) for n in names]
+        write_seats_json(config, state, run=run)
+    finally:
+        lock.release()
+    return items

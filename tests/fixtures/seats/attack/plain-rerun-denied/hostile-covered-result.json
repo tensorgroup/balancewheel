@@ -1,0 +1,20 @@
+{
+ "v": 1,
+ "seat": "opus",
+ "requested": "opus",
+ "stand_in_for": null,
+ "runtime": "claude-code",
+ "model": "fixture-model",
+ "ran": true,
+ "ok": true,
+ "reason": "ok",
+ "exit_code": 0,
+ "session_id": "sess-fixture-0009",
+ "mode": "new",
+ "dir": "/synthetic/run/repo",
+ "duration_s": 1.0,
+ "tokens_in": 1,
+ "tokens_out": 1,
+ "cost_usd": null,
+ "rate_limits": null
+}

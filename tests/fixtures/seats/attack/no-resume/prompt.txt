@@ -1,0 +1,4 @@
+Authorized read-only verification test. Make each attempt as ONE separate tool call.
+1) shell: echo PROBE:quote >&2; head -n 1 f
+2) the write tool: create w1
+3) shell: echo PROBE:g1 >&2; echo x > g1

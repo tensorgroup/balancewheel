@@ -238,5 +238,143 @@ class SeatVerify(unittest.TestCase):
         self.assertEqual(sorted(data), ["astra", "gem"])
 
 
+class AttackRun:
+    """`<cli> --version` answers with the current version; the attack script returns `out`.
+    `after` is the version from the script call on (a tool that updated during the attack)."""
+
+    def __init__(self, out, rc=0, version="codex-cli 9.9", after=None):
+        self.out, self.rc, self.version, self.after = out, rc, version, after
+        self.argv = self.timeout = self.token_seen = None
+        self.calls = 0
+
+    def __call__(self, argv, timeout, **kw):
+        if len(argv) == 2 and argv[1] == "--version":
+            return Result(0, self.version + "\n", "", False)
+        self.calls += 1
+        self.argv, self.timeout = argv, timeout
+        run_dir = argv[argv.index("--run") + 1]
+        self.token_seen = verify.check_token(os.path.join(run_dir, "state"), argv[argv.index("--seat") + 1],
+                                             time.time())
+        if self.after:
+            self.version = self.after
+        return Result(self.rc, self.out, "", False)
+
+
+class SeatAttack(unittest.TestCase):
+    setUp = SeatVerify.setUp
+    tearDown = SeatVerify.tearDown
+
+    def test_verify_records_on_pass(self):
+        fake = AttackRun("PASS — evidence in /ev\n")
+        ok, msg = verify.verify_seat(self.config, self.state, "astra", run=fake)
+        self.assertTrue(ok, msg)
+        self.assertIn("bw: recorded a seat pass", msg)
+        self.assertTrue(fake.token_seen)  # the script ran with a live token in the isolated state
+        self.assertTrue(verify.is_verified(self.config, self.state, "astra", run=fake))
+        run_dir = fake.argv[fake.argv.index("--run") + 1]
+        root = os.path.realpath(os.path.join(os.environ["HOME"], ".cache", "bw-seat-attack"))
+        self.assertTrue(run_dir.startswith(os.path.join(root, "run.")), run_dir)
+        self.assertFalse(os.path.exists(os.path.join(run_dir, "state", "seats", "attack-tokens", "astra.json")))
+        self.assertFalse(os.path.exists(os.path.join(self.state, "seats", "attack-tokens", "astra.json")))
+        self.assertEqual(fake.argv[0], os.path.join(verify.ROOT, "tests", "attack", "seat_readonly.sh"))
+        self.assertEqual(fake.argv[fake.argv.index("--bw") + 1], os.path.join(verify.ROOT, "bin", "bw"))
+        self.assertFalse(any("token" in a for a in fake.argv))  # R23
+        self.assertTrue(json.loads(Path(self.state, "seats.json").read_text())["astra"]["verified"])
+
+    def test_lead_homes_on_argv(self):
+        home = os.environ["HOME"]
+        for d in (".claude", ".codex"):
+            os.makedirs(os.path.join(home, d))
+        fake = AttackRun("PASS — evidence in /ev\n")
+        verify.verify_seat(self.config, self.state, "astra", run=fake)
+        homes = [fake.argv[i + 1] for i, a in enumerate(fake.argv) if a == "--lead-home"]
+        self.assertEqual(homes, [os.path.realpath(os.path.join(home, d)) for d in (".claude", ".codex")])
+
+    def test_key_change_during_attack_not_recorded(self):
+        fake = AttackRun("PASS — evidence in /ev\n", after="codex-cli 10.0")
+        ok, msg = verify.verify_seat(self.config, self.state, "astra", run=fake)
+        self.assertFalse(ok)
+        self.assertIn("key changed", msg)
+        self.assertFalse(verify.is_verified(self.config, self.state, "astra", run=fake))
+
+    def test_failure_recorded(self):
+        fake = AttackRun("FAIL: probe-skipped:fresh:g1 — evidence in /ev\n", rc=1)
+        ok, msg = verify.verify_seat(self.config, self.state, "astra", run=fake, now=lambda: 50.0)
+        self.assertFalse(ok)
+        self.assertIn("bw: not recorded", msg)
+        out = json.loads(Path(self.state, "seats.json").read_text())
+        self.assertEqual((out["astra"]["verified"], out["astra"]["failed_probe"]), (False, "probe-skipped:fresh:g1"))
+        run_dir = fake.argv[fake.argv.index("--run") + 1]
+        self.assertFalse(os.path.exists(os.path.join(run_dir, "state", "seats", "attack-tokens", "astra.json")))
+
+    def test_timeout_passed(self):
+        fake = AttackRun("PASS — evidence in /ev\n")
+        verify.verify_seat(self.config, self.state, "astra", run=fake)
+        self.assertEqual(fake.timeout, 2 * 30 * 60 + 300)
+
+    def test_token_cleared_when_attack_raises(self):
+        def boom(argv, timeout, **kw):
+            if len(argv) == 2:
+                return Result(0, "codex-cli 9.9\n", "", False)
+            boom.run_dir = argv[argv.index("--run") + 1]
+            raise OSError("cannot start")
+        with self.assertRaises(OSError):
+            verify.verify_seat(self.config, self.state, "astra", run=boom)
+        self.assertFalse(os.path.exists(os.path.join(boom.run_dir, "state", "seats", "attack-tokens", "astra.json")))
+
+    def test_reverify_states(self):
+        fake = AttackRun("PASS — evidence in /ev\n")
+        now = time.time()
+
+        def states(**kw):
+            items = verify.reverify_seats(self.config, self.state, "codex", now, run=fake, **kw)
+            self.assertEqual([i.kind for i in items], ["seat astra"])
+            return items[0].state, items[0].reason
+
+        self.assertEqual(states(allow_run=False), ("pending", "--no-verify"))
+        self.assertEqual(states(version_ok=False), ("pending", "version unreadable"))
+        from lead import quota
+        quota.record_cap(self.state, "chatgpt-plan", now, resets_at=now + 3600)
+        state, reason = states()
+        self.assertEqual(state, "pending")
+        self.assertTrue(reason.startswith("plan chatgpt-plan capped until "), reason)
+        os.remove(os.path.join(self.state, "caps", "chatgpt-plan.json"))
+        self.assertEqual(fake.calls, 0)
+        self.assertEqual(states()[0], "passed")
+        self.assertEqual(states(), ("verified", "key matches the recorded pass"))
+        self.assertEqual(fake.calls, 1)
+        self.assertEqual(verify.reverify_seats(self.config, self.state, "kimi", now, run=fake), [])  # kimi disabled
+
+    def test_reverify_version_unreadable_from_key(self):
+        def no_cli(argv, timeout, **kw):
+            return Result(127, "", "not found", False)
+        items = verify.reverify_seats(self.config, self.state, "codex", time.time(), run=no_cli)
+        self.assertEqual([(i.state, i.reason) for i in items], [("pending", "version unreadable")])
+
+    def test_reverify_writes_seats_json_once(self):
+        fake = AttackRun("PASS — evidence in /ev\n")
+        self.config["seats"]["astra2"]["tier"] = "reserved"  # a second codex seat in seat_items
+        with mock.patch("seats.verify.write_seats_json", wraps=verify.write_seats_json) as w:
+            items = verify.reverify_seats(self.config, self.state, "codex", time.time(), run=fake)
+        self.assertEqual([i.state for i in items], ["passed", "passed"])
+        self.assertEqual(w.call_count, 1)
+
+    def test_reverify_holds_runtime_lock(self):
+        from lead.locks import RuntimeLock
+        seen = []
+
+        def script(argv, timeout, **kw):
+            if len(argv) == 2:
+                return Result(0, "codex-cli 9.9\n", "", False)
+            lock = RuntimeLock(self.state, "codex")
+            try:
+                seen.append(lock.try_exclusive())
+            finally:
+                lock.release()
+            return Result(0, "PASS — evidence in /ev\n", "", False)
+        verify.reverify_seats(self.config, self.state, "codex", time.time(), run=script)
+        self.assertEqual(seen, [False])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -250,9 +250,39 @@ class Cli(unittest.TestCase):
             with mock.patch.object(gen, "OUT", out), mock.patch.object(gen, "rel", str), mock.patch("sys.stdout", io.StringIO()):
                 gen.main()
             data = out.read_text()
-        for cid in ("cmd:seat", "cmd:seat.list"):
+        for cid in ("cmd:seat", "cmd:seat.list", "cmd:seat.verify"):
             self.assertIn(f'"{cid}"', data)
-        # Task 13 adds "cmd:seat.verify" to this test when it adds the docstring line.
+
+    def test_cli_verify_all(self):
+        from seats import verify
+        results = {"astra": (True, "out\nbw: recorded a seat pass for codex on seat astra"),
+                   "opus": (False, "FAIL: x — evidence in /e\nbw: not recorded — the seat attack failed")}
+        called = []
+
+        def fake_verify(config, state, seat, run=None):
+            called.append(seat)
+            return results.get(seat, (True, "bw: recorded"))
+
+        with mock.patch.object(verify, "verify_seat", side_effect=fake_verify):
+            code, out, err = self.main(["verify"], run=self.fake)
+            self.assertEqual(called, verify.seat_items(self.config))
+            self.assertEqual(code, 1)
+            self.assertIn("bw: recorded a seat pass for codex on seat astra", out)
+            self.assertIn("bw: not recorded — the seat attack failed", out)
+            called.clear()
+            self.assertEqual(self.main(["verify", "--all"], run=self.fake)[0], 1)
+            self.assertEqual(called, verify.seat_items(self.config))
+            called.clear()
+            self.assertEqual(self.main(["verify", "astra"], run=self.fake)[0], 0)
+            self.assertEqual(called, ["astra"])
+            code, _, err = self.main(["verify", "nope"], run=self.fake)
+            self.assertEqual(code, 2)
+            self.assertIn("unknown seat 'nope'", err)
+            self.assertEqual(self.main(["verify", "astra", "--all"], run=self.fake)[0], 2)
+
+    def test_bw_doc_lists_verify(self):
+        bw = load_module("bw_seat_cli_verify", ROOT / "bin" / "bw")
+        self.assertIn("  bw seat verify [<id>...] [--all]", bw.__doc__)
 
 
 if __name__ == "__main__":

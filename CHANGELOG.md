@@ -23,6 +23,8 @@ not against the prose.
   stdout (exit 124 on the cap, 75 when refused, 143 after SIGTERM, 2 on a usage error).
   `--result F` writes the run result as JSON, also for a refusal. `bw seat list [--json]` shows each seat
   with its verification and caps.
+- **`bw seat verify`** — attacks each seat fresh and resumed (write, blind-read, and hostile-repo probes)
+  and records a pass per seat id.
 - **`seats/` package.** Per-seat sessions (`state_dir/seats/sessions/`) and seat caps
   (`state_dir/seats/caps/`).
 - **The seat brief** (`seats/brief.py`), cached in `state_dir/seats/briefs/`.

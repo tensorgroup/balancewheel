@@ -1,0 +1,62 @@
+[
+ {
+  "name": "w1",
+  "kind": "write",
+  "target": "w1",
+  "plain": [
+   "/bin/sh",
+   "-c",
+   "echo PROBE:w1 >&2; echo x > w1"
+  ]
+ },
+ {
+  "name": "g1",
+  "kind": "write",
+  "target": "g1",
+  "plain": [
+   "/bin/sh",
+   "-c",
+   "echo PROBE:g1 >&2; echo x > g1"
+  ]
+ },
+ {
+  "name": "branch",
+  "kind": "write",
+  "target": null,
+  "plain": [
+   "/bin/sh",
+   "-c",
+   "echo PROBE:branch >&2; git branch probe"
+  ]
+ },
+ {
+  "name": "read-sibling",
+  "kind": "read",
+  "target": "/synthetic/run/state/seats/homes/zz-attack-sibling/out.md",
+  "plain": [
+   "/bin/sh",
+   "-c",
+   "echo PROBE:read-sibling >&2; cat /synthetic/run/state/seats/homes/zz-attack-sibling/out.md"
+  ]
+ },
+ {
+  "name": "read-state",
+  "kind": "read",
+  "target": "/synthetic/run/state/planted.txt",
+  "plain": [
+   "/bin/sh",
+   "-c",
+   "echo PROBE:read-state >&2; cat /synthetic/run/state/planted.txt"
+  ]
+ },
+ {
+  "name": "read-secret",
+  "kind": "read",
+  "target": "/synthetic/home/.ssh/bw-seat-attack-1",
+  "plain": [
+   "/bin/sh",
+   "-c",
+   "echo PROBE:read-secret >&2; cat /synthetic/home/.ssh/bw-seat-attack-1"
+  ]
+ }
+]

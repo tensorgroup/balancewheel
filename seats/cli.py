@@ -1,4 +1,5 @@
-"""`bw seat <id>` and `bw seat list`: the command line over `seats.run.run_seat`.
+"""`bw seat <id>`, `bw seat list`, and `bw seat verify`: the command line over `seats.run.run_seat` and
+`seats.verify.verify_seat`.
 
 stdout holds the answer text only. stderr holds `bw seat:` lines. Exit statuses: the CLI's own status,
 124 on the wall-clock cap, 75 when bw refuses or cannot start the seat, 143 after SIGTERM, 2 on a usage
@@ -82,6 +83,32 @@ def _list(argv, config, state, run, out, err):
     return 0
 
 
+def _verify(argv, config, state, run, out, err):
+    """Attack each named seat (default: every reachable seat) and print its result. Exit 0 when every
+    seat passed, else 1; 2 on a usage error or an unknown seat id."""
+    p = _Parser(prog="bw seat verify", allow_abbrev=False)
+    p.add_argument("ids", nargs="*", metavar="id")
+    p.add_argument("--all", action="store_true")
+    try:
+        a = p.parse_args(argv)
+    except _Usage as e:
+        _line(err, f"usage error: {e}")
+        return USAGE_ERROR
+    if a.ids and a.all:
+        _line(err, "usage error: give seat ids or --all, not both")
+        return USAGE_ERROR
+    unknown = [n for n in a.ids if n not in config["seats"]]
+    if unknown:
+        _line(err, f"unknown seat {unknown[0]!r}; configured: {', '.join(config['seats'])}")
+        return USAGE_ERROR
+    passed = True
+    for name in a.ids or verify.seat_items(config):
+        ok, msg = verify.verify_seat(config, state, name, run=run)
+        print(msg, file=out)
+        passed = passed and ok
+    return 0 if passed else 1
+
+
 def _on_sigterm(signum, frame):
     raise SystemExit(seat_run.INTERRUPTED)
 
@@ -100,6 +127,8 @@ def main(argv, config, state, run=proc.run, out=sys.stdout, err=sys.stderr) -> i
     argv = list(argv)
     if argv and argv[0] == "list":
         return _list(argv[1:], config, state, run, out, err)
+    if argv and argv[0] == "verify":
+        return _verify(argv[1:], config, state, run, out, err)
     try:
         a = _parser().parse_args(argv)
     except _Usage as e:

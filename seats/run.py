@@ -5,6 +5,7 @@
 `ran: true` row. Exit statuses: the CLI's own status, 124 on the wall-clock cap, 75 when bw refuses
 or cannot start the seat.
 """
+import argparse
 import os
 import shutil
 import stat
@@ -16,6 +17,7 @@ from collections import namedtuple
 from lead import locks, proc, sandbox
 from lead.guard.redact import redact
 from lead.guard.review import safe
+from lead.paths import load_config, state_dir
 from lead.projects import resolve_project
 from metrics import store
 from seats import adapters, caps, sessions, verify
@@ -125,6 +127,26 @@ def _input_text(prompt, brief_text):
     if brief_text is None:
         return prompt
     return f"{brief_text.rstrip()}\n\n{READING_RULE}\n\n{TASK_HEADING}\n\n{prompt}"
+
+
+def _contained(config, state, seat, project, home, scratch, argv):
+    """Step 7: the seat's grants, env, and sandbox wrap for `argv`. Returns (full argv, cleanup, env).
+    Raises ValueError when a grant is refused. `run_seat` and `exec_sandboxed` share it, so a plain
+    attack probe runs under exactly the seat's own containment."""
+    s = config["seats"][seat]
+    adapter = adapters.SEAT_ADAPTERS[s["runtime"]]
+    rg = adapter.grants(s, home)
+    backend = "sandbox-exec" if adapter.backend == "sandbox-exec" else sandbox.backend()
+    home_dir = home if rg.private_home else os.path.expanduser("~")
+    env = sandbox.seat_env(os.environ, keep=adapter.env_keys)
+    env.update({"TMPDIR": scratch, "NODE_COMPILE_CACHE": scratch})
+    env.update(adapter.home_env(home))
+    grants = sandbox.seat_grants(project, home, rg, state, scratch,
+                                 credentials=[p for p, _, refreshes in adapter.credentials if refreshes],
+                                 state_dirs=adapter.state_dirs)
+    full, cleanup = sandbox.wrap(argv, grants, backend, home_dir, scratch, {}, sandbox.denied_ports(config),
+                                 allow_cwd=False)
+    return full, cleanup, env
 
 
 class _Run:
@@ -250,18 +272,8 @@ class _Run:
             name = safe(os.path.relpath(hostile[0], wt))
             return self.refuse(f"hostile: {name} loads code for {self.runtime}", wt)
 
-        rg =self.adapter.grants(self.s, home)
-        backend = "sandbox-exec" if self.adapter.backend == "sandbox-exec" else sandbox.backend()
-        home_dir = home if rg.private_home else os.path.expanduser("~")
-        env = sandbox.seat_env(os.environ, keep=self.adapter.env_keys)
-        env.update({"TMPDIR": scratch, "NODE_COMPILE_CACHE": scratch})
-        env.update(self.adapter.home_env(home))
         try:
-            grants = sandbox.seat_grants(project, home, rg, self.state, scratch,
-                                         credentials=[p for p, _, refreshes in self.adapter.credentials if refreshes],
-                                         state_dirs=self.adapter.state_dirs)
-            full, cleanup = sandbox.wrap(argv, grants, backend, home_dir, scratch, {},
-                                         sandbox.denied_ports(self.config), allow_cwd=False)
+            full, cleanup, env = _contained(self.config, self.state, self.seat, project, home, scratch, argv)
         except ValueError as e:
             return self.refuse(f"sandbox: {safe(e)}", wt)
 
@@ -348,3 +360,108 @@ def run_seat(config, state, seat, prompt, *, target=None, brief=False, brief_fil
         # The original ran and has its own row: no extra `ran: false` row for it.
         return stand_in(caps.capped(config, state, seat, now()) or f"seat {seat} capped")
     return result
+
+
+# ---- for the attack only (tests/attack/seat_readonly.sh) ----
+
+INPUT_PLACEHOLDER = "{input}"  # in an exec argv: the path of the input file in the scratch dir
+
+
+def _without(argv, flags):
+    """`argv` without the block `flags` (as the adapter adds it), else without each flag."""
+    n = len(flags)
+    for i in range(len(argv) - n + 1):
+        if n and argv[i:i + n] == flags:
+            return argv[:i] + argv[i + n:]
+    return [a for a in argv if a not in flags]
+
+
+def control_argv(seat_cfg) -> list:
+    """The seat's own new-session argv without its ignore flags: the hostile-repo positive control.
+    INPUT_PLACEHOLDER stands for the input file."""
+    adapter = adapters.SEAT_ADAPTERS[seat_cfg["runtime"]]
+    return _without(adapter.argv(seat_cfg, INPUT_PLACEHOLDER, False), list(adapter.ignore_flags))
+
+
+def exec_sandboxed(config, state, seat, target, argv, run=proc.run, input_text=None, now=time.time) -> proc.Result:
+    """Run `argv` as a plain process (no model, no usage row) under exactly the seat's sandbox, env,
+    and home, with the target's worktree as the cwd. Only an attack may do this: it needs the seat's
+    attack token in `state` (verify.check_token), else rc 75. `input_text` goes to the input file in
+    the scratch dir, which is stdin, and INPUT_PLACEHOLDER in `argv` becomes its path."""
+    if not verify.check_token(state, seat, now()):
+        return proc.Result(REFUSED, "", "no attack token", False)
+    runtime = config["seats"][seat]["runtime"]
+    adapter = adapters.SEAT_ADAPTERS[runtime]
+    try:
+        project = resolve_project(os.path.realpath(target), config, run)
+    except ValueError:
+        return proc.Result(REFUSED, "", "refused: not a git worktree", False)
+    try:
+        home = safe_home(state, seat)
+        _link_credentials(home, adapter.credentials)
+        adapters.make_code_dirs(runtime, home)
+        scratch = tempfile.mkdtemp(prefix=f"{seat}-", dir=sandbox.seat_scratch_root())
+    except (Tampered, OSError, ValueError) as e:
+        return proc.Result(REFUSED, "", f"sandbox: {safe(e)}", False)
+    try:
+        input_path = os.path.join(scratch, "input.md")
+        _write_private(input_path, input_text or "")
+        argv = [a.replace(INPUT_PLACEHOLDER, input_path) for a in argv]
+        try:
+            full, cleanup, env = _contained(config, state, seat, project, home, scratch, argv)
+        except ValueError as e:
+            return proc.Result(REFUSED, "", f"sandbox: {safe(e)}", False)
+        try:
+            with open(input_path, encoding="utf-8") as stdin:
+                return run(full, config["panel"]["cap_min"] * 60, cwd=project.worktree, env=env, stdin=stdin,
+                           out_dir=scratch)
+        finally:
+            cleanup()
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+EXEC_USAGE = ("usage: python3 -m seats.run exec --seat ID -d DIR -- argv...\n"
+              "       python3 -m seats.run exec --seat ID -d DIR --control PROMPT")
+
+
+def main(argv, out=sys.stdout, err=sys.stderr) -> int:
+    """`exec`: one plain process under the seat's sandbox (see exec_sandboxed). It prints the stdout
+    and stderr and exits with the process's status. `--control PROMPT` runs the seat's own argv
+    without its ignore flags, with PROMPT as the input."""
+    argv = list(argv)
+    if not argv or argv[0] != "exec":
+        print(EXEC_USAGE, file=err)
+        return 2
+    rest, cmd = argv[1:], []
+    if "--" in rest:
+        i = rest.index("--")
+        rest, cmd = rest[:i], rest[i + 1:]
+    p = argparse.ArgumentParser(prog="python3 -m seats.run exec", allow_abbrev=False)
+    p.add_argument("--seat", required=True)
+    p.add_argument("-d", dest="target", required=True)
+    p.add_argument("--control", metavar="PROMPT")
+    try:
+        a = p.parse_args(rest)
+    except SystemExit:
+        return 2
+    if bool(cmd) == (a.control is not None):
+        print(EXEC_USAGE, file=err)
+        return 2
+    config = load_config()
+    if a.seat not in config["seats"]:
+        print(f"unknown seat {a.seat!r}", file=err)
+        return 2
+    state = state_dir(config)
+    if a.control is not None:
+        r = exec_sandboxed(config, state, a.seat, a.target, control_argv(config["seats"][a.seat]),
+                           input_text=a.control)
+    else:
+        r = exec_sandboxed(config, state, a.seat, a.target, cmd)
+    out.write(r.out)
+    err.write(r.err)
+    return TIMEOUT if r.timed_out else r.rc
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
