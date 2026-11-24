@@ -38,75 +38,82 @@ def _enabled(config, name) -> bool:
     return name in (config.get("seats") or {}) and _seat(config, name).get("enabled", True)
 
 
-def _may_run(config, name, tier_) -> bool:
+def _may_run(config, name, tier_name) -> bool:
     """Enabled, and not a reserved seat on the standard tier."""
-    return _enabled(config, name) and (tier_ == "deep" or _seat(config, name).get("tier") != "reserved")
+    return _enabled(config, name) and (tier_name == "deep" or _seat(config, name).get("tier") != "reserved")
 
 
-def roster(config, profile, checkpoint, tier) -> list:
-    names = list(profile["checkpoints"][checkpoint]["seats"])
-    if tier == "deep":
+def roster(config, profile, checkpoint_name, tier_name) -> list:
+    names = list(profile["checkpoints"][checkpoint_name]["seats"])
+    if tier_name == "deep":
         for name, seat in config["seats"].items():
             if (seat.get("tier") == "reserved" and _enabled(config, name)
-                    and checkpoint in (seat.get("roles") or []) and name not in names):
+                    and checkpoint_name in (seat.get("roles") or []) and name not in names):
                 names.append(name)
     return names
 
 
-def run_counts(config, names, tier) -> tuple:
-    """`(originals, fallbacks)` for the watchdog deadline."""
-    originals = [n for n in names if _may_run(config, n, tier)]
+def run_counts(config, names, tier_name) -> tuple:
+    """`(originals, fallbacks)` for the watchdog deadline. It may count a second agy original that
+    `prelaunch` makes absent; that only loosens the deadline."""
+    originals = [n for n in names if _may_run(config, n, tier_name)]
     fallbacks = set()
     for n in originals:
         fb = _seat(config, n).get("fallback")
-        if fb and fb not in names and _may_run(config, fb, tier):
+        if fb and fb not in names and _may_run(config, fb, tier_name):
             fallbacks.add(fb)
     return len(originals), len(fallbacks)
 
 
-def standin(config, state, seat, seats, tier, now, capped=caps.capped) -> Optional[str]:
-    """Mark the fallback of `seat` as its stand-in. Return its id when it must be launched."""
+def _agy_blocked(config, name, seats) -> bool:
+    """True when `name` is agy-runtime and another agy seat already runs (pending or ok)."""
+    if _seat(config, name).get("runtime") != "agy":
+        return False
+    return any(_seat(config, n).get("runtime") == "agy" and e.get("status") in ("pending", "ok")
+               for n, e in seats.items() if n != name)
+
+
+def standin(config, state, seat, seats, tier_name, now, capped=caps.capped) -> Optional[str]:
+    """Mark the fallback of `seat` as its stand-in. Return its id when it must be launched.
+
+    One hop: a seat marked as a stand-in gets no fallback of its own. A fallback already marked for
+    another seat keeps its first mark. A new agy fallback is refused while an agy seat runs."""
     if (seats.get(seat) or {}).get("stand_in_for"):
-        return None  # one hop only
-    fb = _seat(config, seat).get("fallback")
-    if not fb or not _may_run(config, fb, tier) or capped(config, state, fb, now):
         return None
-    if (seats.get(fb) or {}).get("status") == "absent":
+    fb = _seat(config, seat).get("fallback")
+    if not fb or not _may_run(config, fb, tier_name) or capped(config, state, fb, now):
         return None
     entry = seats.get(fb)
-    if entry is None:
-        seats[fb] = {"status": "pending", "stand_in_for": seat, "on_roster": False}
-        return fb
-    entry["stand_in_for"] = seat
-    return None
+    if entry is not None:
+        if entry.get("status") != "absent":
+            entry.setdefault("stand_in_for", seat)
+        return None
+    if _agy_blocked(config, fb, seats):
+        return None
+    seats[fb] = {"status": "pending", "stand_in_for": seat, "on_roster": False}
+    return fb
 
 
-def prelaunch(config, state, names, tier, now, capped=caps.capped) -> tuple:
+def prelaunch(config, state, names, tier_name, now, capped=caps.capped) -> tuple:
     runs, seats, capped_names = [], {}, []
-    agy_taken = False
     for name in names:
         if name in seats:
             continue
         if not _enabled(config, name):
             seats[name] = {"status": "absent", "reason": "disabled", "on_roster": True}
-        elif not _may_run(config, name, tier):
+        elif not _may_run(config, name, tier_name):
             seats[name] = {"status": "absent", "reason": RESERVED_REASON, "on_roster": True}
         elif capped(config, state, name, now):
             seats[name] = {"status": "absent", "reason": "usage cap", "on_roster": True}
             capped_names.append(name)
-        elif _seat(config, name).get("runtime") == "agy" and agy_taken:
+        elif _agy_blocked(config, name, seats):
             seats[name] = {"status": "absent", "reason": ONE_AGY_REASON, "on_roster": True}
         else:
-            agy_taken = agy_taken or _seat(config, name).get("runtime") == "agy"
             seats[name] = {"status": "pending", "on_roster": True}
             runs.append(name)
     for name in capped_names:
-        fb = _seat(config, name).get("fallback")
-        if fb and fb not in seats and _seat(config, fb).get("runtime") == "agy" and agy_taken:
-            continue  # a new agy stand-in would be a second agy seat
-        launched = standin(config, state, name, seats, tier, now, capped=capped)
+        launched = standin(config, state, name, seats, tier_name, now, capped=capped)
         if launched:
-            agy_taken = agy_taken or _seat(config, launched).get("runtime") == "agy"
             runs.append(launched)
     return runs, seats
 

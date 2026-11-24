@@ -125,6 +125,37 @@ class RosterTest(unittest.TestCase):
         self.assertIsNone(roster.standin(CFG, {}, "a", seats, "standard", 0.0, capped=NEVER))
         self.assertNotIn("stand_in_for", seats["g"])
 
+    def test_mid_run_agy_stand_in_refused_while_agy_runs(self):
+        c = cfg(a1={"runtime": "agy"}, a2={"runtime": "agy"})
+        c["seats"]["a"]["fallback"] = "a2"
+        seats = {"a": {"status": "pending", "on_roster": True}, "a1": {"status": "pending", "on_roster": True}}
+        self.assertIsNone(roster.standin(c, {}, "a", seats, "standard", 0.0, capped=NEVER))
+        self.assertNotIn("a2", seats)
+        seats["a1"]["status"] = "absent"  # the agy seat is gone: the stand-in may run
+        self.assertEqual(roster.standin(c, {}, "a", seats, "standard", 0.0, capped=NEVER), "a2")
+
+    def test_capped_agy_seat_does_not_hold_the_agy_place(self):
+        c = cfg(a1={"runtime": "agy"}, a2={"runtime": "agy"})
+        cap_a1 = lambda c_, s, n, t: "capped" if n == "a1" else None  # noqa: E731
+        runs, seats = roster.prelaunch(c, {}, ["a1", "a2"], "standard", 0.0, capped=cap_a1)
+        self.assertEqual(runs, ["a2"])
+        self.assertEqual(seats["a1"]["reason"], "usage cap")
+
+    def test_agy_fallback_on_roster_while_agy_runs(self):
+        c = cfg(a1={"runtime": "agy"}, a2={"runtime": "agy"})
+        c["seats"]["a"]["fallback"] = "a2"
+        cap_a = lambda c_, s, n, t: "capped" if n == "a" else None  # noqa: E731
+        runs, seats = roster.prelaunch(c, {}, ["a", "a1", "a2"], "standard", 0.0, capped=cap_a)
+        self.assertEqual(runs, ["a1"])
+        self.assertEqual(seats["a2"]["reason"], "one agy seat per panel")
+        self.assertNotIn("stand_in_for", seats["a2"])
+
+    def test_two_capped_seats_share_a_fallback_first_mark_kept(self):
+        cap = lambda c, s, n, t: "capped" if n in ("a", "o") else None  # noqa: E731
+        runs, seats = roster.prelaunch(CFG, {}, ["a", "o"], "standard", 0.0, capped=cap)
+        self.assertEqual(runs, ["g"])
+        self.assertEqual(seats["g"]["stand_in_for"], "a")
+
     def test_run_counts(self):
         self.assertEqual(roster.run_counts(CFG, ["a", "o", "x"], "standard"), (2, 1))
         self.assertEqual(roster.run_counts(CFG, ["a", "o", "g"], "standard"), (3, 0))
