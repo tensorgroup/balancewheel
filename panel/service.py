@@ -395,12 +395,17 @@ def _start(config, state, key, jobs, now, notice) -> None:
     nxt = _next_job(state, key)
     if nxt is None:
         return
-    kind, panel, ask_id = nxt
+    start_job(config, state, key, nxt[1], nxt[0], nxt[2], jobs, now, notice)
+
+
+def start_job(config, state, key, panel, kind, ask_id, jobs, now, notice, owner="scheduler") -> bool:
+    """Reserve the worktree's job, then spawn the worker for this panel. False when the slot is taken
+    or the spawn failed. `bw panel --background` calls it too."""
     pid = panel["id"]
-    job = {"kind": kind, "ask": ask_id, "pid": None, "owner": "scheduler", "started": now,
+    job = {"kind": kind, "ask": ask_id, "pid": None, "owner": owner, "started": now,
            "deadline": now + _budget(config, panel, kind), "beat": now, "seat_pgids": []}
     if not pstate.reserve_job(state, key, pid, job):
-        return
+        return False
     argv = list(WORKER) + [kind, "--state", state, "--key", key, "--panel", pid] + (["--ask", ask_id] if ask_id else [])
     try:
         work = pstate.ensure_dir(state, pstate.work_dir(state, key, pid))
@@ -411,13 +416,14 @@ def _start(config, state, key, jobs, now, notice) -> None:
         except Exception:
             pass  # the watchdog releases a job with no pid after SPAWN_GRACE_S
         notice("panel", f"panel {pid}: the worker did not start ({type(e).__name__})", key=pid)
-        return
+        return False
 
     def fn(p):  # a worker that already released its job is not given a new one
         j = p.get("job")
         if isinstance(j, dict) and j.get("pid") is None and all(j.get(k) == job[k] for k in ("kind", "ask", "owner", "started")):
             j["pid"] = wpid
     pstate.update(state, key, pid, fn)
+    return True
 
 
 def _notifier(notice):

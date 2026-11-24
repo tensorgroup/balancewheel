@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""bw-panel-wait — wait for a panel of this worktree that needs the lead.
+
+Run it with no argument. It reads `p*/status.json` in its own directory every 2 seconds and
+returns at once when a panel needs the lead, when no panel is queued or running, or after 110
+seconds (`--max S` changes that). It reads nothing else and writes nothing.
+
+Exit 0: a panel needs the lead (or none is open). Exit 3: every open panel is still working;
+run this command again.
+"""
+import json
+import os
+import re
+import stat
+import sys
+import time
+
+PANEL_DIR = re.compile(r"p[0-9a-f]{7}")
+MAX_STATUS_BYTES = 1024 * 1024
+POLL_S = 2
+DEFAULT_MAX_S = 110
+STILL = 3
+
+
+def _read(path):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return None
+    try:
+        with os.fdopen(fd, "rb") as f:
+            fd = None
+            doc = json.loads(f.read(MAX_STATUS_BYTES).decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    finally:
+        if fd is not None:
+            os.close(fd)
+    return doc if isinstance(doc, dict) else None
+
+
+def _plain_dir(path):
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def scan(root):
+    """[(panel id, state shown, needs the lead)] for every panel that is not logged."""
+    try:
+        names = sorted(n for n in os.listdir(root) if PANEL_DIR.fullmatch(n))
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        doc = _read(os.path.join(root, name, "status.json")) if _plain_dir(os.path.join(root, name)) else None
+        st = doc.get("state") if doc else None
+        if st == "failed":
+            out.append((name, "failed", True))
+        elif st == "ready":
+            busy = doc.get("busy") is not False
+            out.append((name, "running" if busy else "ready", not busy))
+        elif st in ("queued", "running"):
+            out.append((name, st, False))
+    return out
+
+
+def main(argv):
+    limit = DEFAULT_MAX_S
+    if argv[:1] == ["--max"] and len(argv) == 2:
+        try:
+            limit = float(argv[1])
+        except ValueError:
+            print("bw-panel-wait: --max takes a number of seconds", file=sys.stderr)
+            return 2
+    elif argv:
+        print("bw-panel-wait: usage: bw-panel-wait [--max S]", file=sys.stderr)
+        return 2
+    root = os.path.dirname(os.path.realpath(__file__))
+    end = time.monotonic() + limit
+    while True:
+        panels = scan(root)
+        needs = any(n for _, _, n in panels)
+        working = any(s in ("queued", "running") for _, s, _ in panels)
+        left = end - time.monotonic()
+        if needs or not working or left <= 0:
+            break
+        time.sleep(min(POLL_S, left))
+    for pid, st, n in panels:
+        print(f"{pid} {st}" + (f" — follow {os.path.join(root, pid, 'next.md')}" if n else ""))
+    if needs or not working:
+        return 0
+    print("still working; run this command again")
+    return STILL
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

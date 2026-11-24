@@ -348,13 +348,13 @@ window.USAGE_MAP_INFRA = {
       desc: 'The panel protocol, from brief to logged record.',
       steps: [
         { node: 'profile:high-stakes', text: 'The profile names the seats for this checkpoint, which are required, and the minimum count.' },
-        { node: 'p-brief', text: 'The lead writes one shared brief.' },
+        { node: 'p-brief', text: 'The lead writes one shared brief. You can convene a panel yourself.', command: 'bw panel <checkpoint> [target] [--deep] [--background]' },
         { node: 'p-blind', text: 'Seats review blind and in parallel.' },
         { node: 'seats', text: 'Each seat is another vendor\'s CLI, enforced read-only. A capped seat\'s fallback stands in.' },
-        { node: 'p-dispute', text: 'Only disputed claims are cross-examined, the claim relayed alone.' },
+        { node: 'p-dispute', text: 'Only disputed claims are cross-examined, the claim relayed alone.', command: 'bw panel ask <panel-id> <seat> "<claim>"' },
         { node: 'p-bar', text: 'Challenges below the substance bar are dropped.' },
         { node: 'p-verify', text: 'The lead checks every surviving finding against the code.' },
-        { node: 'p-log', text: 'One panel record is appended to the log.', command: 'python3 metrics/log.py panel …' },
+        { node: 'p-log', text: 'One panel record is appended to the log.', command: 'bw panel log <panel-id> < verdicts.json\nbw panel amend <panel-id> < patch.json\nbw panel status [<panel-id>]' },
       ],
     },
     {

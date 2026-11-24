@@ -112,7 +112,7 @@ def commands():
     for e in entries:
         words = e["usage"].split()
         top = words[1] if len(words) > 1 and not words[1].startswith(("[", "-", "<")) else "bw"
-        sub = words[2] if len(words) > 2 and top in ("guard", "triage", "sandbox", "improve", "setup", "seat") and not words[2].startswith(("[", "-", "<", '"')) else ""
+        sub = words[2] if len(words) > 2 and top in ("guard", "triage", "sandbox", "improve", "setup", "seat", "panel") and not words[2].startswith(("[", "-", "<", '"')) else ""
         cid = f"cmd:{top}" + (f".{sub}" if sub else "")
         flags = [{"name": f} for f in re.findall(r"--[a-z][a-z-]*", e["usage"])]
         fn = {"sandbox": "verify", "guard": "guard_verify" if sub == "verify" else "guard"}.get(top, top)

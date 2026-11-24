@@ -51,6 +51,12 @@ not against the prose.
   stand-ins, and `usage` rows with `ran`, `stand_in_for`, and `session_id`. A seat refuses a hostile
   project file only when its argv's ignore flags do not cover that file (`project_code(target, argv)`).
   The seat home's code dirs are made before any seat key is read, so a run keeps the seat's pass.
+- **`bw panel`** (`panel/cli.py`): `bw panel <checkpoint> [target]` convenes a panel (`--deep`, `--focus`,
+  `--stakes`, `--path`, `--background`), `bw panel ask|log|amend <panel-id>` relay one claim, log verdicts,
+  and amend a logged panel, and `bw panel status [<panel-id>]` lists the open panels. It is the user's own
+  path; leads use request files. Exit 2 on a usage error or a refused request.
+- **`bin/bw-panel-wait`**: the lead runs it with no argument. It returns within 110 s, with exit 3
+  ("still working; run this command again") while every open panel is queued or running.
 
 ### Fixed
 
