@@ -171,6 +171,21 @@ not against the prose.
 
 ### Changed
 
+- **Guard records keep the final decision and the rules' decision apart** (`lead/guard/record.py`,
+  `broker.py`, `review.py`). A `guard.jsonl` decision row gains `rule_decision` (the rules' own
+  decision), `judge_reason` (string or null), and `judge_ms` (number or null). `decision` is now the
+  final decision. `source` is `rule`, `judge`, `judge-failed`, or `judge-skipped`; a row from before
+  this change says `gray`, and review counts it as gray. `rule` keeps the rule name, so `gray:*` stays
+  visible there. `judge_model` is the configured `guard.model` on every row, null when none is set;
+  `prompt_hash` stays null until the judge arrives. No judge exists yet: a gray call records
+  `judge-skipped`, `judge_reason` "no judge", and the final decision `ask`. Shadow still replies
+  `allow`. `bw guard review` samples the final decision, so a judge allow is sampled as an allow.
+  `bw guard verify` facts gain `source`.
+- **The guard evidence key drops the runtime version** and gains the judge model and the prompt hash:
+  `(profile, runtime, rules_version, policy_digest, judge_model, prompt_hash)`. An update of the
+  lead's CLI no longer resets the evidence. Marks from before this change count under their old key
+  only. `bw guard review` labels the key `profile= runtime= rules= policy= judge= prompt=`, and the
+  `guard:` lines in `bw status` drop the version column. The policy digest is unchanged.
 - **The guard allows a lead's writes into its own checkpoint dir by rule** (`lead/guard/rules.py`).
   The write tool, `>`/`>>`, `mkdir`, `touch`, `cp`, `mv`, and `tee` may write into
   `handoffs/<key>/`, except bw's own `guard-unreachable` and `cap-signal`. `rm` and the other

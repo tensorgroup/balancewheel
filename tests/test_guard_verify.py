@@ -325,6 +325,14 @@ class Collect(unittest.TestCase):
         f = self.collect()
         self.assertFalse(f["structured"] or f["unavailable"])
 
+    def test_collect_copies_source(self):
+        from lead.guard import record
+        record.append(os.path.join(self.run_dir, "state"), {
+            "type": "decision", "id": "aaaaaaaaaaaa", "call": "jq .", "rule": "gray:option", "decision": "ask",
+            "rule_decision": "ask", "source": "judge-skipped", "outcome": "shadow-allowed", "mode": "shadow"})
+        self.transcript("no-broker-fresh", ["ok"])
+        self.assertEqual([d["source"] for d in self.collect()["decisions"]], ["judge-skipped"])
+
     def test_the_planted_extensions_sentinel_is_a_fact(self):
         self.transcript("extension-fresh", ["blocked"])
         self.assertFalse(self.collect("extension")["ext_loaded"])

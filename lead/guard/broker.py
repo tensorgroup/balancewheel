@@ -2,7 +2,9 @@
 
 Wire: a client sends one JSON line (<= 1 MiB) {"v":1,"token","runtime","cwd","payload"} and gets one
 line back, {"v":1,"id","decision","reason"} or {"v":1,"error":...}. In shadow the reply is always
-allow while the record keeps the rules' real decision; in acting the reply is the decision.
+allow while the record keeps the real decision; in acting the reply is the decision. The record keeps
+the final decision (`decision`) and the rules' own (`rule_decision`) apart; `source` says who decided.
+No judge exists yet, so a gray call is `judge-skipped` and its final decision is the rules' ask.
 An error reply writes no record. The record is written before the reply goes out.
 """
 import argparse
@@ -47,10 +49,12 @@ def _pct(vals, q):
 
 
 class Broker:
-    def __init__(self, state_dir, guard_dir, token, mode, session, ctx, reply_garbage=False):
+    def __init__(self, state_dir, guard_dir, token, mode, session, ctx, reply_garbage=False,
+                 judge_model=None, prompt_hash=None):
         self.state_dir, self.guard_dir, self.token = state_dir, guard_dir, token
         self.mode, self.session, self.ctx = mode, dict(session), ctx
         self.reply_garbage = reply_garbage
+        self.judge_model, self.prompt_hash = judge_model, prompt_hash  # on every row, judged or not
         self.sock_path = os.path.join(guard_dir, "sock")
         self.policy = record.policy_digest(ctx.protected_branches, ctx.deploy_commands)
         self.rules_v, self.guard_v = rules_version(), guard_version()
@@ -247,27 +251,32 @@ class Broker:
             if self_test:
                 self._marker = None
         did = uuid.uuid4().hex[:12]
-        outcome = "shadow-allowed" if self.mode == "shadow" else OUTCOME.get(d.decision, "asked")
+        if d.source == "gray":  # no judge yet: a gray call keeps the rules' ask
+            source, final, judge_reason = "judge-skipped", d.decision, "no judge"
+        else:
+            source, final, judge_reason = "rule", d.decision, None
+        outcome = "shadow-allowed" if self.mode == "shadow" else OUTCOME.get(final, "asked")
         s = self.session
         ev = {"type": "decision", "id": did, "session_id": s["session_id"], "project": s["project"],
               "profile": s["profile"], "lead": s["lead"], "runtime": s["runtime"],
               "runtime_version": s["runtime_version"], "tool": call.tool, "kind": call.kind,
-              "call": redact(text), "digest": digest(call), "source": d.source, "rule": d.rule,
-              "decision": d.decision, "reason": redact(d.reason or ""), "latency_ms": latency,
-              "rules_version": self.rules_v, "guard_version": self.guard_v, "policy_digest": self.policy,
-              "mode": self.mode, "outcome": outcome, "judge_model": None, "prompt_hash": None,
-              "self_test": self_test}
+              "call": redact(text), "digest": digest(call), "source": source, "rule": d.rule,
+              "decision": final, "rule_decision": d.decision, "reason": redact(d.reason or ""),
+              "latency_ms": latency, "rules_version": self.rules_v, "guard_version": self.guard_v,
+              "policy_digest": self.policy, "mode": self.mode, "outcome": outcome,
+              "judge_reason": judge_reason, "judge_ms": None, "judge_model": self.judge_model,
+              "prompt_hash": self.prompt_hash, "self_test": self_test}
         record.append(self.state_dir, ev)
         if not self_test:
             with self._lock:
                 self._calls += 1
-                self._by_decision[d.decision] = self._by_decision.get(d.decision, 0) + 1
-                self._gray += d.source == "gray"
+                self._by_decision[final] = self._by_decision.get(final, 0) + 1
+                self._gray += record.is_gray(ev)
                 self._latency.append(latency)
         if self.reply_garbage:
             return self._send(conn, b"garbage, not json\n")
         # the self-test must see what the rules decided, whatever the mode
-        shown = "allow" if self.mode == "shadow" and not self_test else d.decision
+        shown = d.decision if self_test else "allow" if self.mode == "shadow" else final
         self._send(conn, {"v": 1, "id": did, "decision": shown, "reason": d.reason})
 
 

@@ -330,6 +330,37 @@ class TestShadow(BrokerBase):
         self.assertEqual(d["outcome"], "shadow-allowed")
         self.assertEqual(d["mode"], "shadow")
 
+    def test_gray_call_records_judge_skipped_without_judge(self):
+        r = self.ask(bash("jq ."))
+        self.assertEqual(r["decision"], "allow")
+        d = self.decisions()[0]
+        self.assertEqual(d["source"], "judge-skipped")
+        self.assertEqual((d["rule_decision"], d["decision"]), ("ask", "ask"))
+        self.assertEqual(d["judge_reason"], "no judge")
+        self.assertIsNone(d["judge_ms"])
+        self.assertIsNone(d["judge_model"])
+        self.assertTrue(d["rule"].startswith("gray:"))
+        self.assertEqual(d["outcome"], "shadow-allowed")
+
+    def test_rule_call_records_rule_source(self):
+        self.ask(bash("herdr pane send x"))
+        d = self.decisions()[0]
+        self.assertEqual(d["source"], "rule")
+        self.assertEqual((d["rule_decision"], d["decision"]), ("block", "block"))
+        self.assertIsNone(d["judge_reason"])
+        self.assertIsNone(d["judge_ms"])
+
+    def test_configured_judge_model_is_on_every_row(self):
+        self.b.stop()
+        self.b = brk.Broker(self.state, self.gdir, TOKEN, "shadow", dict(SESSION), self.ctx(),
+                            judge_model="test/judge", prompt_hash="h1")
+        self.b.bind()
+        self.b.serve()
+        self.ask(bash("herdr pane send x"))
+        self.ask(bash("jq ."))
+        self.assertEqual([(d["judge_model"], d["prompt_hash"]) for d in self.decisions()],
+                         [("test/judge", "h1")] * 2)
+
 
 class TestRecord(unittest.TestCase):
     def setUp(self):
@@ -355,11 +386,14 @@ class TestRecord(unittest.TestCase):
         self.assertEqual((r["decisions"], r["marks"], r["orphan_marks"], r["warnings"]), ([], [], [], []))
 
     def test_evidence_key(self):
-        base = {"profile": "p", "runtime": "pi", "runtime_version": "1", "rules_version": "r", "policy_digest": "d"}
+        base = {"profile": "p", "runtime": "pi", "runtime_version": "1", "rules_version": "r", "policy_digest": "d",
+                "judge_model": "test/judge", "prompt_hash": "h"}
         k = record.evidence_key(base)
-        self.assertEqual(k, ("p", "pi", "1", "r", "d"))
-        self.assertNotEqual(k, record.evidence_key(dict(base, runtime_version="2")))
+        self.assertEqual(k, ("p", "pi", "r", "d", "test/judge", "h"))
+        self.assertEqual(k, record.evidence_key(dict(base, runtime_version="2")))
         self.assertNotEqual(k, record.evidence_key(dict(base, policy_digest="e")))
+        self.assertNotEqual(k, record.evidence_key(dict(base, judge_model="test/other")))
+        self.assertNotEqual(k, record.evidence_key(dict(base, prompt_hash="i")))
 
     def test_policy_digest(self):
         a = record.policy_digest(["main"], ["make deploy"])

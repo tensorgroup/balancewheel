@@ -1,7 +1,8 @@
 """review.py — audit of the guard's decisions: stops and sampled allows, per evidence key.
 
-Evidence is only ever counted within one evidence key (profile, runtime, runtime version, rules
-version, policy digest); marks made under another key count nowhere. Self-test decisions are
+Evidence is only ever counted within one evidence key (profile, runtime, rules version, policy digest,
+judge model, prompt hash); marks made under another key count nowhere. Review reads the final
+decision: a judge allow is sampled as an allow. Self-test decisions are
 never evidence. Pure functions plus run(), which reads verdicts line by line from a stream.
 """
 import json
@@ -66,7 +67,7 @@ def summary(decisions, key):
     sampled = [d for d in marked if d["mark"].get("sampled") and d.get("decision") == "allow"]
     false_stops = [d for d in stops if d["mark"].get("verdict") == "wrong"]
     false_allows = [d for d in sampled if d["mark"].get("verdict") == "wrong"]
-    gray = sum(1 for d in ds if d.get("source") == "gray")
+    gray = sum(1 for d in ds if record.is_gray(d))
     groups = {"reviewed": marked, "sampled_allows": sampled, "false_stops": false_stops,
               "stops_reviewed": stops, "false_allows": false_allows}
     out = {k: len(v) for k, v in groups.items()}
@@ -101,7 +102,7 @@ def select_key(decisions, profile=None):
 
 
 def key_label(key):
-    return "profile={} runtime={} version={} rules={} policy={}".format(*key)
+    return "profile={} runtime={} rules={} policy={} judge={} prompt={}".format(*key)
 
 
 def show(d, out, n, total):
@@ -175,6 +176,6 @@ def status_lines(state_dir):
     for key in keys(decisions):
         ds = of_key(decisions, key)
         s = summary(decisions, key)
-        lines.append(safe(f"  {key[1]} {key[2]} (profile {key[0]}) · {ds[-1].get('mode')} · {s['decisions']} decisions · "
+        lines.append(safe(f"  {key[1]} (profile {key[0]}) · {ds[-1].get('mode')} · {s['decisions']} decisions · "
                           f"gray {s['gray_share'] * 100:.0f}% · {promotion_line(s)}"))
     return lines

@@ -1,18 +1,18 @@
-import io, json, os, random, subprocess, sys, tempfile, unittest
+import inspect, io, json, os, random, subprocess, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, ROOT)
 from lead.guard import record, review  # noqa: E402
 
 BW = os.path.join(ROOT, "bin", "bw")
-KEY = ("p", "agy", "1.0", "r1", "d1")
+KEY = ("p", "agy", "r1", "d1", "test/judge", "h1")
 
 
 def dec(i, decision="ask", source="gray", key=KEY, self_test=False, call="ls"):
-    return {"type": "decision", "id": i, "profile": key[0], "runtime": key[1], "runtime_version": key[2],
-            "rules_version": key[3], "policy_digest": key[4], "tool": "bash", "kind": "bash", "call": call,
-            "source": source, "rule": "x", "decision": decision, "reason": "why", "self_test": self_test,
-            "mode": "shadow"}
+    return {"type": "decision", "id": i, "profile": key[0], "runtime": key[1], "runtime_version": "1.0",
+            "rules_version": key[2], "policy_digest": key[3], "judge_model": key[4], "prompt_hash": key[5],
+            "tool": "bash", "kind": "bash", "call": call, "source": source, "rule": "x", "decision": decision,
+            "rule_decision": decision, "reason": "why", "self_test": self_test, "mode": "shadow"}
 
 
 def seed(state, decisions, marks=()):
@@ -32,7 +32,7 @@ class ReviewTests(unittest.TestCase):
         return record.load(self.state)["decisions"]
 
     def test_pick_one_key_unmarked_and_sample_size(self):
-        other = ("p", "agy", "2.0", "r1", "d1")
+        other = ("p", "agy", "r2", "d1", "test/judge", "h1")
         seed(self.state, [dec("s1"), dec("s2"), dec("s3"), dec("a1", "allow"), dec("a2", "allow"),
                           dec("o1", key=other), dec("t1", self_test=True)],
              [{"decision_id": "s1", "verdict": "right", "sampled": False}])
@@ -47,8 +47,8 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(review.safe("\x1b"), "\\x1b")
         self.assertNotEqual(review.safe("\\x1b"), review.safe("\x1b"))
 
-    def test_old_version_marks_count_nowhere(self):
-        old = ("p", "agy", "0.9", "r1", "d1")
+    def test_old_rules_marks_count_nowhere(self):
+        old = ("p", "agy", "r0", "d1", "test/judge", "h1")
         seed(self.state, [dec("o1", key=old), dec("n1")],
              [{"decision_id": "o1", "verdict": "wrong", "sampled": False}])
         s = review.summary(self.loaded(), KEY)
@@ -110,7 +110,7 @@ class ReviewTests(unittest.TestCase):
         self.assertIn("  a\n  b\n", out.getvalue())
 
     def test_status_lines_escape_control_characters(self):
-        d = dec("s1"); d.update(runtime_version="1.\x1b[2J", mode="sh\rm")
+        d = dec("s1"); d.update(runtime="a\x1b[2J", mode="sh\rm")
         seed(self.state, [d])
         text = "\n".join(review.status_lines(self.state))
         self.assertNotIn("\x1b", text)
@@ -148,8 +148,48 @@ class ReviewTests(unittest.TestCase):
         review.run(self.state, list_only=True, out=io.StringIO())
         self.assertEqual(open(record.path(self.state), "rb").read(), before)
 
+    def test_evidence_key_drops_runtime_version(self):
+        a, b = dec("a1", key=KEY), dict(dec("a2", key=KEY), runtime_version="9.9")
+        self.assertEqual(record.evidence_key(a), record.evidence_key(b))
+
+    def test_evidence_key_has_judge_fields(self):
+        self.assertNotEqual(record.evidence_key(dec("a")), record.evidence_key(dict(dec("b"), prompt_hash="other")))
+        self.assertNotEqual(record.evidence_key(dec("a")), record.evidence_key(dict(dec("b"), judge_model="other")))
+
+    def test_policy_digest_ignores_on_judge_failure(self):  # G-f: two arguments, as today (build ruling, 2026-11-23)
+        self.assertEqual(list(inspect.signature(record.policy_digest).parameters),
+                         ["protected_branches", "deploy_commands"])
+        self.assertEqual(record.policy_digest(["main"], []), "eab241176238")  # the value before this task, at 032ec44
+
+    def test_is_gray_and_rule_decision(self):
+        self.assertFalse(record.is_gray({"source": "rule"}))
+        for s in ("judge", "judge-failed", "judge-skipped", "gray"):
+            self.assertTrue(record.is_gray({"source": s}))
+        self.assertEqual(record.rule_decision({"decision": "allow", "rule_decision": "ask"}), "ask")
+        self.assertEqual(record.rule_decision({"decision": "ask"}), "ask")  # a legacy row has no rule_decision
+
+    def test_pick_samples_judge_allows_as_allows(self):
+        seed(self.state, [dec("j1", decision="allow", source="judge") | {"rule_decision": "ask"}])
+        got = review.pick(self.loaded(), KEY, 0, 5, random.Random(1))
+        self.assertEqual([(d["id"], d.get("sampled")) for d in got], [("j1", True)])
+
+    def test_gray_share_counts_every_non_rule_source(self):  # judge, judge-failed, judge-skipped, legacy gray
+        seed(self.state, [dec("j", "allow", source="judge"), dec("f", source="judge-failed"),
+                          dec("k", source="judge-skipped"), dec("g", source="gray"), dec("r", "block", source="rule")])
+        self.assertAlmostEqual(review.summary(self.loaded(), KEY)["gray_share"], 0.8)
+
+    def test_legacy_rows_load_and_stay_out_of_the_new_key(self):
+        legacy = {"type": "decision", "id": "old", "profile": "p", "runtime": "pi", "runtime_version": "0.85",
+                  "rules_version": "r1", "policy_digest": "d1", "source": "gray", "decision": "ask"}
+        seed(self.state, [legacy, dec("new")])
+        self.assertEqual([d["id"] for d in review.of_key(self.loaded(), KEY)], ["new"])
+        self.assertTrue(review.status_lines(self.state))  # no KeyError on the legacy row
+
+    def test_key_label_names_the_six_parts(self):
+        self.assertEqual(review.key_label(KEY), "profile=p runtime=agy rules=r1 policy=d1 judge=test/judge prompt=h1")
+
     def test_profile_selects_key(self):
-        other = ("q", "pi", "1", "r1", "d1")
+        other = ("q", "pi", "r1", "d1", None, None)
         seed(self.state, [dec("s1"), dec("o1", key=other)])
         self.assertEqual(review.select_key(self.loaded()), other)
         self.assertEqual(review.select_key(self.loaded(), "p"), KEY)

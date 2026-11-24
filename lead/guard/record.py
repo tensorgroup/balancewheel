@@ -1,6 +1,8 @@
 """record.py — the guard's decision log: one locked JSONL, written only by bw's own code.
 
-A decision row is the broker's; a mark row is `bw guard review`'s. Both go through append(), which
+A decision row is the broker's: `decision` is the final decision, `rule_decision` the rules' own, and
+`source` says who decided (`rule`, `judge`, `judge-failed`, `judge-skipped`; a legacy row says `gray`).
+A mark row is `bw guard review`'s. Both go through append(), which
 creates the file 0600 first (store.append alone would create it at the umask). load() folds marks
 into their decisions and reports marks whose decision is missing instead of dropping them.
 """
@@ -48,6 +50,20 @@ def policy_digest(protected_branches, deploy_commands):
     return hashlib.sha256(blob.encode()).hexdigest()[:12]
 
 
+EVIDENCE_KEY = ("profile", "runtime", "rules_version", "policy_digest", "judge_model", "prompt_hash")
+
+
 def evidence_key(decision):
-    """Evidence about the rules resets when any part of this changes."""
-    return tuple(decision.get(k) for k in ("profile", "runtime", "runtime_version", "rules_version", "policy_digest"))
+    """Evidence about the guard resets when any part of this changes. The runtime version is not a part:
+    an update of the lead's CLI changes no rule and no judge."""
+    return tuple(decision.get(k) for k in EVIDENCE_KEY)
+
+
+def is_gray(decision):
+    """The rules did not decide this call. A legacy row has source "gray"; it is gray too."""
+    return decision.get("source") != "rule"
+
+
+def rule_decision(decision):
+    """The rules' own decision. A legacy row has no rule_decision: its decision was the rules'."""
+    return decision.get("rule_decision", decision.get("decision"))

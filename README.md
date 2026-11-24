@@ -409,7 +409,8 @@ once for each bw-contained lead runtime.
   it logs what it would have decided and allows everything (prompts off, plus logging);
   nothing is blocked or asked. `bw guard review` shows the stops and a sample of the allows,
   you mark each right or wrong, and the evidence accumulates per evidence key: profile,
-  runtime, runtime version, rules version, and policy digest (not per lead). A guarded agy lead
+  runtime, rules version, policy digest, judge model, and prompt hash (not per lead, and not per
+  runtime version). A guarded agy lead
   is refused until agy's hook behaviour has been observed (a usage-capped spike), so
   `bw guard install agy` and `bw guard verify agy` refuse for the same reason; **under
   schema 3 an agy lead must set `autonomy` explicitly (`manual` or `bypass`) until agy's

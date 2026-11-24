@@ -295,7 +295,8 @@ class Session:
             rules_ctx = launch.rule_context(ctx.project, ctx.config["profiles"][profile], self.head,
                                             checkpoint_dir=checkpoint_dir(ctx.state, ctx.project.worktree_key),
                                             lead_env=self.lead_env, panel_wait=self.wait_path)
-            self.broker = brk.Broker(ctx.state, gdir, token, mode, session, rules_ctx)
+            self.broker = brk.Broker(ctx.state, gdir, token, mode, session, rules_ctx,
+                                     judge_model=ctx.config.get("guard", {}).get("model"))
             self.broker.bind()
         except (ValueError, OSError, subprocess.SubprocessError) as e:
             raise GuardUnavailable(f"guard cannot start: {e}")
