@@ -87,6 +87,14 @@ class Quota(unittest.TestCase):
         quota.record_statusline(self.state, "pa", fx("model_only.json"), NOW)
         self.assertEqual(quota.read_model(self.state, "pa"), "vendor-model-b-2")
 
+    def test_lead_model(self):
+        quota.record_statusline(self.state, "pa", fx("model_only.json"), NOW)
+        cc = {"runtime": "claude-code", "model": "configured", "plan": "pa"}
+        self.assertEqual(quota.lead_model(self.state, cc), ("vendor-model-b-2", True))
+        self.assertEqual(quota.lead_model(self.state, dict(cc, plan="pb")), ("configured", False))
+        self.assertEqual(quota.lead_model(self.state, dict(cc, plan=None)), ("configured", False))
+        self.assertEqual(quota.lead_model(self.state, dict(cc, runtime="codex")), ("configured", False))
+
     def test_concurrent_plans_both_survive(self):
         procs = []
         for plan in ("pa", "pb"):

@@ -121,6 +121,7 @@ not against the prose.
 
 - Changed (log schema): a panel record may have empty `seats` when `absent` names every seat.
   `validate_panel` can keep a bw-assigned id. `store.load()` returns `panel_runs` and keeps a panel's `tier`.
+  `store.load()` keeps one `panel_run` event per panel id (the first), so a repeated event is not counted twice.
 - After the lead opens, `bw start` verifies every seat reachable from a checkpoint, a fallback, or the
   reserved tier whose key changed, in the background (`bw seat verify --changed`). The registry shows
   seat caps as `capped` health.
@@ -172,6 +173,9 @@ not against the prose.
 - **The panel worker** (`python3 -m panel.run`, `panel/run.py`): one brief for every seat, blind parallel
   `bw seat` runs, stand-ins on a cap, `findings.json` and `next.md`; and one `ask` that resumes the seat's
   round-1 session.
+- Added: the panel service — one job per worktree at a time, a watchdog by waves and heartbeat, `log` that
+  fills every mechanical field and validates with `metrics/log.py`, `amend`, and at most 3 open panels and
+  20 asks per panel per session.
 - **`bw improve`** (`lead/improve.py`, `bin/bw`): suggestions from how the user works, each with its
   evidence, a minimum sample, and no effect until the user acts. `bw improve note "…"` adds a note,
   `bw improve done <key>` marks one dealt with (`improve.json` in the state dir, added to `setup/paths.txt`). An

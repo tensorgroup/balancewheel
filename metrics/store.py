@@ -222,7 +222,12 @@ def load(path):
     guards = [e for e in events if e.get("type") == "guard"]
     asks = [e for e in events if e.get("type") == "ask"]
     answers = [e for e in events if e.get("type") == "answer"]
-    panel_runs = [e for e in events if e.get("type") == "panel_run"]
+    panel_runs, run_ids = [], set()
+    for e in events:  # a crash between append and mark can repeat a panel's event: keep the first
+        if e.get("type") != "panel_run" or (e.get("panel_id") is not None and e.get("panel_id") in run_ids):
+            continue
+        panel_runs.append(e)
+        run_ids.add(e.get("panel_id"))
     return {"usage": usage, "panels": panels, "watches": watches, "events": events, "warnings": warnings,
             "sessions": sessions, "leads": leads, "ratings": ratings, "guards": guards, "asks": asks,
             "answers": answers, "panel_runs": panel_runs}

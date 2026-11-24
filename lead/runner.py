@@ -214,12 +214,7 @@ class Session:
         if self.broker is not None:
             self.broker.serve()  # started only now: no thread of ours exists while preexec_fn runs
         ctx.give_terminal(self.pgid)
-        model = self.lead["model"]
-        resolved = False
-        if self.lead["runtime"] == "claude-code":
-            seen = quotamod.read_model(ctx.state, self.lead["plan"])
-            if seen:
-                model, resolved = seen, True
+        model, resolved = quotamod.lead_model(ctx.state, self.lead)
         ctx.log({"type": "session", "phase": "start", "project": ctx.project.worktree_key, "session_id": self.id,
                  "worktree": ctx.project.worktree, "lead": lead_name, "runtime": self.lead["runtime"],
                  "model": model, "resolved": resolved, "plan": self.lead["plan"],

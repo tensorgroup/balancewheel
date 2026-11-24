@@ -263,6 +263,16 @@ def read_model(state, plan):
     return v.get("model") if v else None
 
 
+def lead_model(state, lead):
+    """(model, resolved): the model the lead runs as. A claude-code lead's plan records the model
+    it saw (`resolved` True); any other lead, or no record, gives the configured model."""
+    if lead.get("runtime") == "claude-code" and lead.get("plan"):
+        seen = read_model(state, lead["plan"])
+        if seen:
+            return seen, True
+    return lead.get("model"), False
+
+
 def summary(snapshot):
     if not snapshot:
         return "quota unknown"

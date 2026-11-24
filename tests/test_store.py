@@ -76,6 +76,14 @@ class ReadAndLoad(unittest.TestCase):
         self.assertEqual([e["panel_id"] for e in data["panel_runs"]], ["p1"])
         self.assertEqual([p["tier"] for p in data["panels"]], ["deep", None])
 
+    def test_load_keeps_one_panel_run_per_panel(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "log.jsonl")
+            for pid, duration in (("p1", 1.0), ("p2", 2.0), ("p1", 3.0)):   # a crash between append and mark
+                store.append(path, {"type": "panel_run", "panel_id": pid, "duration_s": duration})
+            data = store.load(path)
+        self.assertEqual([(e["panel_id"], e["duration_s"]) for e in data["panel_runs"]], [("p1", 1.0), ("p2", 2.0)])
+
     def test_legacy_log_normalises_without_error(self):
         d = store.load(str(FX / "legacy.jsonl"))
         p = d["panels"][0]

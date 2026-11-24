@@ -199,8 +199,9 @@ def _refusal(stem) -> ValueError:
     return err
 
 
-def ingest(state, key) -> tuple:
+def ingest(state, key, limit=None) -> tuple:
     """([(req_id, request dict or ValueError)], problems). Every taken file is unlinked; a dir is left.
+    At most `limit` requests are answered, in name order; the rest wait for the next call.
     A ValueError carries `nonce` (the request's, when it had a valid one) and, for a reused id,
     `reused=True`. Never raises: a filesystem error is one problem line."""
     out, problems = [], []
@@ -215,6 +216,8 @@ def ingest(state, key) -> tuple:
         except OSError as e:
             return [], [f"the panel request dir cannot be listed ({type(e).__name__})"]
         for name in names:
+            if limit is not None and len(out) >= limit:
+                break
             shown = safe(name)[:NAME_CHARS]
             stem = name[:-len(SUFFIX)]
             try:
