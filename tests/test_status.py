@@ -62,6 +62,7 @@ class StatusCase(unittest.TestCase):
         c.close()
 
     def test_no_orca_dir_single_unknown_line_and_no_shell_out(self):
+        self.config["canvas"] = "orca"
         run = fake_run("")
         lines = status.render(status.facts(self.config, self.state, time.time(), run=run))
         orca = [ln for ln in lines if ln.startswith("orca: ")]
@@ -71,6 +72,7 @@ class StatusCase(unittest.TestCase):
         self.assertEqual(run.calls, [])
 
     def test_orca_manual_running_is_ok(self):
+        self.config["canvas"] = "orca"
         self.make_orca("settings_manual.json")
         run = fake_run((FIX / "status_running.json").read_text())
         f = status.facts(self.config, self.state, time.time(), run=run)
@@ -79,6 +81,7 @@ class StatusCase(unittest.TestCase):
         self.assertEqual(run.calls, [["orca", "status", "--json"]])
 
     def test_orca_full_access_lines(self):
+        self.config["canvas"] = "orca"
         self.make_orca("settings_full_access.json")
         f = status.facts(self.config, self.state, time.time(), run=fake_run((FIX / "status_stopped.json").read_text()))
         orca = [ln for ln in status.render(f) if ln.startswith("orca: ")]
@@ -87,12 +90,23 @@ class StatusCase(unittest.TestCase):
         self.assertTrue(all(ln.startswith("orca: warn — ") for ln in orca[1:]), orca)
 
     def test_orca_not_running_shown_when_settings_ok(self):
+        self.config["canvas"] = "orca"
         self.make_orca("settings_manual.json")
         f = status.facts(self.config, self.state, time.time(), run=fake_run((FIX / "status_stopped.json").read_text()))
         orca = [ln for ln in status.render(f) if ln.startswith("orca: ")]
         self.assertEqual(orca, ["orca: ok — not running (settings checked)"])
 
+    def test_terminal_canvas_with_orca_installed_has_no_orca_line_and_no_shell_out(self):
+        self.config["canvas"] = "terminal"
+        self.make_orca("settings_manual.json")
+        run = fake_run("")
+        lines = status.render(status.facts(self.config, self.state, time.time(), run=run))
+        self.assertFalse([ln for ln in lines if ln.startswith("orca")], lines)
+        self.assertTrue(any(ln.startswith("cc-switch: ") for ln in lines), lines)
+        self.assertEqual(run.calls, [])
+
     def test_facts_keys_and_todays_lines(self):
+        self.config["canvas"] = "orca"
         f = status.facts(self.config, self.state, time.time(), run=fake_run(""))
         for k in ("plans", "worktrees", "leads", "guard", "checks", "last_start"):
             self.assertIn(k, f)

@@ -914,6 +914,26 @@ class JudgeChild(unittest.TestCase):
                 self.assertEqual(runner.judge_child({}, "x")["reason"], "no verdict")
 
 
+class NoOrcaProvider(RunnerCase):
+    def config(self, root):
+        cfg = super().config(root)
+        cfg["plans"]["chatgpt"] = {"billing": "plan", "quota": "none"}
+        cfg["leads"]["la"]["plan"] = "chatgpt"
+        return cfg
+
+    def test_session_without_orca_provider_makes_no_orca_call(self):
+        payload = self.out.parent / "orca-payload.json"
+        payload.write_text((HERE / "fixtures" / "orca" / "account_list_ok.json").read_text())
+        p = self.start("--orca-payload", str(payload), env={"FAKE_MODE_a": "sleep", "BW_PROBE_SECONDS": "0"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        time.sleep(1.0)  # many poll boundaries at BW_PROBE_SECONDS=0
+        self.assertIsNone(p.poll(), "the runner exited")
+        f = self.out / "orca-calls.jsonl"
+        self.assertFalse(f.exists() and f.read_text().strip())
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        self.assertEqual(p.wait(10), 0)
+
+
 class OrcaReRead(RunnerCase):
     def config(self, root):
         cfg = super().config(root)

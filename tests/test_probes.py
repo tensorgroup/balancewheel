@@ -396,6 +396,14 @@ class RefreshTest(unittest.TestCase):
         run.calls = calls
         return run
 
+    def test_no_orca_provider_starts_no_orca_read(self):
+        cfg = self.config()
+        cfg["plans"] = {"or": or_plan()}
+        with mock.patch.object(probes.orca, "refresh", side_effect=AssertionError("called")):
+            res = probes.refresh(cfg, self.state, T, run=no_run, fetch=fake_fetch(body=json.dumps(key_doc("key_ok.json")).encode()),
+                                 env={"OPENROUTER_API_KEY": CANARY})
+        self.assertEqual(res["notes"], [])
+
     def test_one_orca_read_for_two_orca_plans_and_every_probe_written(self):
         run = self.run_fake()
         fetch = fake_fetch(body=json.dumps(key_doc("key_ok.json")).encode())

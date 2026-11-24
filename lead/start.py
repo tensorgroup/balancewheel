@@ -9,17 +9,17 @@ One `bw start:` line per event. Steps:
      submitted when its tool's update finishes, or at once when no tool updates it (all of
      them with --no-update); the pool is joined before the workspace opens;
   4. refresh quota for every plan the profile touches (`lead.probes`: OpenRouter's key, one Orca
-     read; agy awaits its shape), one line per plan with its source and age, then the lead
+     read when a plan maps Orca; agy awaits its shape), one line per plan with its source and age, then the lead
      decision at the "start" moment;
   5. rebuild `state_dir/registry.json` (`lead.registry`), a derived snapshot;
-  6. open the worktree: an Orca pane when Orca runs, else a Terminal tab through a `.command`
-     file in the state dir; neither → print the command and exit 1. A worktree whose lock is
+  6. open the worktree: a Terminal tab through a `.command` file in the state dir; with
+     `canvas: orca`, an Orca pane when Orca runs, else the Terminal tab; neither → print the command and exit 1. A worktree whose lock is
      held already has a lead and is not opened again;
   7. verify every reachable seat whose key changed, in one detached background child; the lead
      never waits (the child reads the seat keys itself; start reads none);
-  8. the cockpit hint, the Orca and cc-switch checks, config warnings.
-`state_dir/start.json` records what happened. `--dry-run` runs only git and `orca status` and
-writes nothing.
+  8. the cockpit hint, the cc-switch checks, the Orca checks when Orca is in use, config warnings.
+`state_dir/start.json` records what happened. `--dry-run` runs only git (and `orca status`
+when the canvas is Orca) and writes nothing.
 """
 import os
 import shlex
@@ -129,7 +129,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     profile = (config.get("profiles") or {}).get(project.profile) or {}
     runtimes = verifymod.lead_runtimes(config)
     rt_tool = runtime_tools(config)
-    tools = config.get("tools") or {}
+    tools = orca.active_tools(config)
     plans = rotation.plans_touched(config, profile, runner.read_pin(state, project.worktree_key))
     if dry_run:
         return _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify,
@@ -181,7 +181,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     # 4. quota (probes, one Orca read; expired caps cleared) and the lead, on a fresh clock
     started, now = now, clock()
     orca_entry = results.get("orca")
-    orca_version = (orca_entry.get("after") if isinstance(orca_entry, dict) else None) or orca.app_version()
+    orca_version = (orca_entry.get("after") if isinstance(orca_entry, dict) else None) or (orca.app_version() if orca.in_use(config) else None)
     try:
         refreshed = probes.refresh(config, state, now, plans=plans, run=run, fetch=fetch, env=env,
                                    orca_version=orca_version)
@@ -202,14 +202,15 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
         say(f"registry not written ({type(e).__name__})")
 
     # 6. the workspace
-    code = _workspace(state, project, run, bw, env, say)
+    code = _workspace(state, project, run, bw, env, say, orca.canvas(config))
 
     # 7. the seats, in the background (after the lead opens; no seat key is read here)
     _seats(config, state, verify, bw, say, env)
 
     # 8. pointers and checks
     say("cockpit: run bw cockpit")
-    for line in checks.lines("orca", orca_checks(state, run)) + checks.lines("cc-switch", ccswitch.check_settings()):
+    orca_lines = checks.lines("orca", orca_checks(state, run)) if orca.in_use(config) else []
+    for line in orca_lines + checks.lines("cc-switch", ccswitch.check_settings()):
         say(line.strip())
     for w in config.get("warnings", []):
         say(f"config warning: {w}")
@@ -243,7 +244,7 @@ def _quota_and_lead(config, state, project, profile, plans, now, say):
     say(f"lead: {d.lead} ({d.reason})" if d.lead else f"no lead would start — {d.notice or 'no lead available'}")
 
 
-def _workspace(state, project, run, bw, env, say):
+def _workspace(state, project, run, bw, env, say, canvas):
     lock = runner.Lock(state, project.worktree_key)
     try:
         if not lock.acquire():
@@ -252,15 +253,16 @@ def _workspace(state, project, run, bw, env, say):
     finally:
         os.close(lock.fd)  # closing releases the flock taken just to test it
     cmd = _lead_command(bw, env)
-    up, why = orca.running(run)
-    if up:
-        r = run(_orca_argv(project, cmd), ORCA_CREATE_TIMEOUT_S)
-        if r.rc == 0 and not r.timed_out:
-            say(f"opened an Orca pane for {project.worktree}")
-            return 0
-        say(f"orca terminal create failed ({'timed out' if r.timed_out else _detail(r)}); opening a Terminal tab instead")
-    else:
-        say(f"orca: {why}; opening a Terminal tab")
+    if canvas == "orca":
+        up, why = orca.running(run)
+        if up:
+            r = run(_orca_argv(project, cmd), ORCA_CREATE_TIMEOUT_S)
+            if r.rc == 0 and not r.timed_out:
+                say(f"opened an Orca pane for {project.worktree}")
+                return 0
+            say(f"orca terminal create failed ({'timed out' if r.timed_out else _detail(r)}); opening a Terminal tab instead")
+        else:
+            say(f"orca: {why}; opening a Terminal tab")
     path, content = _command_file(state, project, bw, env)
     _write_command_file(path, content)
     r = run(["open", "-a", "Terminal", path], OPEN_TIMEOUT_S)
@@ -289,12 +291,12 @@ def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, r
     say("would check seats in the background" if verify else "seats: would not check (--no-verify)")
     _quota_and_lead(config, state, project, profile, plans, now, say)
     cmd = _lead_command(bw, env)
-    up, why = orca.running(run)
+    up, why = orca.running(run) if orca.canvas(config) == "orca" else (False, None)
     if up:
         say(f"would run: {shlex.join(_orca_argv(project, cmd))}")
     else:
         path, content = _command_file(state, project, bw, env)
-        say(f"orca: {why}; would write {path}:")
+        say(f"orca: {why}; would write {path}:" if why else f"would write {path}:")
         for line in content.splitlines():
             say(f"  {line}")
         say(f"would run: {shlex.join(['open', '-a', 'Terminal', path])}")

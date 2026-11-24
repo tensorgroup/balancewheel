@@ -827,6 +827,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                                         expiry_hours=rot["cap_expiry_hours"], source="lead-hook")
                 # Orca's local cache, re-read for display and freshness only (no network, no cap):
                 # the running decision below acts on caps alone. A failing read never stops the lead.
+                # (orca.refresh returns before any Orca call when no plan maps Orca.)
                 try:
                     shape_note = orcamod.refresh(state, config, time.time(), run=run)
                 except Exception as e:

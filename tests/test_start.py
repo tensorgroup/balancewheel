@@ -147,7 +147,43 @@ class StartCase(unittest.TestCase):
 
     # --- workspace ------------------------------------------------------------------------
 
+    def test_terminal_canvas_ignores_a_running_orca(self):
+        os.environ["BW_ORCA_SUPPORT"] = str(self.root)  # an Orca support dir exists
+        run = FakeRun(orca="running")
+        code, out = self.start(run, verify=False, update=False)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([a for a in run.argvs() if a[0] == "orca"], [])
+        self.assertEqual(run.argvs()[-1][:3], ["open", "-a", "Terminal"])
+        self.assertNotIn("orca", out.lower())
+
+    def test_terminal_canvas_dry_run_runs_only_git(self):
+        run = FakeRun(orca="running")
+        code, out = self.start(run, dry_run=True)
+        self.assertEqual({a[0] for a in run.argvs()}, {"git"})
+        self.assertIn("would run: open -a Terminal", out)
+
+    def test_terminal_canvas_never_reads_the_orca_app_version(self):
+        with mock.patch.object(start.orca, "app_version", side_effect=AssertionError("read")):
+            code, out = self.start(FakeRun(orca="running"), verify=False, update=False)
+        self.assertEqual(code, 0, out)
+
+    def test_terminal_canvas_skips_a_configured_orca_tool(self):
+        self.config["tools"]["orca"] = {"version": ["orca", "--version"], "update": ["orca", "self-update"]}
+        for dry_run in (False, True):
+            run = FakeRun(orca="running")
+            self.start(run, dry_run=dry_run, verify=False, update=True)
+            self.assertEqual([a for a in run.argvs() if a[0] == "orca"], [], dry_run)
+
+    def test_terminal_canvas_with_an_orca_plan_reads_quota_but_opens_terminal(self):
+        self.config["plans"]["pp"]["orca_provider"] = "codex"  # pp is lead lp's plan, in profile p
+        run = FakeRun(orca="running")
+        self.start(run, verify=False, update=False)
+        self.assertEqual(self.ran(run, CREATE), [])
+        self.assertTrue(self.ran(run, ["orca", "account", "list"]))
+        self.assertEqual(run.argvs()[-1][:3], ["open", "-a", "Terminal"])
+
     def test_orca_running_opens_pane_with_exact_argv(self):
+        self.config["canvas"] = "orca"
         run = FakeRun(orca="running")
         code, out = self.start(run, verify=False, update=False)
         self.assertEqual(code, 0, out)
@@ -165,6 +201,7 @@ class StartCase(unittest.TestCase):
         return run.ran(prefix)
 
     def test_orca_absent_writes_command_file_and_opens_terminal(self):
+        self.config["canvas"] = "orca"
         repo = make_repo(self.root / "it's a $repo")
         run = FakeRun(orca=None)
         env = {"BALANCEWHEEL_CONFIG": "/cfg dir/it's.json"}  # BW_STATE_DIR unset: no export for it
@@ -188,6 +225,7 @@ class StartCase(unittest.TestCase):
         self.assertEqual(r.stdout.strip(), str(repo))
 
     def test_relative_config_and_state_paths_are_forwarded_absolute(self):
+        self.config["canvas"] = "orca"
         # the lead's shell starts in the target worktree, not where bw start ran
         env = {"BALANCEWHEEL_CONFIG": "conf/c.json", "BW_STATE_DIR": "st"}
         cwd = os.getcwd()
@@ -247,6 +285,7 @@ class StartCase(unittest.TestCase):
         self.assertIn("quota px:", out)
 
     def test_orca_create_failure_falls_back_to_terminal(self):
+        self.config["canvas"] = "orca"
         run = FakeRun(orca="running", create_rc=1)
         code, out = self.start(run, verify=False, update=False)
         self.assertEqual(code, 0, out)
@@ -255,6 +294,7 @@ class StartCase(unittest.TestCase):
         self.assertIn("orca terminal create failed (exit 1: create refused); opening a Terminal tab", out)
 
     def test_neither_orca_nor_terminal_prints_the_command_and_exits_1(self):
+        self.config["canvas"] = "orca"
         run = FakeRun(orca="stopped", open_rc=1)
         code, out = self.start(run, verify=False, update=False)
         self.assertEqual(code, 1)
@@ -321,6 +361,7 @@ class StartCase(unittest.TestCase):
     # --- dry run --------------------------------------------------------------------------
 
     def test_dry_run_runs_nothing_but_git_and_orca_status(self):
+        self.config["canvas"] = "orca"
         self.config["tools"]["orca"] = {"self_updating": True}
         self.config["tools"]["mystery"] = {"update": ["mystery", "up"]}
         for orca in ("running", "stopped"):

@@ -5,11 +5,11 @@
                                                   work too, e.g. bw --use <lead>); elsewhere: bw status
   bw start [path] [--dry-run] [--no-update] [--no-verify]
                                                   update tools, re-verify, pick the lead, open it in
-                                                  an Orca pane or a Terminal tab
+                                                  a Terminal tab (an Orca pane with canvas: orca)
   bw lead [--use <lead> | --auto] [--no-rating]   start the right lead for this worktree
-  bw status                                       leads, quota, caps, pins, Orca and cc-switch checks
-  bw probe [plan...]                              read quota now (OpenRouter key, Orca; agy awaits its
-                                                  shape), one line per plan
+  bw status                                       leads, quota, caps, pins, cc-switch checks, and Orca checks when Orca is in use
+  bw probe [plan...]                              read quota now (OpenRouter key; Orca for mapped plans; agy
+                                                  awaits its shape), one line per plan
   bw registry [--print]                           rebuild state_dir/registry.json (tools, plans, models, seats,
                                                   leads, profiles, projects, edges); --print shows it
   bw cockpit [--port N] [--no-open]               serve the read-only cockpit on 127.0.0.1 until Ctrl-C; opens

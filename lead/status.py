@@ -123,7 +123,8 @@ def facts(config, state, now, run=proc.run):
             **worktree_facts(state),
             "leads": _leads(config),
             "guard": guard_review.status_lines(state),
-            "checks": {"orca": orca_checks(state, run), "cc-switch": ccswitch.check_settings()},
+            "checks": {**({"orca": orca_checks(state, run)} if orca.in_use(config) else {}),
+                       "cc-switch": ccswitch.check_settings()},
             "last_start": read_json(os.path.join(state, "start.json"), None)}
 
 
@@ -164,7 +165,7 @@ def render(f):
     if f["guard"]:
         lines.append("guard:")
         lines.extend(f["guard"])
-    for title in ("orca", "cc-switch"):
+    for title in [t for t in ("orca", "cc-switch") if t in f["checks"]]:
         lines.extend(_check_lines(title, f["checks"][title]))
     ls = f.get("last_start")
     if isinstance(ls, dict) and isinstance(ls.get("ts"), (int, float)):

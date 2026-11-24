@@ -216,7 +216,9 @@ def refresh(config, state, now, plans=None, run=proc.run, fetch=_fetch, env=os.e
         with lock:
             snapshots[name] = snap
 
-    threads = [threading.Thread(target=read_orca, name="bw-probe-orca")]
+    threads = []
+    if any(p.get("orca_provider") for p in chosen.values()):  # no Orca-mapped plan: no Orca call
+        threads.append(threading.Thread(target=read_orca, name="bw-probe-orca"))
     threads += [threading.Thread(target=read_probe, args=(n, p), name=f"bw-probe-{n}")
                 for n, p in sorted(chosen.items()) if p.get("quota") == "probe"]
     for t in threads:

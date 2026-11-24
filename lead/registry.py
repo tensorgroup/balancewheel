@@ -21,7 +21,7 @@ import os
 import shutil
 import time
 
-from . import ccswitch, containment, proc, quota, sandbox
+from . import ccswitch, containment, orca, proc, quota, sandbox
 from .guard.review import safe
 from .locks import DEFAULT_TOOL_RUNTIME, RuntimeLock, runtime_tools, tool_runtime
 from .paths import guarded as _guarded, read_json, write_json_atomic
@@ -140,7 +140,7 @@ def build(config, state, now, run=proc.run) -> dict:
     plans_cfg = _dict(config.get("plans"))
     leads_cfg = _dict(config.get("leads"))
     seats_cfg = _dict(config.get("seats"))
-    tools_cfg = _dict(config.get("tools"))
+    tools_cfg = _dict(orca.active_tools(config))
     profiles_cfg = _dict(config.get("profiles"))
     projects_cfg = _dict(config.get("projects"))
     rt_tool = runtime_tools({"tools": tools_cfg})

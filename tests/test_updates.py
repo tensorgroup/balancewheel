@@ -179,10 +179,20 @@ class Updates(unittest.TestCase):
         with open(app / "Contents" / "Info.plist", "wb") as f:
             plistlib.dump({"CFBundleShortVersionString": "1.4.2"}, f)
         run = FakeRun()
-        out = updates.update_all(cfg({"orca": {"app": str(app), "self_updating": True}}), self.state, NOW, run=run)
+        c = cfg({"orca": {"app": str(app), "self_updating": True}})
+        c["canvas"] = "orca"
+        out = updates.update_all(c, self.state, NOW, run=run)
         r = out["orca"]
         self.assertEqual((r["result"], r["before"], r["after"], r["runtime"]), ("self-updating", "1.4.2", "1.4.2", None))
         self.assertEqual(run.calls, [])
+
+    def test_terminal_canvas_skips_a_configured_orca_tool(self):
+        run = FakeRun()
+        c = cfg({"orca": {"version": ["orca", "--version"], "update": ["orca", "self-update"]}})
+        c["canvas"] = "terminal"
+        out = updates.update_all(c, self.state, NOW, run=run)
+        self.assertNotIn("orca", out)
+        self.assertEqual([a for a in run.calls if a[0][0] == "orca"], [])
 
     def test_no_update_command(self):
         run = FakeRun(versions={("bar", "--version"): ["bar 9"]})

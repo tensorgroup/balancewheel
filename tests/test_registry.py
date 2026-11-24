@@ -59,6 +59,18 @@ class RegistryCase(unittest.TestCase):
     def build(self, **kw):
         return registry.build(self.config, self.state, NOW, run=fake_run, **kw)
 
+    def test_terminal_canvas_runs_no_orca_command(self):
+        self.config["canvas"] = "terminal"
+        self.config["tools"]["orca"] = {"version": ["orca", "--version"]}
+        seen = []
+
+        def run(argv, timeout, **kw):
+            seen.append(list(argv))
+            return fake_run(argv, timeout, **kw)
+        reg = registry.build(self.config, self.state, NOW, run=run)
+        self.assertEqual([a for a in seen if a[0] == "orca"], [])
+        self.assertNotIn("orca", [n["name"] for n in reg["tools"]])
+
     def by(self, reg, kind, name):
         return next(n for n in reg[kind] if n["name"] == name)
 

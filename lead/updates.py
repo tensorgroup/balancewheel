@@ -15,7 +15,7 @@ import time
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 
-from . import proc
+from . import orca, proc
 from .locks import NON_RUNTIME_TOOLS, RuntimeLock, tool_runtime
 from .runtimes import ADAPTERS
 
@@ -126,7 +126,7 @@ def update_all(config, state, now, run=proc.run, on_done=None, previous=None) ->
 
     One worker per installer (tools without an update command each get their own); `on_done`
     is called in the calling thread with each ToolResult as that tool finishes."""
-    tools = config.get("tools") or {}
+    tools = orca.active_tools(config)
     previous = previous or {}
     interval_s = int((config.get("updates") or {}).get("min_interval_hours", 0)) * 3600
     groups = {}
