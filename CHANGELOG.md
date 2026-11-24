@@ -15,6 +15,11 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **`bw guard verify <runtime> --interactive`.** The user answers two real approval prompts in pi, No and then Yes. bw
+  proves what ran from the check's own broker log and a witness socket the lead cannot write. The pass goes to
+  `state_dir/guard-interactive.json`, keyed on the guard version, the client file, and the hook files (no runtime
+  version). `bw start` offers the check on a terminal when an `auto` or `acting` profile has a guarded lead without it.
+  agy is refused until its spike passes.
 - **Quota source `cli`** and **`rotation.cli_fresh_min`** (default 120), schema 3 only.
 - **`canvas`**: `terminal` or `orca`.
 - **`panel`**: `cap_min`, `deep_cap_min`, `max_rounds`, `max_parallel`, each an integer of at least 1

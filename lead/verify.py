@@ -13,11 +13,12 @@ an item whose key still matches is `verified`; one that cannot be tested now is 
 its reason; anything else runs the attack and is `passed` or `failed`.
 """
 import os
+import sys
 import time
 from collections import namedtuple
 
 from . import containment, guard as guardpkg, proc, quota, sandbox
-from .guard import verify as guard_judge
+from .guard import interactive, verify as guard_judge
 from .locks import RuntimeLock
 from .paths import ROOT, guarded as _guarded
 from .runtimes import ADAPTERS
@@ -89,7 +90,10 @@ def sandbox_verify(config, state, runtime, lead_name=None, run=proc.run):
                    sandbox_failure_message, "containment", runtime, which)
 
 
-def guard_verify(config, state, runtime, lead_name=None, run=proc.run):
+def guard_verify(config, state, runtime, lead_name=None, run=proc.run, interactive_check=False, tty_in=None,
+                 tty_out=None):
+    if interactive_check:  # the user answers two real approval prompts; see lead.guard.interactive
+        return interactive.run_check(config, state, runtime, lead_name, tty_in or sys.stdin, tty_out or sys.stdout)
     ad = ADAPTERS.get(runtime)
     if ad is None or ad.guard_argv is None:
         return False, f"bw: no guard attack for {runtime}"

@@ -13,7 +13,9 @@ One `bw start:` line per event. Steps:
   4. refresh quota for every plan the profile touches (`lead.probes`: OpenRouter's key, one Orca
      read when a plan maps Orca; agy awaits its shape), one line per plan with its source and age, then the lead
      decision at the "start" moment;
-  5. rebuild `state_dir/registry.json` (`lead.registry`), a derived snapshot;
+  5. rebuild `state_dir/registry.json` (`lead.registry`), a derived snapshot; then, on a terminal only,
+     offer the guard's interactive approval check for each runtime that needs it and lacks it
+     (`lead.guard.interactive`; Enter skips; not with --no-verify);
   6. open the worktree: a Terminal tab through a `.command` file in the state dir; with
      `canvas: orca`, an Orca pane when Orca runs, else the Terminal tab; neither → print the command and exit 1. A worktree whose lock is
      held already has a lead and is not opened again;
@@ -36,7 +38,7 @@ from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
 from .projects import refuse_inside, resolve_project
 from .rotation import decide
-from .guard import evaluate
+from .guard import evaluate, interactive
 from seats import verify as seat_verify
 
 PASSED_ENV = ("BALANCEWHEEL_CONFIG", "BW_STATE_DIR")
@@ -106,7 +108,7 @@ def _item_line(item):
 
 
 def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=False, verify=True, update=True,
-          bw_path=None, env=os.environ, fetch=probes._fetch, clock=None) -> int:
+          bw_path=None, env=os.environ, fetch=probes._fetch, clock=None, stdin=None) -> int:
     """`clock` (default time.time; a fixed `now` freezes it) is read at the start, again before
     quota (step 4, after updates and attacks that can take minutes), and again before the registry."""
     if clock is None:
@@ -204,6 +206,12 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
         say(f"registry: {registry.path(state)}")
     except Exception as e:  # a derived file; never the start's end, and never the exception's text
         say(f"registry not written ({type(e).__name__})")
+
+    if verify:
+        try:
+            interactive.maybe_offer(config, state, stdin or sys.stdin, out, profile=project.profile)
+        except Exception as e:  # never the start's end, and never the exception's text
+            say(f"guard interactive check: failed to run ({type(e).__name__})")
 
     # 6. the workspace
     code = _workspace(state, project, run, bw, env, say, orca.canvas(config))

@@ -87,6 +87,15 @@ def make_repo(path):
     return path
 
 
+class Tty(io.StringIO):
+    def __init__(self, text="", tty=True):
+        super().__init__(text)
+        self.tty = tty
+
+    def isatty(self):
+        return self.tty
+
+
 class StartCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -466,6 +475,40 @@ class StartCase(unittest.TestCase):
         self.assertEqual(ens.call_args.kwargs["allow_run"], True)
         self.assertIs(ens.call_args.kwargs["run"], run)
         self.assertIn("bw start: guard eval pi: pass — fake", out)
+
+    def test_start_offers_the_interactive_check_when_missing(self):
+        self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
+        self.config["guard"] = {"mode": {"p": "auto"}}
+        stdin, out = Tty("y\n"), Tty()
+        with mock.patch.object(start.evaluate, "ensure", return_value=("pass", "guard eval pi: pass")), \
+                mock.patch.object(start.interactive, "run_check", return_value=(True, "bw: recorded")) as chk:
+            code = start.start(self.config, self.state, str(self.repo), run=FakeRun(), out=out, bw_path=self.bw,
+                               env=self.env, now=NOW, update=False, stdin=stdin)
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("run the guard's interactive check now? [y/N] ", out.getvalue())
+        self.assertEqual(chk.call_args.args[2:4], ("pi", "lp"))
+
+    def test_no_interactive_offer_without_a_tty(self):
+        self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
+        self.config["guard"] = {"mode": {"p": "auto"}}
+        with mock.patch.object(start.evaluate, "ensure", return_value=("pass", "guard eval pi: pass")), \
+                mock.patch.object(start.interactive, "run_check") as chk:
+            code, out = self.start(FakeRun(), update=False, stdin=Tty("y\n", tty=False))
+        self.assertNotIn("interactive check", out)
+        chk.assert_not_called()
+
+    def test_a_recorded_check_is_not_offered_again(self):
+        self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
+        self.config["guard"] = {"mode": {"p": "acting"}}
+        key = start.interactive.check_key("pi", ADAPTERS["pi"])
+        containment.record_pass(self.state, "pi", key, "/e", store=start.interactive.STORE)
+        stdin, out = Tty("y\n"), Tty()
+        with mock.patch.object(start.evaluate, "ensure", return_value=("pass", "x")), \
+                mock.patch.object(start.interactive, "run_check") as chk:
+            start.start(self.config, self.state, str(self.repo), run=FakeRun(), out=out, bw_path=self.bw,
+                        env=self.env, now=NOW, update=False, stdin=stdin)
+        chk.assert_not_called()
+        self.assertNotIn("interactive check", out.getvalue())
 
     def test_start_no_verify_passes_allow_run_false_to_the_guard_eval(self):
         self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
