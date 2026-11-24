@@ -1,36 +1,27 @@
 {
   "_comment": "Replace these rows with your own. Names of seats, leads, plans, and profiles are yours; model ids are data and are expected to change. Copy to ~/.config/balancewheel/config.json.",
   "schema_version": 3,
-  "canvas": "orca",
+  "canvas": "terminal",
   "plans": {
     "claude-plan": {
       "vendor": "anthropic",
       "billing": "plan",
-      "quota": "statusline",
-      "orca_provider": "claude",
-      "orca_windows": {
-        "fableWeekly": [
-          "fable"
-        ]
-      }
+      "quota": "statusline"
     },
     "chatgpt-plan": {
       "vendor": "openai",
       "billing": "plan",
-      "quota": "orca",
-      "orca_provider": "codex"
+      "quota": "none"
     },
     "google-plan": {
       "vendor": "google",
       "billing": "plan",
-      "quota": "probe",
-      "orca_provider": "antigravity"
+      "quota": "probe"
     },
     "kimi-plan": {
       "vendor": "moonshot",
       "billing": "plan",
-      "quota": "orca",
-      "orca_provider": "kimi"
+      "quota": "none"
     },
     "openrouter": {
       "vendor": "openrouter",
@@ -51,10 +42,6 @@
         "agy",
         "update"
       ]
-    },
-    "orca": {
-      "app": "/Applications/Orca.app",
-      "self_updating": true
     },
     "cc-switch": {
       "update": [

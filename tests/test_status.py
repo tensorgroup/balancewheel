@@ -105,6 +105,15 @@ class StatusCase(unittest.TestCase):
         self.assertTrue(any(ln.startswith("cc-switch: ") for ln in lines), lines)
         self.assertEqual(run.calls, [])
 
+    def test_the_example_config_makes_no_orca_call(self):
+        os.makedirs(os.environ["BW_ORCA_SUPPORT"])
+        from metrics import config as cfg
+        example = cfg.load_config(str(REPO / "balancewheel.example.json"))
+        example["state_dir"] = self.state
+        run = fake_run("")
+        status.render(status.facts(example, self.state, time.time(), run=run))
+        self.assertEqual([a for a in run.calls if a and a[0] == "orca"], [])
+
     def test_facts_keys_and_todays_lines(self):
         self.config["canvas"] = "orca"
         f = status.facts(self.config, self.state, time.time(), run=fake_run(""))

@@ -237,16 +237,17 @@ class PlanOrcaAndProbeKeys(unittest.TestCase):
         for bad in (["google"], {"a": 1}, 3, None):
             self.rejects(self.plan(vendor=bad, quota="probe"), "plans.plan-b.vendor")
 
-    def test_example_has_orca_plans_without_warnings(self):
+    def test_example_uses_the_terminal_canvas_and_no_orca(self):
         c = cfg.load_config(str(HERE.parent / "balancewheel.example.json"))
         self.assertEqual(c["warnings"], [])
+        self.assertEqual(c["canvas"], "terminal")
+        self.assertNotIn("orca", c["tools"])
         pl = c["plans"]
-        self.assertEqual((pl["chatgpt-plan"]["quota"], pl["chatgpt-plan"]["orca_provider"]), ("orca", "codex"))
-        self.assertEqual((pl["kimi-plan"]["quota"], pl["kimi-plan"]["orca_provider"]), ("orca", "kimi"))
-        self.assertEqual((pl["claude-plan"]["quota"], pl["claude-plan"]["orca_provider"]), ("statusline", "claude"))
-        self.assertEqual(pl["claude-plan"]["orca_windows"], {"fableWeekly": ["fable"]})
-        self.assertEqual((pl["google-plan"]["quota"], pl["google-plan"]["orca_provider"], pl["google-plan"]["probe"]),
-                         ("probe", "antigravity", "agy"))
+        self.assertEqual({n: p["orca_provider"] for n, p in pl.items()}, {n: None for n in pl})
+        self.assertEqual(pl["chatgpt-plan"]["quota"], "none")
+        self.assertEqual(pl["kimi-plan"]["quota"], "none")
+        self.assertEqual(pl["claude-plan"]["quota"], "statusline")
+        self.assertEqual((pl["google-plan"]["quota"], pl["google-plan"]["probe"]), ("probe", "agy"))
         self.assertEqual(pl["openrouter"]["probe"], "openrouter")
 
     def test_schema_2_accepts_the_same_plan_keys(self):

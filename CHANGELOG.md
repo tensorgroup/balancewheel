@@ -173,6 +173,10 @@ not against the prose.
 - **Orca is no longer the default canvas.** A schema-3 config without `canvas` keeps Orca panes when it
   has `tools.orca` or a plan with `orca_provider`. Any other config opens Terminal tabs. Set
   `"canvas": "orca"` to keep Orca, or `"canvas": "terminal"` to stop using it. A schema 1 or 2 file reads `orca`.
+- **The example config leaves Orca out.** `canvas: terminal`; no `tools.orca`; no plan sets `orca_provider` or
+  `orca_windows`; `chatgpt-plan` and `kimi-plan` move to `quota: none` (observed caps only). Without Orca,
+  the example has no Codex or Kimi reading, no `fableWeekly` pool, no Gemini reading (`google-plan` runs on
+  observed caps until agy's probe lands), and no Orca notifications. `docs/orca.md` shows how to add Orca back.
 - Changed (log schema): a panel record may have empty `seats` when `absent` names every seat.
   `validate_panel` can keep a bw-assigned id. `store.load()` returns `panel_runs` and keeps a panel's `tier`.
   `store.load()` keeps one `panel_run` event per panel id (the first), so a repeated event is not counted twice.

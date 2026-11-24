@@ -167,6 +167,22 @@ class StartCase(unittest.TestCase):
             code, out = self.start(FakeRun(orca="running"), verify=False, update=False)
         self.assertEqual(code, 0, out)
 
+    def test_the_example_config_makes_no_orca_call(self):
+        os.environ["BW_ORCA_SUPPORT"] = str(self.root)  # an Orca support dir exists
+        config = json.loads((ROOT / "balancewheel.example.json").read_text())
+        config["state_dir"] = self.state
+        config["projects"] = {}
+        path = self.root / "example.json"
+        path.write_text(json.dumps(config))
+        from metrics import config as cfg
+        example = cfg.load_config(str(path))
+        for dry_run in (True, False):
+            run = FakeRun(orca="running")
+            out = io.StringIO()
+            start.start(example, self.state, str(self.repo), run=run, out=out, bw_path=self.bw,
+                        env=self.env, now=NOW, dry_run=dry_run, verify=False, update=False)
+            self.assertEqual([a for a in run.argvs() if a[0] == "orca"], [], dry_run)
+
     def test_terminal_canvas_skips_a_configured_orca_tool(self):
         self.config["tools"]["orca"] = {"version": ["orca", "--version"], "update": ["orca", "self-update"]}
         for dry_run in (False, True):
