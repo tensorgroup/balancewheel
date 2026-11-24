@@ -66,6 +66,9 @@ not against the prose.
   (every worktree's briefs and raw seat output). The lead still reads its own view, with its panels'
   view dirs and the wait helper. This changes `lead/sandbox.py`, so every lead's containment key
   changes once: run `bw sandbox verify <runtime>` again.
+- **`bw improve` learns from panels.** It names seats that keep timing out (`seat-timeouts:<seat>`)
+  and panels that were never logged (`panels-unlogged`). A seat absent for a usage cap, an unfinished
+  verification, the reserved tier, a missing login, or a failed panel no longer counts against it.
 
 ### Fixed
 

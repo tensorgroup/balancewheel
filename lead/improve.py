@@ -3,8 +3,9 @@
 Balancewheel's standing goal is that working with it gets easier, faster, and better the more it is
 used. Everything here reads what is already recorded: triage verdicts, decisions the user reversed,
 questions the user only agreed with, what shadow mode would have done against what the user did,
-ratings, cap switches, leads forced by hand, seats that missed panels, and the `@improve` notes
-leads publish. Each rule has a minimum sample, so a thin log says nothing rather than a guess.
+ratings, cap switches, leads forced by hand, seats that missed panels, seats that keep timing out,
+panels no one logged, and the `@improve` notes leads publish. A seat absent for a usage cap, an
+unfinished verification, a reserved tier, a missing login, or a failed panel does not count against it. Each rule has a minimum sample, so a thin log says nothing rather than a guess.
 
 Evidence counts for WINDOW_S, and after `bw improve done <key>` only evidence newer than that
 counts, so a suggestion dealt with stays gone unless it happens again. Agreement alone never argues
@@ -27,6 +28,11 @@ STAMPED_RATE = 0.6
 SKIPPED_RATE = 0.3
 SHADOW_READY_RATE = 0.8
 PANELS_SEEN = 5
+RUNS_SEEN = 10
+UNLOGGED_AFTER_S = 86400
+# An absence the seat did not cause: a plan fact, a check not finished, policy, a missing login, or a
+# panel that failed as a whole.
+NOT_THE_SEATS_FAULT = ("usage cap", "unverified", "reserved:", "no login:", "panel failed:")
 _LOOSENABLE = ("strong_case", "only_person_knows")
 _STAMP = re.compile(r"(yes|yep|yeah|ok|okay|sure|agree[d]?|go|go ahead|go for it|do it|sounds good|looks good|lgtm|fine"
                     r"|recommended|your recommendation|go with (it|that|your recommendation)|use (it|that)"
@@ -146,19 +152,45 @@ class _Rules:
 
     def seats(self):
         recent = self.data["panels"][-PANELS_SEEN:]
+
+        def missed(p, seat):
+            why = (p.get("absent") or {}).get(seat)
+            return why is not None and not str(why).startswith(NOT_THE_SEATS_FAULT)
+
         seats = {s for p in recent for s in p.get("absent") or {}}
         for seat in sorted(seats):
             key = f"seat-absent:{seat}"
-            n = sum(1 for p in recent if seat in (p.get("absent") or {}) and self.fresh(key, p.get("ts")))
+            n = sum(1 for p in recent if missed(p, seat) and self.fresh(key, p.get("ts")))
             if n >= MIN_REPEATS:
                 yield key, f"{seat} missed {n} of the last {len(recent)} panels", f"take {seat} out of the checkpoints"
+
+    def seat_timeouts(self):
+        runs = [r for r in self.data.get("panel_runs", []) if self.fresh("seat-timeouts", r.get("ts"))]
+        for seat in sorted({s for r in runs[-RUNS_SEEN:] for s in r.get("seats") or {}}):
+            key = f"seat-timeouts:{seat}"
+            recent = [r for r in runs if self.fresh(key, r.get("ts"))][-RUNS_SEEN:]
+            n = sum(1 for r in recent if (r.get("seats") or {}).get(seat) == "absent:timeout")
+            if n >= MIN_REPEATS:
+                yield key, f"{seat} timed out in {n} of the last {len(recent)} panels", \
+                    f"raise panel.cap_min, or take {seat} out of the checkpoints"
+
+    def unlogged(self):
+        key = "panels-unlogged"
+        logged = {p.get("id") for p in self.data["panels"]}
+        old = [r for r in self.data.get("panel_runs", []) if r.get("state") in ("ready", "failed")
+               and self.fresh(key, r.get("ts")) and _when(r.get("ts")) < self.now - UNLOGGED_AFTER_S]
+        u = sum(1 for r in old if r.get("panel_id") not in logged)
+        if len(old) >= MIN_SAMPLE and u >= MIN_REPEATS:
+            yield key, f"{u} of {len(old)} panels were never logged", \
+                "check that the lead follows lead/protocol/panel.md, and strengthen its logging line"
 
 
 def suggestions(data, items, now, notes=(), done=None, thresholds=None):
     """Every suggestion the evidence supports: {"key", "evidence", "action"}."""
     done = done or {}
     r = _Rules(data, items, now, done, thresholds)
-    found = [*r.reversed_(), *r.stamped(), *r.shadow(), *r.skipped(), *r.failing(), *r.ratings(), *r.switches(), *r.seats()]
+    found = [*r.reversed_(), *r.stamped(), *r.shadow(), *r.skipped(), *r.failing(), *r.ratings(), *r.switches(), *r.seats(),
+             *r.seat_timeouts(), *r.unlogged()]
     found += [(f"note:{n['id']}", f"{n.get('from', 'someone')} noted: {n.get('text', '')}", "decide what to change")
               for n in notes if n.get("id") and f"note:{n['id']}" not in done]
     return [{"key": k, "evidence": e, "action": a} for k, e, a in found]

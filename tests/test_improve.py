@@ -17,6 +17,14 @@ def data(**kw):
     return {"events": [], "sessions": [], "leads": [], "ratings": [], "panels": [], **kw}
 
 
+def run_ev(pid, seats, ts=TS, state="ready"):
+    return {"type": "panel_run", "panel_id": pid, "seats": seats, "state": state, "ts": ts}
+
+
+def panel_ev(pid, absent=None, ts=TS):
+    return {"type": "panel", "id": pid, "absent": absent or {}, "ts": ts}
+
+
 def ask(i, answer=None, frm="user", reversed_=False, **kw):
     item = {"type": "ask", "id": i, "ts": NOW - 100, "text": "q", "status": "open", **kw}
     if answer is not None:
@@ -125,8 +133,58 @@ class Rules(unittest.TestCase):
             log = os.path.join(d, "m.jsonl")
             for n in range(3):
                 store.append(log, {"type": "panel", "ts": f"2033-05-1{n}T00:00:00Z", "target": "t", "seats": ["a"],
-                                   "absent": {"gem": "usage cap"}})
+                                   "absent": {"gem": "timeout"}})
             self.assertEqual(keys(store.load(log)), ["seat-absent:gem"])
+
+    def test_seat_timeouts(self):
+        runs = [run_ev(f"p{i}", {"a": "absent:timeout", "b": "ok"}) for i in range(3)]
+        (s,) = improve.suggestions(data(panel_runs=runs), [], NOW)
+        self.assertEqual(s["key"], "seat-timeouts:a")
+        self.assertIn("a timed out in 3 of the last 3 panels", s["evidence"])
+        self.assertIn("panel.cap_min", s["action"])
+
+    def test_timeouts_need_three(self):
+        runs = [run_ev(f"p{i}", {"a": "absent:timeout"}) for i in range(2)] + [run_ev("q", {"a": "ok"})]
+        self.assertNotIn("seat-timeouts:a", keys(data(panel_runs=runs)))
+
+    def test_timeouts_ignore_other_absences(self):
+        runs = [run_ev(f"p{i}", {"a": "absent:usage cap"}) for i in range(5)]
+        self.assertNotIn("seat-timeouts:a", keys(data(panel_runs=runs)))
+
+    def test_unlogged(self):
+        runs = [run_ev(f"p{i}", {}, ts=NOW - 2 * 86400 + 0.0) for i in range(5)]
+        runs = [dict(r, ts=NOW - 2 * 86400) for r in runs]
+        d = data(panel_runs=runs, panels=[panel_ev("p0"), panel_ev("p1")])
+        (s,) = improve.suggestions(d, [], NOW)
+        self.assertEqual(s["key"], "panels-unlogged")
+        self.assertEqual(s["evidence"], "3 of 5 panels were never logged")
+
+    def test_unlogged_counts_failed_and_skips_running(self):
+        runs = [dict(run_ev(f"p{i}", {}, state="failed"), ts=NOW - 2 * 86400) for i in range(5)]
+        runs.append(dict(run_ev("r", {}, state="running"), ts=NOW - 2 * 86400))
+        self.assertEqual(keys(data(panel_runs=runs)), ["panels-unlogged"])
+
+    def test_unlogged_ignores_recent(self):
+        runs = [dict(run_ev(f"p{i}", {}), ts=NOW - 3600) for i in range(5)]
+        self.assertEqual(keys(data(panel_runs=runs)), [])
+
+    def test_unlogged_needs_a_sample(self):
+        runs = [dict(run_ev(f"p{i}", {}), ts=NOW - 2 * 86400) for i in range(4)]
+        self.assertEqual(keys(data(panel_runs=runs)), [])
+
+    def test_usage_cap_absence_not_counted(self):
+        panels = [panel_ev(f"p{i}", absent={"a": "usage cap"}) for i in range(5)]
+        self.assertNotIn("seat-absent:a", keys(data(panels=panels)))
+
+    def test_not_the_seats_fault_absences_not_counted(self):
+        for why in ("unverified", "unverified: codex version unreadable", "reserved: deep panels only",
+                    "no login: export OPENROUTER_API_KEY", "panel failed: worker died"):
+            panels = [panel_ev(f"p{i}", absent={"a": why}) for i in range(5)]
+            self.assertNotIn("seat-absent:a", keys(data(panels=panels)), why)
+
+    def test_timeout_absence_still_counted(self):
+        panels = [panel_ev(f"p{i}", absent={"a": "timeout"}) for i in range(3)] + [panel_ev(f"q{i}") for i in range(2)]
+        self.assertIn("seat-absent:a", keys(data(panels=panels)))
 
     def test_only_recent_panels_count(self):
         panels = [{"absent": {"gem": "x"}, "ts": TS} for _ in range(3)] + [{"absent": {}, "ts": TS} for _ in range(5)]
