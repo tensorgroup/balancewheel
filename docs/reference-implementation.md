@@ -31,7 +31,7 @@ updated 2026-11-23 a fifth time after the seat review fixes: the agy seat moves 
 home (`--gemini_dir`), seats lose the agent sockets and the keychain, and the parent of each code
 name is rename-proof (see Seat runtimes under `bw seat`); updated 2026-11-23 a sixth time: the panel instructions
 now live in this repo as `bw panel` (see Panel instructions); updated 2026-11-23 a seventh time after the
-first live panel: the kimi seat runs `-p` with no `--auto` (Kimi Code 2.3.2 refuses the pair).; updated 2026-11-23 an eighth time: the
+first live panel: the kimi seat runs `-p` with no `--auto` (Kimi Code 2.3.2 refuses the pair); updated 2026-11-23 with the known limits of the lead guard rules (see Lead guard rules); updated 2026-11-23 an eighth time: the
 Codex `cli` quota reading is not applicable on `codex-cli 0.164.0` (see the note under the runtime table).*
 
 ## The cast
@@ -765,6 +765,25 @@ convene one panel on a seeded buggy file. Traps:
   old pass. Run `bw sandbox verify <runtime>` once for each lead runtime.
 - A panel runs at most one agy-runtime seat. Do not put two in one roster.
 - The wait helper must run from the copy in the lead's view, with no other words on the line.
+
+## Lead guard rules: known limits (`bw guard`, 2026-11-23)
+
+The OS sandbox is the containment. The guard is a second layer. It judges each shell command
+of a guarded lead before the command runs. The rules read the command as bash, because pi runs
+bash. A zsh lead would need new rules: zsh has `$X:h` modifiers, and it does not split unquoted
+words.
+
+The rules allow a write into the lead's own checkpoint dir. They expand only the `BW_*` values
+that bw gave the lead. A command that may change one of those names is a rule ask, and the judge
+cannot lift it. These cases stay outside the rules:
+
+- `source` and `.` run a file that the rules do not read. The command is gray, and the judge
+  decides.
+- A change to `IFS` splits a later unquoted expansion in a different way. The command is gray.
+- The rules do not parse a heredoc body. The command is gray.
+- One command can plant a symlink (`cp -P`, or `mv` of a link) and then write through it. The
+  rules judge the path before the link exists, so they can allow that write. The sandbox still
+  limits where the write lands.
 
 ## Verification checklist (before trusting any seat)
 

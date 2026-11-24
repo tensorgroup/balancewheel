@@ -623,6 +623,12 @@ class CheckpointDirTests(unittest.TestCase):
                     'alias s="${p}W_PANEL=x"', 'eval "${p}W_PANEL=.git/hooks"',
                     "time -- BW_PANEL=x true", "time -p -- BW_PANEL=x true", "echo $((BW_PANEL++))",
                     "echo $((++BW_PANEL))", "(( BW_PANEL|=0 ))", "(( BW_PANEL <<= 1 ))",
+                    # round 4
+                    "p=BW_; declare -n r; r=${p}PANEL; r=.git/hooks; echo x > $BW_PANEL/pre-commit",
+                    "declare -n r; r=$p", "local -n r",
+                    "trap 'export ${p}W_PANEL=.git/hooks' DEBUG", "alias s='export ${p}W_PANEL=x'",
+                    "trap 'eval \"${p}W_PANEL=x\"' DEBUG", "trap 'declare -n r=$p; r=x' DEBUG",
+                    "trap 'read $n' DEBUG", "eval 'export ${p}W_PANEL=x'",
                     # round 1 attacks still ask
                     "printf -vBW_PANEL %s .git/hooks; echo x > $BW_PANEL/pre-commit", "export BW_{PANEL,Q}=/tmp",
                     "read -aBW_PANEL <<< /tmp", "wait -p BW_PANEL", "true {BW_PANEL}>/tmp/f", "export $x=/tmp"):
@@ -637,7 +643,12 @@ class CheckpointDirTests(unittest.TestCase):
                     # round 3: a trap or alias that only reads the value
                     "trap 'echo $BW_PANEL' EXIT", "alias p='ls ${BW_PANEL}'", "declare -a x=$y",
                     'eval "x=$y"', "trap \"rm -f $tmp\" EXIT", "echo $(( $BW_PANEL + 1 ))",
-                    "[[ BW_PANEL == x ]]"):
+                    "[[ BW_PANEL == x ]]",
+                    # round 4: literal nameref targets and code text that only reads
+                    "declare -n r=foo", "trap 'echo $BW_PANEL' EXIT", "trap 'rm -f \"$tmp\"' EXIT",
+                    "alias ll='ls -l'", "eval 'echo hi'", "alias p='ls ${#BW_PANEL}'",
+                    "trap 'echo ${BW_PANEL}/x' EXIT", "echo $(( BW_PANEL ))", "((BW_PANEL))",
+                    "(( BW_PANEL == 1 ))", "for ((i=0;i<3;i++)); do ls $BW_PANEL/$i; done"):
             d = decide(shell(cmd), self.ctx(lead_env=env))
             self.assertNotEqual(d.rule, "ask:bw-env", cmd)
 
