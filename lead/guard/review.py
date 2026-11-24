@@ -60,6 +60,23 @@ def pick(decisions, key, recent, sample, rng):
     return out
 
 
+def offer_pick(decisions, key, n, acting, rng):
+    """`n` unmarked decisions for `bw start`'s short review. Before promotion a quarter are sampled
+    allows (at least one) and the rest are the most recent stops. After promotion at least two are
+    stops (the guard now acts, so what it blocked matters most) and the rest are sampled allows. A
+    pool too short on one side is filled from the other."""
+    mine = [d for d in of_key(decisions, key) if "mark" not in d]
+    stops = [d for d in mine if d.get("decision") != "allow"]
+    allows = [d for d in mine if d.get("decision") == "allow"]
+    want_stops = min(n, 2) if acting else n - max(1, int(n * 0.25))
+    take_stops = min(len(stops), want_stops)
+    take_allows = min(len(allows), n - take_stops)
+    take_stops = min(len(stops), n - take_allows)  # a short allow pool is filled with more stops
+    out = [dict(d) for d in (stops[-take_stops:] if take_stops else [])]
+    out += [dict(d, sampled=True) for d in rng.sample(allows, take_allows)]
+    return out
+
+
 def _split(items):
     by = {}
     for d in items:
@@ -155,7 +172,9 @@ def print_summary(decisions, key, out):
     print(promotion_line(s), file=out)
 
 
-def run(state_dir, profile=None, recent=20, sample=5, list_only=False, stdin=None, out=None, rng=None):
+def run(state_dir, profile=None, recent=20, sample=5, list_only=False, stdin=None, out=None, rng=None,
+        items=None, key=None):
+    """`items` (with `key`) reviews exactly those decisions under that evidence key: the start offer."""
     stdin, out = stdin or sys.stdin, out or sys.stdout
     rng = rng or random.SystemRandom()
     loaded = record.load(state_dir)
@@ -163,12 +182,14 @@ def run(state_dir, profile=None, recent=20, sample=5, list_only=False, stdin=Non
         print(f"bw: ignoring an orphan mark (no decision {m.get('decision_id')})", file=sys.stderr)
     for w in loaded["warnings"]:
         print(f"bw: guard log: {w}", file=sys.stderr)
-    key = select_key(loaded["decisions"], profile)
+    if items is None:
+        key = select_key(loaded["decisions"], profile)
     if key is None:
         print("bw: no guard decisions to review" + (f" for profile {profile}" if profile else ""), file=out)
         return 0
     print(safe(f"reviewing {key_label(key)}"), file=out)
-    items = pick(loaded["decisions"], key, recent, sample, rng)
+    if items is None:
+        items = pick(loaded["decisions"], key, recent, sample, rng)
     for i, d in enumerate(items, 1):
         show(d, out, i, len(items))
         if list_only:

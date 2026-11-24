@@ -488,6 +488,26 @@ class StartCase(unittest.TestCase):
         self.assertIn("run the guard's interactive check now? [y/N] ", out.getvalue())
         self.assertEqual(chk.call_args.args[2:4], ("pi", "lp"))
 
+    def test_start_offers_before_the_workspace_opens(self):
+        order = []
+        with mock.patch.object(start.offer, "maybe_offer", side_effect=lambda *a, **k: order.append("offer")) as mo, \
+                mock.patch.object(start, "_workspace", side_effect=lambda *a, **k: order.append("workspace") or 0):
+            code, out = self.start(FakeRun(), update=False)
+        self.assertEqual(order, ["offer", "workspace"])
+        self.assertEqual(mo.call_args.args[2], "p")
+
+    def test_no_review_offer_with_no_verify(self):
+        with mock.patch.object(start.offer, "maybe_offer") as mo:
+            self.start(FakeRun(), update=False, verify=False)
+        mo.assert_not_called()
+
+    def test_review_offer_failure_never_ends_the_start(self):
+        with mock.patch.object(start.offer, "maybe_offer", side_effect=RuntimeError("secret")):
+            code, out = self.start(FakeRun(), update=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("guard review offer: failed to run (RuntimeError)", out)
+        self.assertNotIn("secret", out)
+
     def test_no_interactive_offer_without_a_tty(self):
         self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
         self.config["guard"] = {"mode": {"p": "auto"}}

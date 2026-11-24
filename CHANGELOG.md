@@ -15,6 +15,11 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **The guard review offer (`lead/guard/offer.py`).** On a terminal, before the lead opens, `bw start` offers a
+  short review of unmarked guard decisions: 5 once a day while the profile is under the gate's counts (a quarter
+  are sampled allows), 3 once a week after promotion (at least 2 are stops). Enter skips. It never runs with
+  `--no-verify`, never for a profile pinned `shadow`, and never when no decision is unmarked. The review names
+  the gate's evidence key. New state file: `guard-offer.json`.
 - **The guard gate (`lead/guard/gate.py`).** At lead start, bw decides the guard's mode before it builds the
   broker. A profile pinned `auto` or `acting` goes to acting when all gate conditions hold: at least 50 reviewed
   decisions, at least 20 sampled allows (at least 5 of them judge allows when `guard.model` is set), under 10% false

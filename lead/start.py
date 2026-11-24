@@ -15,7 +15,9 @@ One `bw start:` line per event. Steps:
      decision at the "start" moment;
   5. rebuild `state_dir/registry.json` (`lead.registry`), a derived snapshot; then, on a terminal only,
      offer the guard's interactive approval check for each runtime that needs it and lacks it
-     (`lead.guard.interactive`; Enter skips; not with --no-verify);
+     (`lead.guard.interactive`; Enter skips; not with --no-verify); then, on a terminal only, offer a short
+     review of a few unmarked guard decisions, at most once a day (`lead.guard.offer`; Enter skips;
+     not with --no-verify);
   6. open the worktree: a Terminal tab through a `.command` file in the state dir; with
      `canvas: orca`, an Orca pane when Orca runs, else the Terminal tab; neither → print the command and exit 1. A worktree whose lock is
      held already has a lead and is not opened again;
@@ -38,7 +40,7 @@ from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
 from .projects import refuse_inside, resolve_project
 from .rotation import decide
-from .guard import evaluate, interactive
+from .guard import evaluate, interactive, offer
 from seats import verify as seat_verify
 
 PASSED_ENV = ("BALANCEWHEEL_CONFIG", "BW_STATE_DIR")
@@ -212,6 +214,10 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
             interactive.maybe_offer(config, state, stdin or sys.stdin, out, profile=project.profile)
         except Exception as e:  # never the start's end, and never the exception's text
             say(f"guard interactive check: failed to run ({type(e).__name__})")
+        try:
+            offer.maybe_offer(config, state, project.profile, stdin or sys.stdin, out, clock())
+        except Exception as e:  # never the start's end, and never the exception's text
+            say(f"guard review offer: failed to run ({type(e).__name__})")
 
     # 6. the workspace
     code = _workspace(state, project, run, bw, env, say, orca.canvas(config))
