@@ -66,10 +66,10 @@ def run_counts(config, names, tier_name) -> tuple:
 
 
 def _agy_blocked(config, name, seats) -> bool:
-    """True when `name` is agy-runtime and another agy seat already runs (pending or ok)."""
+    """True when `name` is agy-runtime and another agy seat holds the agy place (pending, running, or ok)."""
     if _seat(config, name).get("runtime") != "agy":
         return False
-    return any(_seat(config, n).get("runtime") == "agy" and e.get("status") in ("pending", "ok")
+    return any(_seat(config, n).get("runtime") == "agy" and e.get("status") in ("pending", "running", "ok")
                for n, e in seats.items() if n != name)
 
 

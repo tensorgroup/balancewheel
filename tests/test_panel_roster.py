@@ -134,6 +134,14 @@ class RosterTest(unittest.TestCase):
         seats["a1"]["status"] = "absent"  # the agy seat is gone: the stand-in may run
         self.assertEqual(roster.standin(c, {}, "a", seats, "standard", 0.0, capped=NEVER), "a2")
 
+    def test_running_agy_seat_holds_the_agy_place(self):
+        c = cfg(a1={"runtime": "agy"}, a2={"runtime": "agy"})
+        c["seats"]["a"]["fallback"] = "a2"
+        seats = {"a": {"status": "absent", "reason": "usage cap", "on_roster": True},
+                 "a1": {"status": "running", "on_roster": True}}   # a1 is live; a capped mid-run
+        self.assertIsNone(roster.standin(c, {}, "a", seats, "standard", 0.0, capped=NEVER))
+        self.assertNotIn("a2", seats)
+
     def test_capped_agy_seat_does_not_hold_the_agy_place(self):
         c = cfg(a1={"runtime": "agy"}, a2={"runtime": "agy"})
         cap_a1 = lambda c_, s, n, t: "capped" if n == "a1" else None  # noqa: E731

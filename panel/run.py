@@ -175,7 +175,11 @@ class _Worker:
         return _stop["why"]
 
     def why(self, exc) -> str:
-        return self.stop_reason() or ("stopped" if isinstance(exc, Stopped) else type(exc).__name__)
+        try:
+            stop = self.stop_reason()
+        except BaseException:
+            stop = _stop["why"]
+        return stop or ("stopped" if isinstance(exc, Stopped) else type(exc).__name__)
 
     def check_stop(self) -> None:
         if _stop["why"]:
@@ -385,6 +389,47 @@ def _verify_after(w, unverified, seats) -> None:
         w.say(f"spawn_verify {names} after round 1: {started}")
 
 
+def _fail_round(w, seats, why) -> dict:
+    """The failure path: stop the live seats, then `_finish(failed=why)`. When that raises too, a
+    minimal write marks the panel failed. Best effort: this function never raises."""
+    try:
+        w.say(f"round 1 failed ({why}):\n" + traceback.format_exc())
+    except BaseException:
+        pass
+    try:
+        w.terminate()
+    except BaseException:
+        pass
+    try:
+        current = pstate.load(w.state, w.key, w.pid) or {}
+        if current.get("state") == "ready":  # the panel finished; only a later step failed
+            return json.loads(_read_text(os.path.join(w.work, "findings.json")) or "{}")
+        return _finish(w, seats, failed=why)
+    except BaseException:
+        return _mark_failed(w, seats, why)
+
+
+def _mark_failed(w, seats, why) -> dict:
+    """Mark the panel failed with no findings.json write; each step is best effort."""
+    for entry in seats.values():
+        if entry.get("status") not in ("ok", "absent"):
+            entry.update(status="absent", reason=f"panel failed: {why}")
+    try:
+        w.say("the failed panel could not be written in full:\n" + traceback.format_exc())
+    except BaseException:
+        pass
+    try:
+        w.update(lambda p: p.update(state="failed", error=why, short=True, seats=json.loads(json.dumps(seats))))
+    except BaseException:
+        pass
+    try:
+        pstate.record_run(w.config, w.state, w.key, w.pid, 0, w.now())
+    except BaseException:
+        pass
+    absent = {s: e.get("reason") for s, e in seats.items() if e.get("status") == "absent"}
+    return _bare_doc({"id": w.pid}, seats, absent, True, [], why)
+
+
 def round1(config, state, key, pid, now=time.time) -> dict:
     """Run round 1 of this panel and return its findings.json document (Task 8, steps 1-6)."""
     w = _Worker(config, state, key, pid, now)
@@ -411,14 +456,12 @@ def round1(config, state, key, pid, now=time.time) -> dict:
             unverified = _round(w, runs, seats, brief_path, worktree, tier)
             _verify_after(w, unverified, seats)
             return _finish(w, seats)
-        except Exception as exc:
+        except BaseException as exc:  # KeyboardInterrupt and SystemExit too: never leave the panel running
             why = w.why(exc)
-            w.say(f"round 1 failed ({why}):\n" + traceback.format_exc())
-            w.terminate()
-            current = pstate.load(state, key, pid) or {}
-            if current.get("state") == "ready":  # the panel finished; only a later step failed
-                return json.loads(_read_text(os.path.join(w.work, "findings.json")) or "{}")
-            return _finish(w, seats, failed=why)
+            doc = _fail_round(w, seats, why)
+            if not isinstance(exc, Exception):
+                raise
+            return doc
     finally:
         pstate.release_job(state, key, pid)
 
@@ -474,13 +517,16 @@ def ask(config, state, key, pid, ask_id, now=time.time) -> dict:
             w.live.clear()
             return _set_ask(w, ask_id, state="done" if status == "ok" else "failed", reason=reason,
                             session_id=_text(res.get("session_id")))
-        except Exception as exc:
+        except BaseException as exc:
             if entry is None:
                 raise
             why = w.why(exc)
             w.say(f"ask {ask_id} failed ({why}):\n" + traceback.format_exc())
             w.terminate()
-            return _set_ask(w, ask_id, state="failed", reason=why)
+            done = _set_ask(w, ask_id, state="failed", reason=why)
+            if not isinstance(exc, Exception):
+                raise
+            return done
     finally:
         pstate.release_job(state, key, pid)
 
@@ -516,6 +562,7 @@ def main(argv=None) -> int:
     finally:
         for sig, handler in old.items():
             signal.signal(sig, handler)
+        _stop["why"] = None
 
 
 if __name__ == "__main__":

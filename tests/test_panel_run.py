@@ -78,9 +78,9 @@ class PanelRunTest(unittest.TestCase):
         self.addCleanup(self.sv.stop)
         self.pid = self.new_panel()
 
-    def new_panel(self, tier="standard", checkpoint="design"):
-        profile = self.CFG["profiles"]["p"]
-        names = roster.roster(self.CFG, profile, checkpoint, tier)
+    def new_panel(self, tier="standard", checkpoint="design", config=None):
+        config = config or self.CFG
+        names = roster.roster(config, config["profiles"]["p"], checkpoint, tier)
         p = state.create(self.S, K, {
             "worktree": str(self.wt), "profile": "p", "checkpoint": checkpoint, "target": "widget.py",
             "focus": "", "stakes": "normal", "paths": [], "tier": tier, "roster": names,
@@ -319,6 +319,81 @@ class PanelRunTest(unittest.TestCase):
         th.join(20)
         self.assertEqual(out["doc"]["absent"], {"o": "panel failed: stopped after 1 min"})
 
+    def test_mid_run_agy_stand_in_refused_while_agy_runs(self):
+        config = json.loads(json.dumps(self.CFG))
+        config["seats"]["y"] = dict(config["seats"]["g"], runtime="agy")
+        config["seats"]["z"] = dict(config["seats"]["g"], runtime="agy")
+        config["seats"]["a"]["fallback"] = "z"
+        config["profiles"]["p"]["checkpoints"]["review"]["seats"] = ["a", "y"]
+        pid = self.new_panel_after_release(checkpoint="review", config=config)
+        out = {}
+        env = {"FAKE_SEAT_a": "cap", "FAKE_SEAT_y": "sleep"}
+
+        def go():
+            with mock.patch.dict(os.environ, env):
+                out["doc"] = run.round1(config, self.S, K, pid)
+
+        th = threading.Thread(target=go)
+        th.start()
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            seats = (state.load(self.S, K, pid) or {}).get("seats") or {}
+            f = self.OUT / "meta-y-1.json"
+            if (seats.get("a") or {}).get("status") == "absent" and f.exists() and json.loads(f.read_text())["child"]:
+                break
+            time.sleep(0.02)
+        self.assertEqual(state.load(self.S, K, pid)["seats"]["y"]["status"], "running")
+        os.killpg(json.loads((self.OUT / "meta-y-1.json").read_text())["pid"], signal.SIGTERM)
+        th.join(20)
+        self.assertEqual(out["doc"]["absent"], {"a": "usage cap", "y": "interrupted"})
+        self.assertNotIn("z", out["doc"]["seats"])
+        self.assertEqual(self.argvs("z"), [])
+
+    def test_failed_write_falls_back_to_a_minimal_failed_state(self):
+        real, calls = run._write_text, []
+
+        def fail_once(path, text):
+            if path.endswith("findings.json") and not calls:
+                calls.append(path)
+                raise OSError("disk full")
+            real(path, text)
+
+        with mock.patch.object(merge, "build", side_effect=RuntimeError("boom")), \
+                mock.patch.object(run, "_write_text", side_effect=fail_once):
+            doc = self.round1()
+        self.assertEqual(len(calls), 1)
+        p = state.load(self.S, K, self.pid)
+        self.assertEqual((p["state"], p["error"], doc["failed"]), ("failed", "RuntimeError", "RuntimeError"))
+        self.assertFalse(state.has_job(self.S, K))
+        self.assertEqual(len(store.load(self.LOG)["panel_runs"]), 1)
+
+    def test_fallback_never_raises(self):
+        real = run._write_text
+
+        def write_nothing_out(path, text):   # the brief still writes; findings.json and next.md never do
+            if path.endswith("brief.md"):
+                return real(path, text)
+            raise OSError("disk full")
+
+        with mock.patch.object(merge, "build", side_effect=RuntimeError("boom")), \
+                mock.patch.object(run, "_write_text", side_effect=write_nothing_out), \
+                mock.patch.object(state, "record_run", side_effect=OSError("log full")):
+            doc = self.round1()
+        self.assertEqual(doc["failed"], "RuntimeError")
+        self.assertEqual(state.load(self.S, K, self.pid)["state"], "failed")
+        self.assertFalse(state.has_job(self.S, K))
+
+    def test_keyboard_interrupt_fails_the_panel_and_stops_seats(self):
+        with mock.patch.object(run, "classify", side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            self.round1({"FAKE_SEAT_o": "sleep"})
+        p = state.load(self.S, K, self.pid)
+        self.assertEqual((p["state"], p["error"]), ("failed", "KeyboardInterrupt"))
+        self.assertEqual({e["status"] for e in p["seats"].values()}, {"absent"})
+        self.assertIsNone(p["job"])
+        for m in self.metas():
+            self.assertFalse(_alive(m["pid"]))
+
     def test_exception_marks_failed(self):
         with mock.patch.object(merge, "build", side_effect=RuntimeError("boom")):
             doc = self.round1()
@@ -427,6 +502,30 @@ class PanelRunTest(unittest.TestCase):
         self.assertFalse((self.view() / "asks" / "d1-1-o-1.md").exists())
         self.assertTrue((self.view() / "seats" / "o.md").exists())   # round 1's file is not touched
         self.assertFalse(state.has_job(self.S, K))
+
+    def test_ask_without_round1_session_is_refused(self):
+        self.round1({"FAKE_SEAT_o": "nosession"})
+        self.add_ask("d1-1-o-1", "o", "X")
+        entry = run.ask(self.CFG, self.S, K, self.pid, "d1-1-o-1")
+        self.assertEqual((entry["state"], entry["reason"]), ("failed", "error: no round-1 session"))
+        self.assertEqual(len(self.argvs("o")), 1)   # no resume was started
+        self.assertFalse(state.has_job(self.S, K))
+
+    def test_ask_claim_over_limit_is_refused(self):
+        self.round1()
+        self.add_ask("d1-1-o-1", "o", "x" * 1501)
+        entry = run.ask(self.CFG, self.S, K, self.pid, "d1-1-o-1")
+        self.assertEqual((entry["state"], entry["reason"]), ("failed", "error: bad claim"))
+        self.assertEqual(len(self.argvs("o")), 1)
+
+    def test_main_resets_the_stop_flag(self):
+        def stop_then_run(*a, **k):
+            run._stop["why"] = "stopped"
+            return {"failed": "stopped"}
+
+        with mock.patch.object(run, "round1", side_effect=stop_then_run):
+            self.assertEqual(run.main(["round1", "--state", self.S, "--key", K, "--panel", self.pid]), 1)
+        self.assertIsNone(run._stop["why"])
 
     def test_ask_bad_id_refused_and_job_released(self):
         self.round1()
