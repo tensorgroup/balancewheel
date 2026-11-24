@@ -426,6 +426,13 @@ once for each bw-contained lead runtime.
   would load into the guard client's process, so pi's discovered extensions stop loading for
   a guarded lead; one you still want goes in the lead's `args` as `-e <path>`.
   Details: `docs/superpowers/specs/2026-10-25-bw-guard-design.md`.
+  - **The judge, in shadow.** Set `guard.model` to an OpenRouter model id to judge gray calls.
+    The key comes from the variable that `guard.key_env` names (default `OPENROUTER_API_KEY`).
+    The lead gets its `allow` at once; the judge runs after the reply, and its verdict goes into
+    `guard.jsonl`. This sends gray calls to OpenRouter, redacted and with zero data retention.
+    After 3 judge failures in a row, bw stops calling the judge for 5 minutes and writes one
+    `guard-judge-down` notice to `bw inbox`. Every judge failure or skip records the rules' own
+    decision. `guard.on_judge_failure` is deprecated: it is still accepted and changes nothing.
   - **After upgrading.** pi and Kimi leads need `bw sandbox verify` again (the adapter hash
     changed); run `bw guard verify pi` once to record a guard pass; and launch a Claude
     Code or Codex lead once interactively to confirm its native flag is accepted by your

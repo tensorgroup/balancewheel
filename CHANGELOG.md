@@ -216,6 +216,27 @@ not against the prose.
   `python3 -I lead/guard/judge.py` runs one call as a child. The call text moved from the broker to
   `judge.call_text`. Every file in `lead/guard/` is hashed, so the guard verification key resets;
   the rules did not change, so the evidence key holds.
+- **Shadow guards judge gray calls after the reply** (`lead/guard/judging.py`, `broker.py`). With
+  `guard.model` set, a shadow gray call gets `allow` at once. One judge thread then runs
+  `judge.py` in a child, killed at its budget, and writes the record. The queue holds 32 calls. A
+  call that finds it full is recorded as `judge-skipped`, "queue full". A call still queued at the
+  end of the session is recorded as `judge-skipped`, "session ended", without a model call. Without
+  `guard.model` a gray call is recorded at once, as before. Rows now carry `prompt_hash` when
+  `guard.model` is set. Judge verdicts are cached by digest and cwd for 10 minutes; failures are not
+  cached. After 3 failures in a row the judge is skipped for 5 minutes ("judge circuit open") and
+  one `guard-judge-down` notice goes to the inbox. Every judge failure or skip records the rules'
+  own decision. **New network traffic:** with `guard.model` set, gray calls go to OpenRouter's chat
+  completions URL (this amends the 2026-10-24 spec's network list). Every file in `lead/guard/` is
+  hashed, so the guard verification key resets. The rules did not change, so the evidence key
+  holds.
+- **`guard.key_env`** (default `OPENROUTER_API_KEY`): the variable that holds the judge's key. It
+  must be a non-empty string. The key reaches the judge child through its environment only.
+- **Notice kind `guard-judge-down`** in `inbox.jsonl`.
+- **The `guard` metrics event gains `judge`**: `{"judged", "allowed", "failed", "skipped"}`, counts
+  of gray calls by judge source (`allowed` counts judge verdicts of allow).
+- **`guard.on_judge_failure` is deprecated.** It is still accepted and validated, and it changes
+  nothing: every judge failure records and applies the rules' decision. It is in neither the policy
+  digest nor the eval key.
 - **No Codex `cli` reading yet.** `codex exec --json` (`codex-cli 0.164.0`) carries no `rate_limits`
   (checked 2026-11-23). A Codex seat run writes no `quota/<plan>.cli.json`. `chatgpt-plan` in the
   example stays at `"quota": "none"`. The passive `cli` source stays for a later Codex version.

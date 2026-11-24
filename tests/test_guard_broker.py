@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -9,13 +11,29 @@ import time
 import unittest
 from unittest import mock
 
+from lead import proc
 from lead.guard import broker as brk
-from lead.guard import record
+from lead.guard import judging, record
 from lead.guard.rules import RuleContext
 
 TOKEN = "t0k3n"
 SESSION = {"session_id": "s1", "project": "wt", "profile": "dev", "lead": "pi-lead",
            "runtime": "pi", "runtime_version": "1.2.3"}
+
+
+def _no_network(*a, **k):
+    raise AssertionError("a broker test tried to open a real connection")
+
+
+_NET = mock.patch("urllib.request.build_opener", _no_network)
+
+
+def setUpModule():  # every judge here is a fake, a fake run, or a `sleep` child: none reaches the network
+    _NET.start()
+
+
+def tearDownModule():
+    _NET.stop()
 
 
 def bash(cmd):
@@ -41,8 +59,8 @@ class BrokerBase(unittest.TestCase):
                            protected_branches=["main", "master"], deploy_commands=["make deploy"],
                            push_dest=lambda r, s: None, is_pristine=lambda p: False)
 
-    def start(self, mode=None, session=None):
-        b = brk.Broker(self.state, self.gdir, TOKEN, mode or self.mode, session or dict(SESSION), self.ctx())
+    def start(self, mode=None, session=None, **kw):
+        b = brk.Broker(self.state, self.gdir, TOKEN, mode or self.mode, session or dict(SESSION), self.ctx(), **kw)
         b.bind()
         b.serve()
         self.addCleanup(self.stop, b)
@@ -360,6 +378,249 @@ class TestShadow(BrokerBase):
         self.ask(bash("jq ."))
         self.assertEqual([(d["judge_model"], d["prompt_hash"]) for d in self.decisions()],
                          [("test/judge", "h1")] * 2)
+
+
+JUDGE_ALLOW = judging.JudgeResult("judge", "allow", "local read", 7, 1)
+
+
+class FakeJudge:
+    """Stands in for a JudgeRunner: the broker reads cfg and prompt_hash, and sets notice."""
+
+    def __init__(self, result=JUDGE_ALLOW, sleep=0.0):
+        self.cfg = {"model": "test/judge", "key_env": "BW_TEST_JUDGE_KEY"}
+        self.prompt_hash = "ph1"
+        self.notice = None
+        self.result, self.sleep = result, sleep
+        self.calls, self.budgets = 0, []
+
+    def judge(self, call, digest, budget_s):
+        self.calls += 1
+        self.budgets.append(budget_s)
+        time.sleep(self.sleep)
+        return self.result
+
+
+def timed_out(argv, timeout, **kw):
+    return proc.Result(124, "", "", True)
+
+
+def wait_for(pred, timeout=5.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+class ShadowJudgeTests(BrokerBase):
+    mode = "shadow"
+
+    def use(self, judge, **kw):
+        self.b.stop()
+        self.b = self.start(judge=judge, **kw)
+        return self.b
+
+    def runner(self, **kw):
+        return judging.JudgeRunner({"model": "test/judge", "key_env": "BW_TEST_JUDGE_KEY"}, self.wt, self.tmp, **kw)
+
+    def judged(self, n=1):
+        """Wait until the judge thread has recorded n rows, so stop() finds nothing queued."""
+        self.assertTrue(wait_for(lambda: len(self.decisions()) == n))
+
+    def assert_floor(self, rows):
+        """final_decision is never weaker than rule_decision: only a judge verdict may differ from it."""
+        for d in rows:
+            if d["source"] != "judge":
+                self.assertEqual(d["decision"], d["rule_decision"], d)
+
+    def test_shadow_replies_before_judging(self):
+        self.use(FakeJudge(sleep=1.0))
+        t0 = time.monotonic()
+        r = self.ask(bash("jq . f.json"))
+        self.assertLess(time.monotonic() - t0, 0.3)
+        self.assertEqual(r["decision"], "allow")
+        self.assertEqual(self.decisions(), [])  # the record follows the judge
+
+    def test_record_follows_with_judge_fields(self):
+        j = FakeJudge()
+        self.use(j)
+        r = self.ask(bash("jq . f.json"))
+        self.judged()
+        self.b.stop()
+        (d,) = self.decisions()
+        self.assertEqual(d["id"], r["id"])
+        self.assertEqual((d["source"], d["decision"], d["rule_decision"]), ("judge", "allow", "ask"))
+        self.assertEqual((d["judge_model"], d["prompt_hash"]), ("test/judge", "ph1"))
+        self.assertEqual((d["judge_reason"], d["judge_ms"]), ("local read", 7))
+        self.assertEqual((d["outcome"], d["mode"]), ("shadow-allowed", "shadow"))
+        self.assertTrue(d["rule"].startswith("gray:"))
+        self.assertEqual(j.budgets, [judging.SHADOW_BUDGET_S])
+
+    def test_judge_ask_is_recorded_as_ask(self):
+        self.use(FakeJudge(result=judging.JudgeResult("judge", "ask", "unsure", 9, 1)))
+        self.ask(bash("jq . f.json"))
+        self.judged()
+        self.b.stop()
+        (d,) = self.decisions()
+        self.assertEqual((d["source"], d["decision"], d["judge_reason"]), ("judge", "ask", "unsure"))
+
+    def test_judge_failure_records_the_floor(self):
+        self.use(FakeJudge(result=judging.JudgeResult("judge-failed", None, "timeout", 1350, 1)))
+        self.ask(bash("jq . f.json"))
+        self.judged()
+        self.b.stop()
+        (d,) = self.decisions()
+        self.assertEqual((d["source"], d["judge_reason"], d["judge_ms"]), ("judge-failed", "timeout", 1350))
+        self.assert_floor([d])
+
+    def test_a_judge_that_raises_records_the_floor_and_an_error(self):
+        class Boom(FakeJudge):
+            def judge(self, call, digest, budget_s):
+                raise RuntimeError("judge bug")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.use(Boom())
+            self.ask(bash("jq . f.json"))
+            self.judged()
+            self.b.stop()
+        self.assertEqual(err.getvalue(), "")
+        (d,) = self.decisions()
+        self.assertEqual((d["source"], d["judge_reason"]), ("judge-failed", "RuntimeError"))
+        self.assert_floor([d])
+
+    def test_rule_calls_never_reach_the_judge(self):
+        j = FakeJudge()
+        self.use(j)
+        r = self.ask(bash("herdr pane send x"))
+        self.assertEqual(r["decision"], "allow")
+        (d,) = self.decisions()  # a rule call's record is written before the reply, as before
+        self.assertEqual((d["source"], d["decision"]), ("rule", "block"))
+        self.b.stop()
+        self.assertEqual(j.calls, 0)
+
+    def test_burst_fills_queue_and_never_delays_replies(self):
+        self.use(FakeJudge(sleep=0.2))
+        t0 = time.monotonic()
+        ids = [self.ask(bash("jq . f%d.json" % i))["id"] for i in range(40)]
+        self.assertLess(time.monotonic() - t0, 1.0)
+        self.b.stop()
+        rows = self.decisions()
+        self.assertEqual(sorted(d["id"] for d in rows), sorted(ids))
+        reasons = [d["judge_reason"] for d in rows]
+        self.assertIn("queue full", reasons)
+        self.assertIn("session ended", reasons)
+        self.assert_floor(rows)
+        for d in rows:
+            if d["judge_reason"] in ("queue full", "session ended"):
+                self.assertEqual((d["source"], d["decision"]), ("judge-skipped", "ask"))
+
+    def test_stop_records_queued_items_as_session_ended_and_joins(self):
+        j = FakeJudge(sleep=0.5)
+        self.use(j)
+        for i in range(3):
+            self.ask(bash("jq . f%d.json" % i))
+        self.assertTrue(wait_for(lambda: j.calls == 1))
+        self.b.stop()
+        self.assertEqual(threading.active_count(), self.base_threads)
+        rows = self.decisions()
+        self.assertEqual(sorted(d["judge_reason"] for d in rows), ["local read", "session ended", "session ended"])
+        self.assertEqual(j.calls, 1)  # no model call for an item still queued
+        self.assert_floor(rows)
+
+    def test_stop_waits_for_a_real_child_within_its_timeout(self):  # B6
+        jr = self.runner()
+        jr.argv = ["sleep", "5"]  # a stalled child; the real proc.run kills its group at the budget
+        with mock.patch.object(judging, "SHADOW_BUDGET_S", 0.5):
+            self.use(jr)
+            self.ask(bash("jq . f.json"))
+            self.assertTrue(wait_for(lambda: not self.b._queue))  # the judge thread has taken the item
+            time.sleep(0.05)
+            t0 = time.monotonic()
+            self.b.stop()
+            elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 1.5)
+        self.assertEqual(threading.active_count(), self.base_threads)
+        (d,) = self.decisions()
+        self.assertEqual((d["source"], d["judge_reason"]), ("judge-failed", "timeout"))
+        self.assert_floor([d])
+
+    def test_no_judge_records_synchronously(self):  # B15
+        r = self.ask(bash("jq . f.json"))
+        (d,) = self.decisions()  # the row exists when the reply arrives
+        self.assertEqual((d["id"], d["source"], d["judge_reason"]), (r["id"], "judge-skipped", "no judge"))
+        self.assert_floor([d])
+
+    def test_pause_joins_the_judge_thread(self):
+        j = FakeJudge()
+        self.use(j)
+        self.b.pause()
+        self.assertEqual(threading.active_count(), self.base_threads)
+        self.b.serve()
+        self.ask(bash("jq . f.json"))
+        self.assertTrue(wait_for(lambda: j.calls == 1))
+        self.b.pause()
+        self.assertEqual(threading.active_count(), self.base_threads)
+        self.b.serve()
+
+    def test_pause_keeps_queued_items_for_the_next_serve(self):
+        j = FakeJudge(sleep=0.3)
+        self.use(j)
+        for i in range(3):
+            self.ask(bash("jq . f%d.json" % i))
+        self.assertTrue(wait_for(lambda: j.calls == 1))
+        self.b.pause()  # the item in flight finishes; the two still queued stay queued
+        self.assertEqual(threading.active_count(), self.base_threads)
+        self.assertEqual(j.calls, 1)
+        self.b.serve()
+        self.assertTrue(wait_for(lambda: len(self.decisions()) == 3))
+        self.assertEqual([d["source"] for d in self.decisions()], ["judge"] * 3)
+
+    def test_notice_failure_is_an_error_record_not_output(self):
+        def notice(kind, text):
+            raise OSError("inbox gone")
+
+        with contextlib.redirect_stderr(io.StringIO()) as err, contextlib.redirect_stdout(io.StringIO()) as out:
+            self.use(self.runner(run=timed_out), notice=notice)
+            for i in range(4):
+                self.ask(bash("jq . f%d.json" % i))
+            self.judged(4)
+            self.b.stop()
+        self.assertEqual((err.getvalue(), out.getvalue()), ("", ""))
+        errors = record.load(self.state)["errors"]
+        self.assertTrue(any(e["type"] == "error" and e["where"] == "notice" for e in errors))
+        rows = self.decisions()
+        self.assertEqual(len(rows), 4)
+        self.assertEqual([d["judge_reason"] for d in rows], ["timeout"] * 3 + ["judge circuit open"])
+        self.assert_floor(rows)
+
+    def test_notice_reaches_the_callback_once(self):
+        notes = []
+        jr = self.runner(run=timed_out)
+        self.use(jr, notice=lambda kind, text: notes.append(kind))
+        for i in range(5):
+            self.ask(bash("jq . f%d.json" % i))
+        self.judged(5)
+        self.b.stop()
+        self.assertEqual(notes, ["guard-judge-down"])
+
+    def test_counts_have_judge_counts(self):
+        self.ask(bash("jq . f.json"))
+        self.assertEqual(self.b.counts()["judge"], {"judged": 0, "allowed": 0, "failed": 0, "skipped": 1})
+        self.use(FakeJudge())
+        self.ask(bash("jq . f.json"))
+        self.ask(bash("herdr pane send x"))
+        self.judged(3)  # the first broker's row, then this broker's two
+        self.b.stop()
+        c = self.b.counts()
+        self.assertEqual(c["judge"], {"judged": 1, "allowed": 1, "failed": 0, "skipped": 0})
+        self.assertEqual((c["calls"], c["decisions"]), (2, {"allow": 1, "block": 1}))
+
+    def test_judge_model_and_prompt_hash_come_from_the_judge(self):
+        self.use(self.runner(run=timed_out))
+        self.assertEqual((self.b.judge_model, self.b.prompt_hash), ("test/judge", judging.judge.prompt_hash()))
+        self.ask(bash("herdr pane send x"))
+        (d,) = self.decisions()
+        self.assertEqual((d["judge_model"], d["prompt_hash"]), ("test/judge", judging.judge.prompt_hash()))
 
 
 class TestRecord(unittest.TestCase):

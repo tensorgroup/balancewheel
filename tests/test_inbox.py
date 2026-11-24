@@ -175,7 +175,7 @@ class Records(InboxCase):
         with self.assertRaises(ValueError):
             inbox.notice(self.state, KEY, "made-up", "x")
         self.assertEqual(inbox.NOTICE_KINDS,
-                         {"all-capped", "pinned-capped", "router-shadow", "guard-unreachable", "inbox", "triage",
+                         {"all-capped", "pinned-capped", "router-shadow", "guard-unreachable", "guard-judge-down", "inbox", "triage",
                           "panel"})
 
     def test_notice_dedupes_per_key(self):

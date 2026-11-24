@@ -124,7 +124,7 @@ class SchemaV3(unittest.TestCase):
     def test_guard_resolved(self):
         g = cfg.load_config(str(V3))["guard"]
         self.assertEqual(g, {"mode": {"careful": "shadow", "quick": "shadow"}, "model": "vendor/judge-model",
-                             "on_judge_failure": "allow", "rules_on_native": False})
+                             "key_env": "OPENROUTER_API_KEY", "on_judge_failure": "allow", "rules_on_native": False})
 
     def test_guard_defaults_when_absent(self):
         for path in (V2,):
@@ -151,6 +151,14 @@ class SchemaV3(unittest.TestCase):
     def test_guard_mode_bad_value_rejected(self):
         o = v3(); o["guard"]["mode"] = {"careful": "loud"}
         self.rejects(o, "guard.mode.careful")
+
+    def test_guard_key_env_default_and_validation(self):
+        self.assertEqual(load_obj(v3())["guard"]["key_env"], "OPENROUTER_API_KEY")
+        o = v3(); o["guard"]["key_env"] = "BW_JUDGE_KEY"
+        self.assertEqual(load_obj(o)["guard"]["key_env"], "BW_JUDGE_KEY")
+        for bad in ("", "  ", 5, None):
+            o = v3(); o["guard"]["key_env"] = bad
+            self.rejects(o, "guard.key_env: must be a non-empty string")
 
     def test_guard_on_judge_failure_rejected(self):
         o = v3(); o["guard"]["on_judge_failure"] = "deny"

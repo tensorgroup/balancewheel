@@ -4,10 +4,15 @@ Wire: a client sends one JSON line (<= 1 MiB) {"v":1,"token","runtime","cwd","pa
 line back, {"v":1,"id","decision","reason"} or {"v":1,"error":...}. In shadow the reply is always
 allow while the record keeps the real decision; in acting the reply is the decision. The record keeps
 the final decision (`decision`) and the rules' own (`rule_decision`) apart; `source` says who decided.
-No judge exists yet, so a gray call is `judge-skipped` and its final decision is the rules' ask.
-An error reply writes no record. The record is written before the reply goes out.
+An error reply writes no record. In acting the record is written before the reply; in shadow a gray
+call's record follows the reply once judged. A shadow gray call goes to one judge thread through a
+queue of SHADOW_QUEUE items. A full queue, or a stop with items still queued, records them as
+`judge-skipped` without a model call. Without a judge, a gray call is recorded at once as
+`judge-skipped`. Every judge failure or skip records the rules' own decision (judging.final_decision).
+The acting judge arrives with the bounded waits; until then an acting gray call is `judge-skipped`.
 """
 import argparse
+import collections
 import hmac
 import json
 import os
@@ -21,7 +26,7 @@ import uuid
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 
-from lead.guard import guard_version, record, rules_version  # noqa: E402
+from lead.guard import guard_version, judging, record, rules_version  # noqa: E402
 from lead.guard.judge import call_text  # noqa: E402
 from lead.guard.normalise import normalise  # noqa: E402
 from lead.guard.redact import digest, redact  # noqa: E402
@@ -32,6 +37,8 @@ MAX_PATH = 103  # sun_path is 104 bytes on macOS, NUL included
 MAX_WORKERS = 8
 READ_DEADLINE = 0.5
 OUTCOME = {"allow": "allowed", "block": "blocked", "ask": "asked"}
+SHADOW_QUEUE = 32
+JUDGE_COUNT = {"judge": "judged", "judge-failed": "failed", "judge-skipped": "skipped"}
 
 
 def _pct(vals, q):
@@ -43,10 +50,15 @@ def _pct(vals, q):
 
 class Broker:
     def __init__(self, state_dir, guard_dir, token, mode, session, ctx, reply_garbage=False,
-                 judge_model=None, prompt_hash=None):
+                 judge_model=None, prompt_hash=None, judge=None, notice=None):
         self.state_dir, self.guard_dir, self.token = state_dir, guard_dir, token
         self.mode, self.session, self.ctx = mode, dict(session), ctx
         self.reply_garbage = reply_garbage
+        self.judge, self._raw_notice = judge, notice
+        if judge is not None:  # B15: the judge names its own model and prompt; B6: it notices through us
+            judge_model = judge.cfg.get("model") if judge_model is None else judge_model
+            prompt_hash = judge.prompt_hash if prompt_hash is None else prompt_hash
+            judge.notice = self._notice
         self.judge_model, self.prompt_hash = judge_model, prompt_hash  # on every row, judged or not
         self.sock_path = os.path.join(guard_dir, "sock")
         self.policy = record.policy_digest(ctx.protected_branches, ctx.deploy_commands)
@@ -63,6 +75,10 @@ class Broker:
         self._by_decision = {}
         self._gray = 0
         self._latency = []
+        self._judge_counts = {"judged": 0, "allowed": 0, "failed": 0, "skipped": 0}
+        self._queue = collections.deque()
+        self._qcond = threading.Condition()
+        self._judge_thread = None
 
     def arm_self_test(self, marker):
         self._marker = marker
@@ -93,6 +109,9 @@ class Broker:
 
     def serve(self):
         self._paused.clear()
+        if self.judge is not None and self.mode == "shadow":
+            self._judge_thread = threading.Thread(target=self._judge_loop, daemon=True)
+            self._judge_thread.start()
         self._accept = threading.Thread(target=self._accept_loop, daemon=True)
         self._accept.start()
 
@@ -110,10 +129,21 @@ class Broker:
             workers, self._workers = self._workers, []
         for w in workers:
             w.join()
+        with self._qcond:  # no worker is left to queue more; wake the judge thread to see the halt
+            self._qcond.notify_all()
+        if self._judge_thread is not None:
+            self._judge_thread.join()  # an in-flight child is bounded by its own timeout
+            self._judge_thread = None
 
     def stop(self):
         self._stopped.set()
         self._join_threads()
+        while True:  # still queued at the end: recorded without a model call
+            with self._qcond:
+                if not self._queue:
+                    break
+                item = self._queue.popleft()
+            self._judged(item, judging.JudgeResult("judge-skipped", None, "session ended", None, 0))
         if self._listener is not None:
             self._listener.close()
             self._listener = None
@@ -125,7 +155,49 @@ class Broker:
     def counts(self):
         with self._lock:
             return {"calls": self._calls, "decisions": dict(self._by_decision), "gray": self._gray,
-                    "latency_ms": {"p50": _pct(self._latency, 0.5), "p95": _pct(self._latency, 0.95)}}
+                    "latency_ms": {"p50": _pct(self._latency, 0.5), "p95": _pct(self._latency, 0.95)},
+                    "judge": dict(self._judge_counts)}
+
+    def _halted(self):
+        return self._stopped.is_set() or self._paused.is_set()
+
+    def _notice(self, kind, text):
+        """The runner's notice callback, made safe for a judge thread: never raises, never prints."""
+        try:
+            if self._raw_notice is not None:
+                self._raw_notice(kind, text)
+        except Exception as exc:
+            self._error("notice", exc)
+
+    def _error(self, where, exc):
+        try:
+            record.append(self.state_dir, {
+                "type": "error", "session_id": self.session["session_id"], "where": where,
+                "error": "%s: %s" % (type(exc).__name__, redact(str(exc))[:300])})
+        except Exception:
+            pass
+
+    def _judge_loop(self):
+        """One thread: judge queued shadow calls in order and record each. It stops on pause() or
+        stop() between items; items it has not taken stay queued."""
+        while True:
+            with self._qcond:
+                while not self._queue and not self._halted():
+                    self._qcond.wait(0.1)
+                if self._halted():
+                    return
+                item = self._queue.popleft()
+            try:
+                result = self.judge.judge(item[1], item[0]["digest"], judging.SHADOW_BUDGET_S)
+            except Exception as exc:  # the judge is untrusted code: its bug keeps the rules' decision
+                result = judging.JudgeResult("judge-failed", None, type(exc).__name__, None, 0)
+            self._judged(item, result)
+
+    def _judged(self, item, result):
+        try:
+            self._record(*item, result)
+        except Exception as exc:
+            self._error("record", exc)
 
     def _accept_loop(self):
         while not (self._stopped.is_set() or self._paused.is_set()):
@@ -228,12 +300,7 @@ class Broker:
 
     def _fail(self, conn, where, exc):
         """Reply with an error and leave one error record (no call text, no stderr)."""
-        try:
-            record.append(self.state_dir, {
-                "type": "error", "session_id": self.session["session_id"], "where": where,
-                "error": "%s: %s" % (type(exc).__name__, redact(str(exc))[:300])})
-        except Exception:
-            pass
+        self._error(where, exc)
         self._send(conn, {"v": 1, "error": "internal error"})
 
     def _finish(self, conn, call, d, t0):
@@ -244,35 +311,52 @@ class Broker:
             if self_test:
                 self._marker = None
         did = uuid.uuid4().hex[:12]
-        # rules.decide gives source "gray" (always with decision "ask" and a gray:* rule) or "rule"; the
-        # record maps "gray" to a judge source and keeps "rule". No judge yet: a gray call keeps the ask.
-        if d.source == "gray":
-            source, final, judge_reason = "judge-skipped", d.decision, "no judge"
-        else:
-            source, final, judge_reason = "rule", d.decision, None
-        outcome = "shadow-allowed" if self.mode == "shadow" else OUTCOME.get(final, "asked")
         s = self.session
         ev = {"type": "decision", "id": did, "session_id": s["session_id"], "project": s["project"],
               "profile": s["profile"], "lead": s["lead"], "runtime": s["runtime"],
               "runtime_version": s["runtime_version"], "tool": call.tool, "kind": call.kind,
-              "call": redact(text), "digest": digest(call), "source": source, "rule": d.rule,
-              "decision": final, "rule_decision": d.decision, "reason": redact(d.reason or ""),
+              "call": redact(text), "digest": digest(call), "rule": d.rule,
+              "rule_decision": d.decision, "reason": redact(d.reason or ""),
               "latency_ms": latency, "rules_version": self.rules_v, "guard_version": self.guard_v,
-              "policy_digest": self.policy, "mode": self.mode, "outcome": outcome,
-              "judge_reason": judge_reason, "judge_ms": None, "judge_model": self.judge_model,
-              "prompt_hash": self.prompt_hash, "self_test": self_test}
-        record.append(self.state_dir, ev)
-        if not self_test:
-            with self._lock:
-                self._calls += 1
-                self._by_decision[final] = self._by_decision.get(final, 0) + 1
-                self._gray += record.is_gray(ev)
-                self._latency.append(latency)
+              "policy_digest": self.policy, "mode": self.mode,
+              "judge_model": self.judge_model, "prompt_hash": self.prompt_hash, "self_test": self_test}
+        # rules.decide gives source "gray" (always with decision "ask" and a gray:* rule) or "rule".
+        gray = d.source == "gray"
+        if gray and self.mode == "shadow" and self.judge is not None and not self_test:
+            with self._qcond:
+                queued = len(self._queue) < SHADOW_QUEUE
+                if queued:
+                    self._queue.append((ev, call, d))
+                    self._qcond.notify()
+            if not queued:
+                self._record(ev, call, d, judging.JudgeResult("judge-skipped", None, "queue full", None, 0))
+        else:
+            self._record(ev, call, d, judging.JudgeResult("judge-skipped", None, "no judge", None, 0) if gray else None)
         if self.reply_garbage:
             return self._send(conn, b"garbage, not json\n")
-        # the self-test must see what the rules decided, whatever the mode
-        shown = d.decision if self_test else "allow" if self.mode == "shadow" else final
+        # the self-test must see what the rules decided, whatever the mode; a queued call is shadow
+        shown = d.decision if self_test else "allow" if self.mode == "shadow" else ev["decision"]
         self._send(conn, {"v": 1, "id": did, "decision": shown, "reason": d.reason})
+
+    def _record(self, ev, call, d, result):
+        """Fill in who decided and the final decision, append the row, and count it."""
+        gray = d.source == "gray"
+        final = judging.final_decision(d.decision, gray, result)
+        ev.update({"source": result.source if gray else "rule", "decision": final,
+                   "outcome": "shadow-allowed" if self.mode == "shadow" else OUTCOME.get(final, "asked"),
+                   "judge_reason": redact(result.reason) if gray and result.reason else None,
+                   "judge_ms": result.ms if gray else None})
+        record.append(self.state_dir, ev)
+        if ev["self_test"]:
+            return
+        with self._lock:
+            self._calls += 1
+            self._by_decision[final] = self._by_decision.get(final, 0) + 1
+            self._gray += record.is_gray(ev)
+            self._latency.append(ev["latency_ms"])
+            if gray:
+                self._judge_counts[JUDGE_COUNT[result.source]] += 1
+                self._judge_counts["allowed"] += result.source == "judge" and final == "allow"
 
 
 def main(argv=None):

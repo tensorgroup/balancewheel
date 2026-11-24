@@ -475,6 +475,12 @@ class GuardRunner(RunnerCase):
         types = [(e["type"], e.get("phase")) for e in log]
         self.assertLess(types.index(("guard", None)), types.index(("session", "end")))
 
+    def test_guard_event_carries_judge_counts(self):
+        p = self.start("--use", "lb", "--guard", "pi", env={"FAKE_MODE_b": "guard_probe"})
+        self.assertEqual(p.wait(30), 0, p.stdout.read())
+        (g,) = self.events("guards")
+        self.assertEqual(g["judge"], {"judged": 0, "allowed": 0, "failed": 0, "skipped": 0})  # `ls` is a rule allow
+
     def test_stale_guard_variables_are_replaced_by_the_sessions_own_for_a_guarded_lead(self):
         p = self.start("--use", "lb", "--guard", "pi", env={"FAKE_MODE_b": "guard_probe", "BW_GUARD_TOKEN": "stale",
                                                           "BW_GUARD_EXTRA": "stale"})
@@ -1180,6 +1186,27 @@ class OpenLines(unittest.TestCase):
         (n,) = [i for i in inbox.open_items(tmp.name, "k") if i.get("kind") == "panel"]
         self.assertEqual(n["key"], "open-lines")
         self.assertIn("RuntimeError", n["text"])
+        ctx.say.assert_not_called()
+
+
+class GuardNotice(unittest.TestCase):
+    def test_judge_notice_goes_straight_to_the_inbox(self):
+        from lead import inbox
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        ctx = mock.Mock(state=tmp.name, project=mock.Mock(worktree_key="k"))
+        notice = runner._guard_notice(ctx)
+        with mock.patch("sys.stdout") as out, mock.patch("sys.stderr") as err:
+            notice("guard-judge-down", "the guard judge failed 3 times")
+        (n,) = [i for i in inbox.open_items(tmp.name, "k") if i.get("kind") == "guard-judge-down"]
+        self.assertIn("failed 3 times", n["text"])
+        ctx.say.assert_not_called()
+        ctx.notice.assert_not_called()
+        self.assertEqual((out.write.call_count, err.write.call_count), (0, 0))
+
+    def test_judge_notice_failure_raises_to_the_broker(self):
+        ctx = mock.Mock(state=os.devnull, project=mock.Mock(worktree_key="k"))  # not a dir: the write fails
+        with self.assertRaises(OSError):
+            runner._guard_notice(ctx)("guard-judge-down", "x")  # Broker._notice turns it into an error record
         ctx.say.assert_not_called()
 
 

@@ -21,7 +21,7 @@ V3_TOP_KEYS = {"guard", "triage", "improve", "panel", "canvas"}
 CANVASES = {"terminal", "orca"}
 V3_LEAD_KEYS = {"autonomy"}
 V3_PROFILE_KEYS = {"protected_branches", "deploy_commands"}
-GUARD_KEYS = {"mode", "model", "on_judge_failure", "rules_on_native"}
+GUARD_KEYS = {"mode", "model", "key_env", "on_judge_failure", "rules_on_native"}
 GUARD_MODES = {"shadow", "acting"}
 JUDGE_FAILURES = {"allow", "ask"}
 TRIAGE_KEYS = {"mode", "model", "key_env", "thresholds"}
@@ -359,12 +359,16 @@ def _validate_guard(obj, profiles, leads, version):
         for name, ld in leads.items():
             _expect(not (ld["autonomy"] == "guard" and ld["model"] == model),
                     f"guard.model: must differ from the lead's own model ({model!r}, lead {name!r})")
+    key_env = given.get("key_env", "OPENROUTER_API_KEY")
+    _expect(isinstance(key_env, str) and key_env.strip(), "guard.key_env: must be a non-empty string")
+    # Deprecated and inert: every judge failure records and applies the rules' own decision. It is still
+    # validated, so an older file loads. It is in neither the policy digest nor the eval key.
     failure = given.get("on_judge_failure", "allow")
     _expect(failure in JUDGE_FAILURES, f"guard.on_judge_failure: must be one of {sorted(JUDGE_FAILURES)}, got {failure!r}")
     rules = given.get("rules_on_native", False)
     _expect(isinstance(rules, bool), "guard.rules_on_native: must be true or false")
     _expect(not rules, "guard.rules_on_native: not built yet")
-    return {"mode": mode, "model": model, "on_judge_failure": failure, "rules_on_native": False}
+    return {"mode": mode, "model": model, "key_env": key_env, "on_judge_failure": failure, "rules_on_native": False}
 
 
 def _validate_triage(obj, profiles):

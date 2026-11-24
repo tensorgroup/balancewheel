@@ -35,8 +35,8 @@ import store  # noqa: E402
 
 FILE = "inbox.jsonl"
 VIEW_DIR = "inbox-view"
-NOTICE_KINDS = frozenset({"all-capped", "pinned-capped", "router-shadow", "guard-unreachable", "inbox", "triage",
-                          "panel"})
+NOTICE_KINDS = frozenset({"all-capped", "pinned-capped", "router-shadow", "guard-unreachable", "guard-judge-down",
+                          "inbox", "triage", "panel"})
 READ_LIMIT = 64 * 1024
 TEXT_LIMIT = 2000
 MAX_ASKS_PER_SESSION = 50

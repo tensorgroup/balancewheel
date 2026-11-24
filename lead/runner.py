@@ -46,7 +46,7 @@ import uuid
 
 from . import containment, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox, triage as triagemod
 from .handoff import build_handoff, checkpoint_dir, first_prompt, open_panels_section, protocol_text, write_first_prompt
-from .guard import broker as brk, install as guard_install, launch
+from .guard import broker as brk, install as guard_install, judging, launch
 from .guard.launch import GuardUnavailable
 from .guard.review import safe
 from .locks import RuntimeLock
@@ -295,8 +295,13 @@ class Session:
             rules_ctx = launch.rule_context(ctx.project, ctx.config["profiles"][profile], self.head,
                                             checkpoint_dir=checkpoint_dir(ctx.state, ctx.project.worktree_key),
                                             lead_env=self.lead_env, panel_wait=self.wait_path)
+            gcfg = ctx.config.get("guard", {})
+            judge = None  # no model: a gray call is recorded at once, before the reply
+            if gcfg.get("model"):
+                judge = judging.JudgeRunner({"model": gcfg["model"], "key_env": gcfg.get("key_env", "OPENROUTER_API_KEY")},
+                                            ctx.project.worktree, rules_ctx.home)
             self.broker = brk.Broker(ctx.state, gdir, token, mode, session, rules_ctx,
-                                     judge_model=ctx.config.get("guard", {}).get("model"))
+                                     judge_model=gcfg.get("model"), judge=judge, notice=_guard_notice(ctx))
             self.broker.bind()
         except (ValueError, OSError, subprocess.SubprocessError) as e:
             raise GuardUnavailable(f"guard cannot start: {e}")
@@ -437,7 +442,7 @@ class Session:
                  "profile": ctx.project.profile, "lead": self.lead_name, "runtime": self.lead["runtime"],
                  "mode": self.broker.mode, "guard_version": self.broker.guard_v, "rules_version": self.broker.rules_v,
                  "calls": c["calls"], "decisions": {k: by.get(k, 0) for k in ("allow", "ask", "block")},
-                 "gray": c["gray"], "unreachable": len(lines), "latency_ms": c["latency_ms"]})
+                 "gray": c["gray"], "unreachable": len(lines), "latency_ms": c["latency_ms"], "judge": c["judge"]})
 
     def group_alive(self):
         try:
@@ -549,6 +554,15 @@ class Context:
                 os.tcsetpgrp(self.tty, os.getpgrp())
             except OSError:
                 pass
+
+
+def _guard_notice(ctx):
+    """The guard judge's notice callback: straight to the inbox, never printing (R12). Not ctx.notice,
+    which prints into the lead's terminal when the inbox cannot be written. A failure raises here;
+    Broker._notice catches it and writes an `error` record instead."""
+    def notice(kind, text):
+        inboxmod.notice(ctx.state, ctx.project.worktree_key, kind, text)
+    return notice
 
 
 def _panel_notice(ctx):
