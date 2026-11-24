@@ -380,7 +380,8 @@ _BW_SET = re.compile(rf"{_BW_NAME}(?:\+=|=|\[)")  # X=, X+=, X[..]= at the start
 _BW_DEFAULT = re.compile(rf"\$\{{{_BW_NAME}:?=")  # ${X=..} and ${X:=..} assign when X is unset
 _BW_FD = re.compile(rf"\{{{_BW_NAME}\}}")  # {X}>file stores an fd number in X
 _BW_ANY = re.compile(_BW_NAME)
-_BW_IN = re.compile(rf"(?<![A-Za-z0-9_]){_BW_NAME}(?:\+=|=)")  # an assignment inside a word: a[X=5]=1
+# an assignment inside a word or arithmetic: a[X=5]=1, $((X++)), $((++X)), X|=0 (not X==1)
+_BW_IN = re.compile(rf"(?<![A-Za-z0-9_])(?:(?:\+\+|--)\s*{_BW_NAME}|{_BW_NAME}\s*(?:\+\+|--|(?:<<|>>|[-+*/%&|^])?=(?!=)))")
 _ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=")
 _RESERVED = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
 _UNSEEN = re.compile(r"[$`{]")  # a name the shell would build at run time
@@ -392,6 +393,8 @@ _NAME_CMDS = {"export", "unset", "declare", "typeset", "readonly", "local", "rea
 # is a rule ask; an unexpanded operand stays gray (eval) or is checked where the name is (wait -p,
 # printf -v).
 _TEXT_CMDS = {"eval", "trap", "alias", "wait", "printf"}
+_BUILT_NAME = re.compile(r"(?:\$\{?[A-Za-z0-9_]+\}?|`[^`]*`|\$\([^)]*\))[A-Za-z0-9_]*\+?=")  # ${p}W_X=, $n=
+_BW_SHELL = re.compile(rf"(?<![A-Za-z0-9_$])(?<!\$\{{){_BW_NAME}")  # a protected name not read as $X or ${X}
 
 
 def _opt_arg(ops, flag):
@@ -424,8 +427,10 @@ def _bw_env(w):
         t = w[i].text
         if t == "function":  # `function f {`: the name, then the body
             i += 2
-        elif t == "time" and i + 1 < len(w) and w[i + 1].text == "-p":
-            i += 2
+        elif t == "time":  # with its own `-p` and `--`
+            i += 1
+            while i < len(w) and w[i].text in ("-p", "--"):
+                i += 1
         elif t in ("command", "builtin"):  # a prefix: judge the command after its options
             i += 1
             while i < len(w) and w[i].text.startswith("-") and w[i].text not in ("-v", "-V"):
@@ -446,14 +451,21 @@ def _bw_env(w):
     if cmd in ("for", "select", "coproc"):  # only the loop or coprocess variable is assigned
         return bool(ops) and (_unseen_name(ops[0]) or bool(_BW_ANY.search(ops[0].text)))
     if cmd in _NAME_CMDS:
-        return any(_unseen_name(x) or _BW_ANY.search(x.text) for x in ops)
+        if any(_unseen_name(x) or _BW_ANY.search(x.text) for x in ops):
+            return True
+        # a nameref (`declare -n`, `-gn`, ...) whose target the shell builds at run time
+        nameref = cmd in ("declare", "typeset", "local") and any("n" in _cluster(x.text) for x in ops)
+        return nameref and any(x.unexpanded and _UNSEEN.search(x.text.partition("=")[2]) for x in ops)
     if cmd in _TEXT_CMDS:
         if cmd == "printf" and _opt_arg(ops, "-v") is None:
             return False
-        if any(_BW_ANY.search(x.text) for x in ops):
+        # trap and alias text is code: a bare protected name changes it, a `$X` read does not
+        hit = _BW_SHELL if cmd in ("trap", "alias") else _BW_ANY
+        if any(hit.search(x.text) or (cmd in ("trap", "alias") and _BW_DEFAULT.search(x.text)) for x in ops):
             return True
-        if cmd == "eval" and any(x.unexpanded and "\\" in x.text for x in ops):
-            return True  # escapes such as $'\x42W_..' can spell a protected name
+        if cmd in ("eval", "trap", "alias") and any(x.unexpanded and ("\\" in x.text or _BUILT_NAME.search(x.text))
+                                                    for x in ops):
+            return True  # escapes ($'\x42W_..') or an expansion in a name (${p}W_X=) can spell a protected name
         target = _opt_arg(ops, "-v" if cmd == "printf" else "-p") if cmd in ("printf", "wait") else None
         return target is not None and _unseen_name(target)
     return False
@@ -844,6 +856,9 @@ def _shell(call, env):
         dl = dl or base in ("curl", "wget")
     if sub:
         decs.append(gry("gray:subshell", "subshells are not parsed"))
+    # ((...)) and $((...)) run arithmetic in this shell; the lexer splits them at ( and |
+    if "((" in (call.command or "") and _BW_SHELL.search(call.command):
+        decs.append(ask("ask:bw-env", "arithmetic may change a variable bw sets for the lead"))
     worst = max(decs, key=_rank)
     if _rank(worst) or worst.rule == "allow:panel-wait":
         return worst

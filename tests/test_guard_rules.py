@@ -614,6 +614,15 @@ class CheckpointDirTests(unittest.TestCase):
                     "declare -n r=BW_PANEL", "declare -n r; r=BW_PANEL; r=/x", "time -p BW_PANEL=/x true",
                     "a[BW_PANEL=5]=1", "echo ${a[BW_PANEL=5]}", "echo $((BW_PANEL=5))", "[[ BW_PANEL=1 -eq 1 ]]",
                     "eval $'\\x42W_PANEL=x'", "wait -p $x", "printf -v $x y",
+                    # round 3
+                    "declare -n r=$p", 'local -n r="$1"', "declare -gn r=${p}PANEL",
+                    "p=BW_; declare -n r=${p}PANEL; r=.git/hooks; echo x > $BW_PANEL/pre-commit",
+                    "trap $'\\x42W_PANEL=.git/hooks' DEBUG; echo x > $BW_PANEL/pre-commit",
+                    "alias s=$'\\x42W_PANEL=.git/hooks'", "trap 'unset BW_PANEL' DEBUG",
+                    "trap ': ${BW_PANEL:=/x}' DEBUG", 'trap "${p}W_PANEL=.git/hooks" DEBUG',
+                    'alias s="${p}W_PANEL=x"', 'eval "${p}W_PANEL=.git/hooks"',
+                    "time -- BW_PANEL=x true", "time -p -- BW_PANEL=x true", "echo $((BW_PANEL++))",
+                    "echo $((++BW_PANEL))", "(( BW_PANEL|=0 ))", "(( BW_PANEL <<= 1 ))",
                     # round 1 attacks still ask
                     "printf -vBW_PANEL %s .git/hooks; echo x > $BW_PANEL/pre-commit", "export BW_{PANEL,Q}=/tmp",
                     "read -aBW_PANEL <<< /tmp", "wait -p BW_PANEL", "true {BW_PANEL}>/tmp/f", "export $x=/tmp"):
@@ -624,7 +633,11 @@ class CheckpointDirTests(unittest.TestCase):
         env = {"BW_PANEL": os.path.join(self.cp, "panel")}
         for cmd in ('export PATH="$HOME/bin:$PATH"', "local x=$1", "wait $!", "sleep 1 & wait $!", 'command -v "$x"',
                     "declare x=$(date)", "printf -v out '%s' \"$x\"", "env FOO=$X make", 'eval "$cmd"',
-                    "export FOO=$(pwd)", "export FOO=bar", 'read -r line < "$f"', 'for f in "$@"; do echo $f; done'):
+                    "export FOO=$(pwd)", "export FOO=bar", 'read -r line < "$f"', 'for f in "$@"; do echo $f; done',
+                    # round 3: a trap or alias that only reads the value
+                    "trap 'echo $BW_PANEL' EXIT", "alias p='ls ${BW_PANEL}'", "declare -a x=$y",
+                    'eval "x=$y"', "trap \"rm -f $tmp\" EXIT", "echo $(( $BW_PANEL + 1 ))",
+                    "[[ BW_PANEL == x ]]"):
             d = decide(shell(cmd), self.ctx(lead_env=env))
             self.assertNotEqual(d.rule, "ask:bw-env", cmd)
 
