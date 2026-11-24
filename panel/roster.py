@@ -118,6 +118,18 @@ def prelaunch(config, state, names, tier_name, now, capped=caps.capped) -> tuple
     return runs, seats
 
 
+def with_fallbacks(config, runs, roster_names, tier_name) -> list:
+    """`runs`, then the fallback of each roster seat that may run on this tier, once each. The first
+    verification covers them too: a stand-in launched mid-round must already be verified (live run
+    2026-11-23: the stand-in was never verified, so it could not run)."""
+    out = list(runs)
+    for name in roster_names or []:
+        fb = _seat(config, name).get("fallback")
+        if _may_run(config, name, tier_name) and fb and fb not in out and _may_run(config, fb, tier_name):
+            out.append(fb)
+    return out
+
+
 def pending_verify(config, state, names, run=proc.run) -> list:
     """Names whose first verification on the current key has not finished."""
     entries = verify.write_seats_json(config, state, run=run)

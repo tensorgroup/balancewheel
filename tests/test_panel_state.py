@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -164,7 +165,15 @@ class PanelStateTest(unittest.TestCase):
             p = state.create(S, "k", PANEL)
             state.update(S, "k", p["id"], lambda x, st=st: x.update(state=st))
             ids.append(p["id"])
-        self.assertEqual([p["id"] for p in state.panels(S, "k")], ids)
+        self.assertEqual([p["id"] for p in state.panels(S, "k", logged=True)], ids)
+        # final review 5 (panel g20): a scan skips a logged panel by its mark, without reading it
+        self.assertEqual([p["id"] for p in state.panels(S, "k")], [ids[0], ids[1], ids[3]])
+        self.assertTrue(os.path.exists(os.path.join(state.work_dir(S, "k", ids[2]), state.LOGGED_MARK)))
+        real, read = state._read, []
+        with mock.patch.object(state, "_read", side_effect=lambda st, k, pid: read.append(pid) or real(st, k, pid)):
+            state.panels(S, "k")
+        self.assertNotIn(ids[2], read)
+        self.assertEqual(state.load(S, "k", ids[2])["state"], "logged")  # a direct load still reads it
         self.assertEqual([p["id"] for p in state.open_panels(S, "k")], ids[:2])
         self.assertEqual([p["id"] for p in state.unlogged(S, "k")], [ids[0], ids[1], ids[3]])
         state.update(S, "k", ids[3], lambda x: x.update(record_id=ids[3]))

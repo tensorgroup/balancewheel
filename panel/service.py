@@ -33,6 +33,7 @@ ROOT = paths.ROOT
 BEAT_STALE_S = 120
 KILL_GRACE_S = 15
 SPAWN_GRACE_S = 30
+KILL_TRUST_S = 4 * KILL_GRACE_S  # how long the ids confirmed at SIGTERM stay trusted for SIGKILL
 STOP_MARGIN_S = 300
 MAX_REQUESTS = 20
 MAX_OPEN_LINES = 10
@@ -70,38 +71,64 @@ class Jobs:
                 del self._procs[pid]
 
 
+def _ok_id(g) -> bool:
+    return isinstance(g, int) and not isinstance(g, bool) and g > 1
+
+
 def _groups(job: dict) -> list:
-    """The process groups of a job: the worker's (its pid; it leads its session) and each recorded
-    seat group. Never group 0 or 1, a negative id, or bw's own group."""
-    cands = [] if job.get("worker_exited") else [job.get("pid")]
+    """The process groups of a job: a scheduler worker's (its pid; it leads its session) and each
+    recorded seat group. Never group 0 or 1, a negative id, or bw's own group. A foreground worker
+    (`bw panel` in the user's shell) leads no group of its own: `_lone` gives its pid."""
+    cands = [] if job.get("worker_exited") or job.get("owner") == "foreground" else [job.get("pid")]
     cands += list(job.get("seat_pgids") or [])
     own = os.getpgrp()
     out = []
     for g in cands:
-        if isinstance(g, int) and not isinstance(g, bool) and g > 1 and g != own and g not in out:
+        if _ok_id(g) and g != own and g not in out:
             out.append(g)
     return out
 
 
+def _lone(job: dict) -> list:
+    """The pid of a foreground worker, signalled alone with os.kill (never killpg). Never bw itself."""
+    pid = job.get("pid")
+    if job.get("owner") != "foreground" or job.get("worker_exited") or not _ok_id(pid) or pid == os.getpid():
+        return []
+    return [pid]
+
+
 def stop_tree(job: dict, sig) -> None:
-    for g in _groups(job):
-        try:
-            os.killpg(g, sig)
-        except (ProcessLookupError, PermissionError):
-            pass
+    for kill, ids in ((os.killpg, _groups(job)), (os.kill, _lone(job))):
+        for g in ids:
+            try:
+                kill(g, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
 
 
 def tree_alive(job: dict) -> bool:
     """Any of the job's groups still exists. A vendor CLI in its own session is not seen here."""
-    for g in _groups(job):
-        try:
-            os.killpg(g, 0)
-            return True
-        except ProcessLookupError:
-            continue
-        except PermissionError:
-            return True
+    for kill, ids in ((os.killpg, _groups(job)), (os.kill, _lone(job))):
+        for g in ids:
+            try:
+                kill(g, 0)
+                return True
+            except ProcessLookupError:
+                continue
+            except PermissionError:
+                return True
     return False
+
+
+def _exists(pid) -> bool:
+    """A process with this pid exists (any owner). False only when the kernel says there is none."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OverflowError, ValueError):
+        return True
+    return True
 
 
 # --- entry points ---
@@ -138,11 +165,13 @@ def open_panel(config, state, project, req, lead=None, session_id=None, now=None
     def check(open_now):
         if len(open_now) >= pstate.MAX_OPEN:
             raise ValueError(_open_refusal(open_now))
+    # The metrics log is shared by every worktree: a new id must not name a record there (panel g08).
+    taken = {p.get("id") for p in store.load(store.log_path(config))["panels"]}
     return pstate.create(state, key, {
         "worktree": project.worktree, "profile": project.profile, "checkpoint": checkpoint,
         "target": req.get("target"), "focus": req.get("focus", ""), "stakes": stakes, "paths": rel, "tier": tier,
         "roster": names, "originals": originals, "fallbacks": fallbacks, "created": now, "session_id": session_id,
-        "lead": (lead or {}).get("name"), "seats": {}}, check=check)
+        "lead": (lead or {}).get("name"), "seats": {}}, check=check, taken=taken)
 
 
 def disputes(doc) -> list:
@@ -151,11 +180,6 @@ def disputes(doc) -> list:
     ids = [c.get("id") for c in doc.get("candidate_disputes") or [] if isinstance(c, dict)]
     ids += [f"d{n}" for n in range(1, max(1, len(doc.get("groups") or [])) + 1)]
     return [i for n, i in enumerate(ids) if isinstance(i, str) and i not in ids[:n]]
-
-
-def rounds_used(asks, dispute) -> int:
-    """The rounds a dispute has used: every ask on it that has not failed (a queued one counts)."""
-    return sum(1 for a in asks if isinstance(a, dict) and a.get("dispute") == dispute and a.get("state") != "failed")
 
 
 def _new_ask(p, seat, claim, dispute, session_id, max_rounds, now, allowed=None) -> dict:
@@ -174,7 +198,7 @@ def _new_ask(p, seat, claim, dispute, session_id, max_rounds, now, allowed=None)
     if not entry.get("session_id"):
         raise ValueError(f"seat {shown} has no round-1 session to resume; rule on it yourself")
     asks = [a for a in p.get("asks") or [] if isinstance(a, dict)]
-    used = rounds_used(asks, dispute)
+    used = pstate.rounds_used(asks, dispute)
     if used >= max_rounds:
         raise ValueError(f"dispute {dispute} has had {used} rounds; rule on it yourself")
     if sum(1 for a in asks if a.get("lead_session") == session_id) >= pstate.MAX_ASKS:
@@ -221,7 +245,8 @@ def _rounds(panel) -> int:
 
 def _doc(state, key, panel) -> dict:
     """findings.json. A failed panel may have none (its write failed too): then the seats alone."""
-    text = run._read_text(os.path.join(pstate.work_dir(state, key, panel["id"]), "findings.json"))
+    path = os.path.join(pstate.work_dir(state, key, panel["id"]), "findings.json")
+    text = run._read_text(path)
     if text:
         try:
             doc = json.loads(text)
@@ -229,12 +254,17 @@ def _doc(state, key, panel) -> dict:
             doc = None
         if isinstance(doc, dict) and (doc.get("seats") or not doc.get("failed")):
             return doc  # a failed doc with no seats (written before its seats started) is rebuilt below
-    if panel.get("state") != "failed":
+    if not (panel.get("state") == "failed" or (panel.get("state") == "logged" and panel.get("error"))):
         raise ValueError(f"panel {panel['id']} has no findings; bw cannot log it")
     why = panel.get("error") or "unknown"
     seats = run.absent_all(json.loads(json.dumps(panel.get("seats") or {})), panel.get("roster"), why)
     absent = {s: e.get("reason") for s, e in seats.items() if e.get("status") == "absent"}
-    return run._bare_doc(panel, seats, absent, True, [], why)
+    doc = run._bare_doc(panel, seats, absent, True, [], why)
+    try:  # written once, so a later amend reads the same doc the log was built from (panel g14)
+        run._write_text(path, json.dumps(doc))
+    except OSError:
+        pass
+    return doc
 
 
 def _sample(detail) -> list:
@@ -327,13 +357,7 @@ def fail(config, state, key, pid, why, now=None) -> None:
         return
     job = panel.get("job") if isinstance(panel.get("job"), dict) else {}
     if job.get("kind") == "ask":
-        ask_id = job.get("ask")
-
-        def fn(p):
-            for a in p.get("asks") or []:
-                if isinstance(a, dict) and a.get("id") == ask_id and a.get("state") in pstate.ASK_OPEN:
-                    a.update(state="failed", reason=why)
-        pstate.update(state, key, pid, fn)
+        _fail_ask(state, key, pid, job.get("ask"), why)
         return
     if panel.get("state") not in ("queued", "running"):
         return
@@ -348,6 +372,12 @@ def _num(v) -> bool:
 def _command(pid) -> str:
     """The command line of a live process, or "" (gone, a zombie's is "<defunct>", or ps failed)."""
     r = proc.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], timeout=5)
+    return r.out.strip() if r.rc == 0 else ""
+
+
+def started_at(pid) -> str:
+    """When a live process started, as `ps` prints it, or "". With the pid it names one process."""
+    r = proc.run(["ps", "-o", "lstart=", "-p", str(pid)], timeout=5)
     return r.out.strip() if r.rc == 0 else ""
 
 
@@ -374,7 +404,9 @@ def _trusted(job, panel_id, jobs) -> tuple:
     j, skipped = dict(job), []
     wpid = j.get("pid")
     if isinstance(wpid, int) and not j.get("worker_exited") and jobs.alive(wpid) is None:
-        if not _is_worker(_command(wpid), panel_id, j.get("owner")):
+        # A foreground job records when its `bw panel` started: a reused pid fails that check (panel g10).
+        born = j.get("pid_start")
+        if not _is_worker(_command(wpid), panel_id, j.get("owner")) or (born and started_at(wpid) != born):
             skipped.append(wpid)
             j["pid"] = None
     seats = []
@@ -392,7 +424,7 @@ def _signal(state, key, pid, job, jobs, sig) -> None:
     trusts them (a leader that ended on SIGTERM can leave members in its group)."""
     trusted, skipped = _trusted(job, pid, jobs)
     stop_tree(trusted, sig)
-    groups = _groups(trusted)
+    groups, lone = _groups(trusted), _lone(trusted)
     notes = [f"{g}: {NOT_OURS}" for g in skipped]
     if notes:
         _say(state, key, pid, notes)
@@ -401,16 +433,25 @@ def _signal(state, key, pid, job, jobs, sig) -> None:
         j = p.get("job")
         if isinstance(j, dict):
             j["kill_groups"] = groups
+            j["kill_pids"] = lone
             if notes:
                 j["skipped"] = sorted(set(j.get("skipped") or []) | set(notes))
     pstate.update(state, key, pid, fn)
 
 
-def _kill(state, key, pid, job, jobs) -> None:
-    """SIGKILL the groups confirmed at SIGTERM time. A job stopped by a bw that died before it stored
-    them is confirmed now instead."""
-    if isinstance(job.get("kill_groups"), list):
+def _kill(state, key, pid, job, jobs, now) -> None:
+    """SIGKILL the groups (and the foreground pid) confirmed at SIGTERM time. They are trusted only
+    for KILL_TRUST_S after SIGTERM: a job stopped by a bw that died before it stored them, or long
+    ago (a bw restart; the ids may be reused by now), is confirmed again instead (panel g09)."""
+    fresh = _num(job.get("kill_at")) and now - job["kill_at"] <= KILL_TRUST_S
+    if fresh and isinstance(job.get("kill_groups"), list):
         stop_tree({"pid": None, "seat_pgids": job["kill_groups"]}, signal.SIGKILL)
+        for p in job.get("kill_pids") or []:
+            if _ok_id(p) and p != os.getpid():
+                try:
+                    os.kill(p, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
     else:
         _signal(state, key, pid, job, jobs, signal.SIGKILL)
 
@@ -437,11 +478,19 @@ def _stop(state, key, pid, job, why, now, jobs, **extra) -> None:
         _signal(state, key, pid, stopped, jobs, signal.SIGTERM)
 
 
+def _job_running(panel, job) -> bool:
+    """The job's work started: its round 1 set the panel `running`, or its ask is `running`."""
+    if job.get("kind") == "ask":
+        return any(isinstance(a, dict) and a.get("id") == job.get("ask") and a.get("state") == "running"
+                   for a in panel.get("asks") or [])
+    return panel.get("state") == "running"
+
+
 def _watch(config, state, key, panel, jobs, now) -> None:
     pid, job = panel["id"], panel["job"]
     if _num(job.get("kill_at")):
         if now >= job["kill_at"] + KILL_GRACE_S:
-            _kill(state, key, pid, job, jobs)
+            _kill(state, key, pid, job, jobs, now)
             jobs.reap()
             fail(config, state, key, pid, job.get("stop") or "panel worker stopped", now)
             pstate.release_job(state, key, pid)
@@ -449,12 +498,16 @@ def _watch(config, state, key, panel, jobs, now) -> None:
     wpid = job.get("pid")
     if wpid is None:
         started = job.get("started") if _num(job.get("started")) else 0.0
-        if now - started > SPAWN_GRACE_S:  # a failed spawn
+        if now - started > SPAWN_GRACE_S:  # a failed spawn, or a launcher that died before its pid write
+            if _job_running(panel, job):  # the work began, so it is failed, not left `running` (g07)
+                fail(config, state, key, pid, "panel worker stopped", now)
             pstate.release_job(state, key, pid)
         return
     alive = jobs.alive(wpid)
     beat = job.get("beat") if _num(job.get("beat")) else 0.0
-    if alive is None and now - beat > BEAT_STALE_S:
+    if alive is None and not _exists(wpid):  # no such process: it exited (bw did not start it)
+        _stop(state, key, pid, job, "panel worker exited", now, jobs, worker_exited=True)
+    elif alive is None and now - beat > BEAT_STALE_S:
         _stop(state, key, pid, job, "panel worker stopped", now, jobs)
     elif alive is False:
         jobs.reap()
@@ -478,19 +531,22 @@ def _budget(config, panel, kind) -> float:
     return waves * cap + STOP_MARGIN_S
 
 
+def _when(v) -> float:
+    return v if _num(v) else 0.0
+
+
 def _next_job(state, key):
-    """(kind, panel, ask id) of the oldest queued job: a queued round 1, else a ready panel's ask."""
+    """(kind, panel, ask id) of the oldest queued job: a queued round 1 or a ready panel's queued ask,
+    by the time it was made, so an ask never waits behind a stream of new panels."""
     panels = pstate.panels(state, key)
-    for p in panels:
-        if p.get("state") == "queued":
-            return "round1", p, None
-    asks = [(a.get("created") if _num(a.get("created")) else 0.0, p, a["id"]) for p in panels
-            if p.get("state") == "ready" for a in p.get("asks") or []
-            if isinstance(a, dict) and a.get("state") == "queued" and isinstance(a.get("id"), str)]
-    if not asks:
+    queued = [(_when(p.get("created")), 0, "round1", p, None) for p in panels if p.get("state") == "queued"]
+    queued += [(_when(a.get("created")), 1, "ask", p, a["id"]) for p in panels
+               if p.get("state") == "ready" for a in p.get("asks") or []
+               if isinstance(a, dict) and a.get("state") == "queued" and isinstance(a.get("id"), str)]
+    if not queued:
         return None
-    _, p, ask_id = min(asks, key=lambda t: t[0])
-    return "ask", p, ask_id
+    _, _, kind, p, ask_id = min(queued, key=lambda t: (t[0], t[1]))
+    return kind, p, ask_id
 
 
 def _start(config, state, key, jobs, now, notice) -> None:
@@ -504,18 +560,39 @@ def start_job(config, state, key, panel, kind, ask_id, jobs, now, notice, owner=
     """Reserve the worktree's job, then spawn the worker for this panel. False when the slot is taken
     or the spawn failed. `bw panel --background` calls it too."""
     pid = panel["id"]
+    current = pstate.load(state, key, pid) or {}
     if kind == "round1":
-        current = pstate.load(state, key, pid) or {}
         if current.get("state") == "queued" and not current.get("job") and _count(current.get("spawns")) >= MAX_SPAWNS:
             fail(config, state, key, pid, "worker did not start", now)
             notice("panel", f"panel {pid}: the worker did not start {MAX_SPAWNS} times; the panel failed", key=pid)
+            return False
+    else:
+        entry = _ask_entry(current, ask_id)
+        if entry is None or entry.get("state") != "queued":
+            return False
+        why = None
+        if _count(entry.get("spawns")) >= MAX_SPAWNS:  # ask starts are bounded like round 1 (g11)
+            why = "worker did not start"
+        elif pstate.rounds_used([a for a in current.get("asks") or [] if a is not entry],
+                                entry.get("dispute")) >= config["panel"]["max_rounds"]:
+            why = f"dispute {entry.get('dispute')} has no round left"  # re-checked before launch (g02)
+        if why:
+            _fail_ask(state, key, pid, ask_id, why)
+            notice("panel", f"panel {pid}: ask {ask_id} failed ({why})", key=pid)
             return False
     job = {"kind": kind, "ask": ask_id, "pid": None, "owner": owner, "started": now,
            "deadline": now + _budget(config, panel, kind), "beat": now, "seat_pgids": []}
     if not pstate.reserve_job(state, key, pid, job):
         return False
-    if kind == "round1":  # a worker that reaches `running` is never started again, so this counts failed starts
+    # A worker that reaches `running` is never started again, so this counts failed starts.
+    if kind == "round1":
         pstate.update(state, key, pid, lambda p: p.update(spawns=_count(p.get("spawns")) + 1))
+    else:
+        def count(p):
+            a = _ask_entry(p, ask_id)
+            if a is not None:
+                a["spawns"] = _count(a.get("spawns")) + 1
+        pstate.update(state, key, pid, count)
     argv = list(WORKER) + [kind, "--state", state, "--key", key, "--panel", pid] + (["--ask", ask_id] if ask_id else [])
     try:
         work = pstate.ensure_dir(state, pstate.work_dir(state, key, pid))
@@ -536,6 +613,43 @@ def start_job(config, state, key, panel, kind, ask_id, jobs, now, notice, owner=
     return True
 
 
+def _ask_entry(panel, ask_id):
+    return next((a for a in panel.get("asks") or [] if isinstance(a, dict) and a.get("id") == ask_id), None)
+
+
+def _fail_ask(state, key, pid, ask_id, why) -> None:
+    def fn(p):
+        a = _ask_entry(p, ask_id)
+        if a is not None and a.get("state") in pstate.ASK_OPEN:
+            a.update(state="failed", reason=why)
+    pstate.update(state, key, pid, fn)
+
+
+def recover(config, state, key, now) -> None:
+    """Fail the work that no job holds (final review 2): a `running` panel, or a `running` ask, whose
+    job is gone (its worker died after a release, or bw crashed in between). Then `log` is always
+    possible. A queued one waits for the scheduler; it is not failed here."""
+    for p in pstate.panels(state, key):
+        if isinstance(p.get("job"), dict):
+            continue
+        if p.get("state") == "running":
+            fail(config, state, key, p["id"], "panel worker stopped", now)
+        for a in p.get("asks") or []:
+            if isinstance(a, dict) and a.get("state") == "running":
+                _fail_ask(state, key, p["id"], a.get("id"), "panel worker stopped")
+
+
+def watch(config, state, key, jobs, now=None) -> None:
+    """The watch step alone: reap, watch the held job, and recover lost work. It starts nothing.
+    `bw panel` runs it when no `bw lead` runs here, so a dead job never blocks it for ever."""
+    now = time.time() if now is None else now
+    jobs.reap()  # a worker that ended on its own is reaped here, not left a zombie (g06)
+    held = next((p for p in pstate.panels(state, key) if isinstance(p.get("job"), dict)), None)
+    if held is not None:
+        _watch(config, state, key, held, jobs, now)
+    recover(config, state, key, now)
+
+
 def _notifier(notice):
     def say(kind, text, key=None):
         if notice is None:
@@ -551,9 +665,7 @@ def schedule(config, state, key, jobs, now=None, notice=None) -> None:
     """Watch the one job of this worktree, then start the oldest queued job when none is held."""
     now = time.time() if now is None else now
     notice = _notifier(notice)
-    held = next((p for p in pstate.panels(state, key) if isinstance(p.get("job"), dict)), None)
-    if held is not None:
-        _watch(config, state, key, held, jobs, now)
+    watch(config, state, key, jobs, now)
     if not pstate.has_job(state, key):
         _start(config, state, key, jobs, now, notice)
 

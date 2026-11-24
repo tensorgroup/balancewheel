@@ -372,11 +372,13 @@ at a time, and logs the panel. You see three lines:
     7 findings, 5 confirmed, 2 refuted. Most important: the retry loop never stops on a 4xx.
     One dispute (astra against opus on the lock order). The code agreed with astra.
 
-A panel has the states `queued`, `running`, `ready`, `logged`, and `failed`. One panel job
-runs per worktree at a time. A panel runs at most one agy-runtime seat. A lead cannot read the
-panel work dirs (its sandbox denies the reads); it reads its own view under `inbox-view/`
-and runs the wait helper `bin/bw-panel-wait`, which `bw` copies into the lead's view. After
-you deploy this version, run `bw sandbox verify <runtime>` once for each lead runtime.
+A panel has the states `queued`, `running`, `ready`, `logged`, and `failed`. A worktree has
+up to three open panels and one running job. A panel runs at most one agy-runtime seat. A
+lead reads its own view under `inbox-view/` and runs the wait helper `bin/bw-panel-wait`,
+which `bw` copies into the lead's view. A lead that `bw` contains (pi, kimi) cannot read the
+panel work dirs: its sandbox denies the reads. A lead in its vendor's own sandbox (Claude Code,
+Codex, agy) gets no such deny. After you deploy this version, run `bw sandbox verify <runtime>`
+once for each bw-contained lead runtime.
 
 - **Switching.** When the current lead's plan is capped, bw stops the lead (its whole
   process group, confirmed gone), writes a handoff from git facts and the lead's last

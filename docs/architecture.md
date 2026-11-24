@@ -23,7 +23,8 @@ Updated 2026-10-26: the registry and the cockpit as derived, read-only views.
 Updated 2026-11-11: reserved seats (the expensive top-tier model, held for deep panels and
 stuck debugging) and seat C on the vendor's default-tier model.
 Updated 2026-11-23: `bw panel` runs the mechanical half of the panel protocol; the lead keeps
-the judgment (see "The panel protocol").*
+the judgment (see "The panel protocol"). Updated again 2026-11-23 after the review fixes: a
+worktree has up to three open panels and one running job, and bw fails work that no job holds.*
 
 ## The problem
 
@@ -247,11 +248,12 @@ usually a branch diff or a plan file, which is what the brief points at.
 disputed claim on request, and builds and validates the record. The lead does the judgment. It
 convenes the panel at its checkpoints, verifies each finding against the code, applies the
 substance bar, rules on disputes, logs the verdicts, and tells the user in three lines. The
-lead and `bw` talk through files only. The lead writes a request file; `bw` writes a response,
-a `status.json`, and a `next.md` (the moderator's steps for that panel) into a read-only view
-under `inbox-view/<worktree key>/panels/<panel id>/`. A panel has the states `queued`,
-`running`, `ready`, `logged`, and `failed`. One panel job runs per worktree at a time. A
-panel runs at most one agy-runtime seat. The lead cannot read the panel work dirs (raw seat
+lead and `bw` talk through files only. The lead writes a request file. `bw` writes a
+`status.json` and a `next.md` (the moderator's steps for that panel) into a read-only view
+under `inbox-view/<worktree key>/panels/<panel id>/`, and each response to
+`inbox-view/<worktree key>/panels/responses/<request id>.json`. A panel has the states
+`queued`, `running`, `ready`, `logged`, and `failed`. A worktree has up to three open panels
+and one running job. A panel runs at most one agy-runtime seat. The lead cannot read the panel work dirs (raw seat
 output stays out of its reach, so a relay stays claim-only); it reads only its view. A panel
 that fails before its seats start still logs, with every roster seat absent. The user does not
 type `bw panel` in normal use.

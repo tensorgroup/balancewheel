@@ -72,6 +72,21 @@ not against the prose.
 
 ### Fixed
 
+- **Panel jobs always end** (`panel/service.py`, `panel/run.py`, `panel/cli.py`, `panel/state.py`). The
+  scheduler fails a `running` panel or ask that no job holds, so `log` is always possible. A
+  `bw panel` run with no `bw lead` here runs the watch step first: a dead job is stopped and then
+  failed, and never blocks the worktree for ever. A job whose pid no longer exists is stopped at
+  once. The watchdog signals a foreground `bw panel` by its pid alone (never as a process group),
+  checks its start time against pid reuse, and confirms the ids again when a SIGKILL comes long
+  after its SIGTERM. A finished, failed, or logged panel is never written again. A worker writes its
+  own pid into a job that has none, and a worker with no job touches nothing. Ask starts count
+  toward the spawn limit like round 1, the round cap is checked again before an ask starts, and an
+  ask no longer waits behind newer panels. A refused `bw panel` or `bw panel ask` fails the panel or
+  ask it made, instead of leaving it queued. Workers that ended are reaped. A new panel id never
+  names a record in the metrics log. A failed panel logged with no findings file can be amended. An
+  ask's answer appears only when it is done. A scan skips logged panels without reading them, and
+  `bw panel status` lists the open panels and the failed ones still to log. The first verification
+  covers the fallbacks of the roster seats too, so a stand-in can run.
 - **Panel requests from a lead** (`panel/render.py`, `panel/channel.py`, `panel/service.py`). The request
   ids that `next.md` gives hold the panel id (`ask-<panel id>-<n>`, `log-<panel id>-<n>`,
   `amend-<panel id>-<n>`): with the old fixed ids, the second panel of a worktree reused `log-1`, and a

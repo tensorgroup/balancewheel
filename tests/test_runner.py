@@ -1391,6 +1391,7 @@ class PanelRunner(RunnerCase):
         self.assertTrue(_alive(worker), "the panel worker stopped with bw lead")
         # Past its deadline, a new bw lead's scheduler stops it and fails the panel.
         pstate.update(str(self.state), self.key, pid, lambda p: p["job"].update(deadline=time.time() - 1))
+        (self.out / "a.json").unlink()  # the first lead's record: the wait below must see the new lead's
         p = self.start(env={"FAKE_MODE_a": "sleep", **seats})
         self.assertTrue(wait_for(lambda: (pstate.load(str(self.state), self.key, pid) or {}).get("state") == "failed", 40))
         self.assertTrue(wait_for(lambda: not _alive(worker)))

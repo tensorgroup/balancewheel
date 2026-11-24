@@ -5,9 +5,11 @@
 `metrics/` holds the Python package: `config.py` (config loader), `store.py` (the JSONL
 store), `watches.py` (roster watches), `log.py` (the logger CLI), and `dashboard.py` (the
 dashboard generator). `seats/` holds `bw seat`: seat adapters, the brief, sessions, caps, one
-run, verification, and the CLI. `panel/` holds `bw panel`: seat brief templates, the round 1
-worker, merging and counts, the panel record, state and the lead's view, request files, the
-service, and the CLI. Tests live in `tests/`, with synthetic data in `tests/fixtures/`. Prose
+run, verification, and the CLI. `panel/` holds `bw panel`: seat brief templates and the texts
+the lead reads (`render.py`), the roster and stand-ins (`roster.py`), the round 1 worker
+(`run.py`), merging and counts (`merge.py`), the panel record (`record.py`), state and the
+lead's view (`state.py`), request files (`channel.py`), the service (`service.py`), and the
+CLI (`cli.py`). Tests live in `tests/`, with synthetic data in `tests/fixtures/`. Prose
 lives in `README.md` and `docs/`; `docs/superpowers/` holds the specs and plans behind the
 extraction. `balancewheel.example.json` is the annotated config example. `setup/` holds `paths.txt` (the
 home-directory paths a setup touches) and the `backup.sh` / `restore.sh` pair around it;

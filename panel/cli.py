@@ -143,7 +143,24 @@ class _Stop:
 
 def _job(config, panel, kind, ask_id, now) -> dict:
     return {"kind": kind, "ask": ask_id, "pid": os.getpid(), "owner": "foreground", "started": now,
-            "deadline": now + service._budget(config, panel, kind), "beat": now, "seat_pgids": []}
+            "deadline": now + service._budget(config, panel, kind), "beat": now, "seat_pgids": [],
+            "pid_start": service.started_at(os.getpid())}  # the watchdog checks it against pid reuse
+
+
+def _busy(config, state, key, jobs) -> bool:
+    """A job holds this worktree. With no `bw lead` here, the watch step runs first, so a dead job is
+    stopped and failed (over two calls, KILL_GRACE_S apart) instead of blocking for ever."""
+    if not pstate.has_job(state, key):
+        return False
+    if not _lead_runs_here(state, key):
+        service.watch(config, state, key, jobs or service.Jobs())
+    return pstate.has_job(state, key)
+
+
+def _fail_new(config, state, key, pid, why) -> None:
+    """A refusal after the panel was opened fails it: no queued panel waits for a start that never
+    comes, and it holds no open slot."""
+    service.fail(config, state, key, pid, why)
 
 
 def _short_text(state, key, panel) -> str:
@@ -160,10 +177,10 @@ def _short_text(state, key, panel) -> str:
 
 def _convene(a, config, state, project, out, err, jobs) -> int:
     key = project.worktree_key
-    if not a.background and pstate.has_job(state, key):
+    if not a.background and _busy(config, state, key, jobs):
         return _refuse(err, JOB_BUSY)
     lead_here = False
-    if a.background and pstate.has_job(state, key):
+    if a.background and _busy(config, state, key, jobs):
         lead_here = _lead_runs_here(state, key)
         if not lead_here:  # before open_panel: a refusal leaves no panel behind
             return _refuse(err, NO_LEAD)
@@ -183,11 +200,13 @@ def _convene(a, config, state, project, out, err, jobs) -> int:
         if _lead_runs_here(state, key):  # lost the slot in the short race
             _say(out, f"bw: panel {pid} queued; bw lead starts it next")
             return 0
-        return _refuse(err, f"panel {pid} could not start: {JOB_BUSY}")
-    if not pstate.reserve_job(state, key, pid, _job(config, panel, "round1", None, now)):
-        return _refuse(err, f"panel {pid} stays queued: {JOB_BUSY}")
+        _fail_new(config, state, key, pid, "not started: " + JOB_BUSY)
+        return _refuse(err, f"panel {pid} could not start, so it failed: {JOB_BUSY}")
     view = pstate.view_dir(state, key, pid)
-    with _Stop():
+    with _Stop():  # before the job is reserved: a signal in between still fails the panel cleanly
+        if not pstate.reserve_job(state, key, pid, _job(config, panel, "round1", None, now)):
+            _fail_new(config, state, key, pid, "not started: " + JOB_BUSY)
+            return _refuse(err, f"panel {pid} could not start, so it failed: {JOB_BUSY}")
         doc = run.round1(config, state, key, pid)
     if doc.get("failed"):
         _say(err, f"bw panel: panel {pid} failed ({safe(str(doc['failed']))[:200]}) — see {view}/next.md")
@@ -201,15 +220,16 @@ def _ask(a, config, state, project, out, err) -> int:
     key = project.worktree_key
     channel.check_ask(a.seat, a.claim, a.dispute)
     service.own(state, project, a.panel)
-    if pstate.has_job(state, key):
+    if _busy(config, state, key, None):
         return _refuse(err, JOB_BUSY)
     ask = service.queue_ask(config, state, project, {"panel": a.panel, "seat": a.seat, "claim": a.claim,
                                                      "dispute": a.dispute})
     now = time.time()
     panel = pstate.load(state, key, a.panel)
-    if not pstate.reserve_job(state, key, a.panel, _job(config, panel, "ask", ask["id"], now)):
-        return _refuse(err, f"ask {ask['id']} stays queued: {JOB_BUSY}")
     with _Stop():
+        if not pstate.reserve_job(state, key, a.panel, _job(config, panel, "ask", ask["id"], now)):
+            service._fail_ask(state, key, a.panel, ask["id"], "not started: " + JOB_BUSY)
+            return _refuse(err, f"ask {ask['id']} could not start, so it failed: {JOB_BUSY}")
         entry = run.ask(config, state, key, a.panel, ask["id"])
     answer = os.path.join(pstate.view_dir(state, key, a.panel), "asks", f"{ask['id']}.md")
     if (entry or {}).get("state") != "done":
@@ -232,7 +252,7 @@ def _status(a, state, project, out, err) -> int:
         text = run._read_text(os.path.join(pstate.view_dir(state, key, a.panel), "status.json"))
         out.write((text or "{}").rstrip("\n") + "\n")
         return 0
-    for p in pstate.panels(state, key):
+    for p in pstate.unlogged(state, key):  # the open panels, and the failed ones still to log
         short = " (short)" if p.get("short") else ""
         _say(out, f"{p['id']}  {safe(str(p.get('checkpoint')))[:40]}  {p.get('state')}{short}  "
                   f"{pstate.view_dir(state, key, p['id'])}")

@@ -19,7 +19,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 from lead.paths import load_config  # noqa: E402
 from lead.projects import resolve_project  # noqa: E402
-from panel import cli, roster, run, state  # noqa: E402
+from panel import cli, roster, run, service, state  # noqa: E402
 from seats import verify  # noqa: E402
 
 FIX = HERE / "fixtures" / "panel"
@@ -243,13 +243,14 @@ class CliTest(unittest.TestCase):
         self.assertEqual(nested["n"], 1)  # the refusal left no second panel
         self.assertFalse(state.has_job(self.S, self.K))
 
-    def test_foreground_reservation_lost_in_the_race_leaves_the_panel_queued(self):
+    def test_foreground_reservation_lost_in_the_race_fails_the_new_panel(self):  # panel g05
         with mock.patch.object(state, "reserve_job", return_value=False):
             code, _, err = self.cli(["design", "t"])
         self.assertEqual(code, 2)
-        self.assertIn("a panel job is running", err)
+        self.assertIn("could not start, so it failed: a panel job is running", err)
         (p,) = state.panels(self.S, self.K)
-        self.assertEqual(p["state"], "queued")
+        self.assertEqual((p["state"], p["error"]), ("failed", "not started: " + cli.JOB_BUSY))
+        self.assertEqual(state.open_panels(self.S, self.K), [])  # it holds no open slot
 
     def test_foreground_sighup_fails_cleanly(self):
         env = {**os.environ, "FAKE_SEAT_a": "sleep", "FAKE_SEAT_o": "sleep", "FAKE_SEAT_g": "sleep"}
@@ -305,6 +306,42 @@ class CliTest(unittest.TestCase):
         code, _, err = self.cli(["status", "pffffff0"])
         self.assertEqual(code, 2)
         self.assertIn("unknown panel", err)
+
+    def test_a_dead_job_never_blocks_bw_panel(self):  # final review 3
+        first = state.create(self.S, self.K, {"worktree": str(self.wt), "profile": "p", "checkpoint": "design",
+                                              "target": "t", "roster": ["a"], "seats": {}})
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        self.assertTrue(state.reserve_job(self.S, self.K, first["id"], {
+            "kind": "round1", "ask": None, "pid": dead.pid, "owner": "foreground", "started": time.time(),
+            "deadline": 1e12, "beat": time.time(), "seat_pgids": []}))
+        state.update(self.S, self.K, first["id"], lambda p: p.update(state="running"))
+        code, _, err = self.cli(["design", "t"])  # no bw lead: the watch step stops the dead job
+        self.assertEqual(code, 2)
+        self.assertIn(cli.JOB_BUSY, err)
+        self.assertEqual(self.panel(first["id"])["job"]["stop"], "panel worker exited")
+        state.update(self.S, self.K, first["id"],
+                     lambda p: p["job"].update(kill_at=time.time() - service.KILL_GRACE_S - 1))
+        code, out, _ = self.cli(["design", "t"])  # the next call fails it, frees the slot, and runs
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.panel(first["id"])["state"], "failed")
+        self.assertEqual(len(state.panels(self.S, self.K)), 2)
+
+    def test_a_refused_ask_is_failed_not_left_queued(self):  # final review minor
+        pid = self.ready()
+        with mock.patch.object(state, "reserve_job", return_value=False):
+            code, _, err = self.cli(["ask", pid, "o", "X"])
+        self.assertEqual(code, 2)
+        self.assertIn("could not start, so it failed", err)
+        (a,) = self.panel(pid)["asks"]
+        self.assertEqual((a["state"], a["reason"]), ("failed", "not started: " + cli.JOB_BUSY))
+
+    def test_status_lists_open_panels_only(self):  # live finding: "open panels of this worktree"
+        pid = self.ready()
+        with mock.patch("sys.stdin", io.StringIO(json.dumps({"verdicts": {f: "confirmed" for f in self.ids(pid)}}))):
+            self.assertEqual(self.cli(["log", pid])[0], 0)
+        self.assertEqual(self.cli(["status"]), (0, "", ""))
+        self.assertEqual(json.loads(self.cli(["status", pid])[1])["state"], "logged")
 
     def test_usage_map_lists_panel_subcommands(self):
         spec = importlib.util.spec_from_file_location("usage_gen", ROOT / "docs" / "usage-map" / "generate.py")

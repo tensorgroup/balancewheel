@@ -36,6 +36,15 @@ with mock.patch.object(roster, "pending_verify", return_value=[]):
 """
 
 
+def wait_for(cond, timeout=15.0, step=0.02) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(step)
+    return bool(cond())
+
+
 def _alive(pid) -> bool:
     try:
         os.kill(pid, 0)
@@ -296,8 +305,9 @@ class PanelRunTest(unittest.TestCase):
         th, out, meta = self._run_with_sleeping_o()
         seats = self.view() / "seats"
         self.assertFalse((seats / "o.md").exists())
+        # a.md and g.md appear before the worker syncs their end: wait for that sync (panel g23)
+        self.assertTrue(wait_for(lambda: state.load(self.S, K, self.pid)["job"]["seat_pgids"] == [meta["pid"]]))
         p = state.load(self.S, K, self.pid)
-        self.assertEqual(p["job"]["seat_pgids"], [meta["pid"]])
         self.assertEqual(p["seats"]["o"]["status"], "running")
         os.killpg(meta["pid"], signal.SIGTERM)
         th.join(20)
@@ -495,6 +505,35 @@ class PanelRunTest(unittest.TestCase):
         self.assertEqual(p["asks"][0]["state"], "done")
         self.assertEqual(p["state"], "ready")
         self.assertFalse(state.has_job(self.S, K))
+
+    def test_ask_answer_is_published_only_when_done(self):  # panel g18
+        self.round1()
+        self.add_ask("d1-1-o-1", "o", "X")
+        with mock.patch.dict(os.environ, {"FAKE_SEAT_o": "echo"}):
+            run.ask(self.CFG, self.S, K, self.pid, "d1-1-o-1")
+        argv = self.last_argv("o")
+        self.assertEqual(argv[argv.index("--out") + 1], str(self.view() / "asks" / "d1-1-o-1.md.part"))
+        self.assertTrue((self.view() / "asks" / "d1-1-o-1.md").exists())
+        self.assertFalse((self.view() / "asks" / "d1-1-o-1.md.part").exists())
+
+    def test_first_verification_covers_fallbacks(self):  # live run 2026-11-23
+        pid = self.new_panel_after_release(checkpoint="review")  # a and o; a falls back to g
+        self.round1(pid=pid)
+        names = self.pending.target.pending_verify.call_args.args[2]
+        self.assertEqual(names, ["a", "o", "g"])
+
+    def test_a_settled_panel_is_never_written_again(self):  # final review 4: one writer
+        self.round1()
+        before = (self.view() / "next.md").read_text()
+        for st in ("failed", "logged"):
+            state.update(self.S, K, self.pid, lambda p, st=st: p.update(state=st, error="first"))
+            w = run._Worker(self.CFG, self.S, K, self.pid, time.time)
+            with self.assertRaises(run.Settled):
+                run._finish(w, {}, failed="second")
+            run._fail_round(w, {}, "second")
+            p = state.load(self.S, K, self.pid)
+            self.assertEqual((p["state"], p["error"]), (st, "first"))
+            self.assertEqual((self.view() / "next.md").read_text(), before)
 
     def test_ask_on_deep_panel_passes_deep(self):
         pid = self.new_panel_after_release(tier="deep")

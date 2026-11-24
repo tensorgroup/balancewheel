@@ -105,7 +105,7 @@ window.USAGE_MAP_INFRA = {
       desc: 'At a checkpoint (design, review, …) the lead convenes the seats the profile names. The two rules that are never relaxed: blind first rounds, and claim-only relays in cross-examination. Verification verdicts come from the lead\'s own check against the code, never from a model\'s self-report. The roster below is generated from balancewheel.example.json.',
       files: ['docs/architecture.md', 'balancewheel.example.json'],
       pipeline: [
-        { id: 'p-brief', title: 'Brief', sub: 'One shared, cached brief', desc: 'The lead frames the target once; every seat starts from the same pre-built brief.' },
+        { id: 'p-brief', title: 'Brief', sub: 'One shared, cached brief', desc: 'The lead frames the target once; every seat starts from the same pre-built brief. The panel/ package (shipped) renders it, runs round 1, merges, and answers the lead\'s request files.', files: ['panel/render.py', 'panel/run.py', 'panel/service.py'] },
         { id: 'p-blind', title: 'Blind', sub: 'Seats review in parallel', desc: 'Each seat reviews without seeing the others. This is what makes their agreement mean something.' },
         { id: 'p-dispute', title: 'Disputes', sub: 'Only disputed claims', desc: 'The lead relays the specific disputed claim, never the whole transcript. Rounds are capped; seats are wall-clock capped.' },
         { id: 'p-bar', title: 'Filter', sub: 'Drop weak challenges (substance bar)', desc: 'The lead drops challenges that do not meet the substance bar.' },
@@ -219,7 +219,6 @@ window.USAGE_MAP_INFRA = {
       files: ['docs/roadmap.md'],
       nodes: [
         { id: 'seatsgen', status: 'planned', plannedIn: 'docs/roadmap.md', title: 'seats/', sub: 'Generate the uniform seat.sh wrapper' },
-        { id: 'paneltpl', title: 'panel/', sub: 'The panel package: templates plus mechanics', desc: 'Seat brief templates, the round 1 worker, merging and counts, the record, and the request files.', files: ['panel/render.py', 'panel/run.py', 'panel/service.py'] },
         { id: 'packsexport', status: 'planned', plannedIn: 'docs/roadmap.md', title: 'packs/', sub: 'Regenerate model-seats from the log' },
         { id: 'guardacting', status: 'planned', plannedIn: 'README.md (autonomy and the guard)', title: 'Guard acting', sub: 'Block, not only log (v0 is shadow)' },
       ],

@@ -37,6 +37,15 @@ class RosterTest(unittest.TestCase):
         self.assertRaisesRegex(ValueError, r"it defines: design, review", roster.checkpoint, PROFILE_WITH_REVIEW, "plan")
         self.assertRaisesRegex(ValueError, "defines no checkpoints", roster.checkpoint, {}, "plan")
 
+    def test_first_verification_covers_fallbacks(self):  # live run 2026-11-23 (neon was never verified)
+        c = cfg(k={"runtime": "kimi", "fallback": "n", "roles": ["design"]},
+                n={"runtime": "agy", "roles": ["design"]},
+                q={"runtime": "kimi", "fallback": "r", "roles": ["design"]})
+        self.assertEqual(roster.with_fallbacks(c, ["a", "k"], ["a", "k", "x"], "standard"), ["a", "k", "g", "n"])
+        self.assertEqual(roster.with_fallbacks(c, ["q"], ["q"], "standard"), ["q"])  # a reserved fallback: deep only
+        self.assertEqual(roster.with_fallbacks(c, ["q"], ["q"], "deep"), ["q", "r"])
+        self.assertEqual(roster.with_fallbacks(c, [], ["x"], "standard"), [])  # a disabled seat brings none
+
     def test_tier(self):
         self.assertEqual(roster.tier({"depth": "deep-on-stakes"}, "high", False), "deep")
         self.assertEqual(roster.tier({"depth": "deep-on-stakes"}, "normal", False), "standard")

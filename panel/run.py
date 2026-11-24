@@ -45,6 +45,17 @@ class Stopped(Exception):
     """A stop signal reached the worker."""
 
 
+class NoJob(Exception):
+    """The panel holds no job for this worker (it was released): the worker touches nothing."""
+
+
+class Settled(ValueError):
+    """The panel is no longer `queued` or `running`: another writer finished or failed it."""
+
+
+LIVE = ("queued", "running")
+
+
 def seat_cmd() -> list:
     """The argv prefix that starts `bw seat`. `BW_PANEL_SEAT_CMD` (a JSON list) replaces it in tests."""
     env = os.environ.get("BW_PANEL_SEAT_CMD")
@@ -148,6 +159,15 @@ class _Worker:
     def set_job(self, p, **fields) -> None:
         if isinstance(p.get("job"), dict):
             p["job"].update(fields)
+
+    def claim(self, p, kind, ask_id=None) -> None:
+        """At the start: the panel must hold this kind of job, else NoJob. A job with no pid yet (the
+        launcher has not written it) gets this worker's pid, so the watchdog can watch it (g07)."""
+        job = p.get("job")
+        if not isinstance(job, dict) or job.get("kind") != kind or job.get("ask") != ask_id:
+            raise NoJob(self.pid)
+        if job.get("pid") is None:
+            job["pid"] = os.getpid()
 
     def sync(self, seats=None) -> None:
         """Write the seats (when given), the live seat groups, and a beat."""
@@ -258,6 +278,8 @@ def _finish(w, seats, failed=None) -> dict:
     panel = pstate.load(w.state, w.key, w.pid)
     if panel is None:
         raise ValueError(f"unknown panel: {w.pid}")
+    if panel.get("state") not in LIVE:  # one writer: never write over a ready, failed, or logged panel
+        raise Settled(f"panel {w.pid} is {panel.get('state')}")
     if failed:
         absent_all(seats, panel.get("roster"), failed)
     panel["seats"] = seats
@@ -292,6 +314,8 @@ def _finish(w, seats, failed=None) -> dict:
     _write_text(os.path.join(w.view, "next.md"), text)
 
     def fn(p):
+        if p.get("state") not in LIVE:
+            raise Settled(f"panel {w.pid} is {p.get('state')}")
         p.update(state="failed" if failed else "ready", short=short, error=failed,
                  seats=json.loads(json.dumps(seats)))
     w.update(fn)
@@ -404,11 +428,25 @@ def _fail_round(w, seats, why) -> dict:
         pass
     try:
         current = pstate.load(w.state, w.key, w.pid) or {}
-        if current.get("state") == "ready":  # the panel finished; only a later step failed
-            return json.loads(_read_text(os.path.join(w.work, "findings.json")) or "{}")
-        return _finish(w, seats, failed=why)
+        if current.get("state") not in LIVE:  # finished or failed already: only a later step failed
+            return _settled_doc(w, current, why)
+        try:
+            return _finish(w, seats, failed=why)
+        except Settled:
+            return _settled_doc(w, pstate.load(w.state, w.key, w.pid) or {}, why)
     except BaseException:
         return _mark_failed(w, seats, why)
+
+
+def _settled_doc(w, panel, why) -> dict:
+    """The doc of a panel another writer settled: its findings.json, else a bare failed doc."""
+    try:
+        doc = json.loads(_read_text(os.path.join(w.work, "findings.json")) or "{}")
+    except ValueError:
+        doc = {}
+    if isinstance(doc, dict) and doc:
+        return doc
+    return _bare_doc({"id": w.pid}, {}, {}, True, [], panel.get("error") or why)
 
 
 def absent_all(seats, roster_names, why) -> dict:
@@ -440,8 +478,11 @@ def _mark_failed(w, seats, why) -> dict:
                     render.failed_next(w.pid, why, pstate.request_dir(w.state, w.key), w.view))
     except BaseException:
         pass
+    def fn(p):
+        if p.get("state") in LIVE:  # never over a ready, failed, or logged panel
+            p.update(state="failed", error=why, short=True, seats=json.loads(json.dumps(seats)))
     try:
-        w.update(lambda p: p.update(state="failed", error=why, short=True, seats=json.loads(json.dumps(seats))))
+        w.update(fn)
     except BaseException:
         pass
     try:
@@ -456,12 +497,19 @@ def round1(config, state, key, pid, now=time.time) -> dict:
     """Run round 1 of this panel and return its findings.json document (Task 8, steps 1-6)."""
     w = _Worker(config, state, key, pid, now)
     seats = {}
+
+    def start(p):
+        w.claim(p, "round1")
+        if p.get("state") not in LIVE:
+            raise NoJob(pid)
+        p["state"] = "running"
+        w.set_job(p, beat=now())
+    try:
+        panel = w.update(start)
+    except NoJob:  # not this worker's job: no write, and no release of another worker's job
+        return {"panel_id": pid, "failed": "no job"}
     try:
         try:
-            def start(p):
-                p["state"] = "running"
-                w.set_job(p, beat=now())
-            panel = w.update(start)
             tier, worktree = panel.get("tier"), panel["worktree"]
             pstate.ensure_dir(state, w.work)
             with open(seat_brief.build(state, worktree, panel.get("paths") or []), encoding="utf-8") as f:
@@ -470,7 +518,8 @@ def round1(config, state, key, pid, now=time.time) -> dict:
             _write_text(brief_path, render.brief(panel["checkpoint"], panel["target"], panel.get("focus"), seat_text))
             runs, seats = roster.prelaunch(config, state, panel["roster"], tier, now())
             w.sync(seats)
-            pending = roster.pending_verify(config, state, runs)
+            # The fallbacks too: a stand-in may be needed mid-round, and it must be verified by then.
+            pending = roster.pending_verify(config, state, roster.with_fallbacks(config, runs, panel["roster"], tier))
             if pending:
                 _first_verification(w, pending, tier)
             pstate.ensure_dir(state, os.path.join(w.view, "seats"))
@@ -490,8 +539,10 @@ def round1(config, state, key, pid, now=time.time) -> dict:
 
 # --- one ask ---
 
-def _set_ask(w, ask_id, **fields) -> Optional[dict]:
+def _set_ask(w, ask_id, claim=False, **fields) -> Optional[dict]:
     def fn(p):
+        if claim:
+            w.claim(p, "ask", ask_id)
         for a in p.get("asks") or []:
             if isinstance(a, dict) and a.get("id") == ask_id:
                 a.update(fields)
@@ -504,7 +555,7 @@ def ask(config, state, key, pid, ask_id, now=time.time) -> dict:
     """Run one ask: the asked seat resumes its round-1 session with the claim in the fixed frame.
     Returns the ask entry, `done` or `failed` with its reason. ValueError for an unknown ask."""
     w = _Worker(config, state, key, pid, now)
-    entry = None
+    entry, released = None, False
     try:
         try:
             if not isinstance(ask_id, str) or not ASK_ID.fullmatch(ask_id):
@@ -515,14 +566,20 @@ def ask(config, state, key, pid, ask_id, now=time.time) -> dict:
             entry = next((a for a in panel.get("asks") or [] if isinstance(a, dict) and a.get("id") == ask_id), None)
             if entry is None:
                 raise ValueError(f"unknown ask: {ask_id}")
-            entry = _set_ask(w, ask_id, state="running", ts=now())
+            try:
+                entry = _set_ask(w, ask_id, claim=True, state="running", ts=now())
+            except NoJob:  # not this worker's job: no write, and no release of another worker's job
+                entry, released = None, True
+                return {"id": ask_id, "state": "failed", "reason": "no job"}
             seat, claim = entry.get("seat"), entry.get("claim")
             session = _text(((panel.get("seats") or {}).get(seat) or {}).get("session_id"))
             if not isinstance(claim, str) or not claim or len(claim) > merge.CLAIM_CHARS:
                 return _set_ask(w, ask_id, state="failed", reason="error: bad claim")
             if not session or not isinstance(seat, str):
                 return _set_ask(w, ask_id, state="failed", reason="error: no round-1 session")
-            out = os.path.join(pstate.ensure_dir(state, os.path.join(w.view, "asks")), f"{ask_id}.md")
+            # The answer streams to a .part file, published only when the ask is done (g18).
+            answer = os.path.join(pstate.ensure_dir(state, os.path.join(w.view, "asks")), f"{ask_id}.md")
+            out = answer + ".part"
             result = os.path.join(pstate.ensure_dir(state, os.path.join(w.work, "results")), f"ask-{ask_id}.json")
             w.launch(seat, seat_argv(seat, render.ASK_FRAME.format(claim=claim), worktree=panel["worktree"], out=out,
                                      result=result, session=session, deep=panel.get("tier") == "deep"), out, result)
@@ -531,6 +588,11 @@ def ask(config, state, key, pid, ask_id, now=time.time) -> dict:
             while proc.poll() is None:
                 w.wait(POLL_S)
             status, reason = classify(proc.returncode, _result(result))
+            if status == "ok":
+                try:
+                    os.replace(out, answer)
+                except OSError:
+                    status, reason = "absent", "error: no output"
             if status != "ok":
                 _unlink(out)
                 if reason == "interrupted":
@@ -543,14 +605,15 @@ def ask(config, state, key, pid, ask_id, now=time.time) -> dict:
             if entry is None:
                 raise
             why = w.why(exc)
-            w.say(f"ask {ask_id} failed ({why}):\n" + traceback.format_exc())
+            w.say(f"ask {ask_id} failed ({why})" + _trace())
             w.terminate()
             done = _set_ask(w, ask_id, state="failed", reason=why)
             if not isinstance(exc, Exception):
                 raise
             return done
     finally:
-        pstate.release_job(state, key, pid)
+        if not released:
+            pstate.release_job(state, key, pid)
 
 
 # --- the command ---

@@ -31,6 +31,7 @@ PANEL_ID = re.compile(r"p[0-9a-f]{7}")
 KEY = re.compile(r"[A-Za-z0-9_-]{1,64}")
 ASK_OPEN = ("queued", "running")
 MAX_PANEL_BYTES = 4 * 1024 * 1024
+LOGGED_MARK = "logged"  # an empty file in a logged panel's work dir
 # The panel.json fields a caller may set at create; the others are bw's and start empty.
 INPUT_KEYS = ("worktree", "profile", "checkpoint", "target", "focus", "stakes", "paths", "tier", "roster",
               "originals", "fallbacks", "created", "session_id", "lead", "seats")
@@ -124,12 +125,13 @@ def _lock(state, key):
     return paths.locked_dir(_ensure(state, _work_root(state, key)))
 
 
-def new_id(state, key) -> str:
-    """`p` + 7 hex digits, unused in this worktree (Design decision 10). `create` takes the id by
-    making its dir, under the worktree lock, so two creates never share one."""
+def new_id(state, key, taken=None) -> str:
+    """`p` + 7 hex digits, unused in this worktree and, when `taken` is given, not in `taken` (the ids
+    of the metrics log, which every worktree shares). `create` takes the id by making its dir, under
+    the worktree lock, so two creates never share one."""
     while True:
         pid = "p" + secrets.token_hex(4)[:7]
-        if not os.path.lexists(work_dir(state, key, pid)):
+        if not os.path.lexists(work_dir(state, key, pid)) and pid not in (taken or ()):
             return pid
 
 
@@ -176,9 +178,13 @@ def _write(state, key, panel) -> None:
     _ensure(state, os.path.join(view, "asks"))
     paths.write_json_atomic(os.path.join(work_dir(state, key, pid), "panel.json"), panel)
     paths.write_json_atomic(os.path.join(view, "status.json"), status_view(panel, view))
+    if panel.get("state") == "logged":  # a scan skips a logged panel without reading it
+        mark = os.path.join(work_dir(state, key, pid), LOGGED_MARK)
+        if not os.path.lexists(mark):
+            os.close(os.open(mark, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600))
 
 
-def create(state, key, panel: dict, check: Optional[Callable[[list], None]] = None) -> dict:
+def create(state, key, panel: dict, check: Optional[Callable[[list], None]] = None, taken=None) -> dict:
     """A new panel in state `queued`, with its `panel.json` and derived `status.json`. `check` gets the
     open panels under the worktree lock and may raise to refuse the create."""
     created = panel.get("created")
@@ -193,7 +199,7 @@ def create(state, key, panel: dict, check: Optional[Callable[[list], None]] = No
         if check is not None:
             check([q for q in _panels(state, key) if q.get("state") in OPEN])
         while True:
-            pid = new_id(state, key)
+            pid = new_id(state, key, taken)
             try:
                 os.mkdir(work_dir(state, key, pid), 0o700)
                 break
@@ -204,7 +210,9 @@ def create(state, key, panel: dict, check: Optional[Callable[[list], None]] = No
     return p
 
 
-def _panels(state, key) -> list:
+def _panels(state, key, logged=False) -> list:
+    """The readable panels of this worktree, oldest first. A logged panel is skipped by its mark,
+    unread, unless `logged` (a worktree keeps every panel it ever ran)."""
     root = _work_root(state, _key(key))
     if not _no_links(state, root):
         return []
@@ -212,13 +220,17 @@ def _panels(state, key) -> list:
         names = os.listdir(root)
     except OSError:
         return []
-    out = [p for p in (_read(state, key, n) for n in names if PANEL_ID.fullmatch(n)) if p is not None]
+    names = [n for n in names if PANEL_ID.fullmatch(n)
+             and (logged or not os.path.lexists(os.path.join(root, n, LOGGED_MARK)))]
+    out = [p for p in (_read(state, key, n) for n in names) if p is not None]
+    if not logged:
+        out = [p for p in out if p.get("state") != "logged"]
     return sorted(out, key=lambda p: p["created"] if isinstance(p.get("created"), (int, float)) else 0.0)
 
 
-def panels(state, key) -> list:
-    """Every readable panel of this worktree, oldest first."""
-    return _panels(state, key)
+def panels(state, key, logged=False) -> list:
+    """The readable panels of this worktree, oldest first; the logged ones only with `logged`."""
+    return _panels(state, key, logged)
 
 
 def open_panels(state, key) -> list:
@@ -234,6 +246,12 @@ def unlogged(state, key) -> list:
 
 def open_asks(panel: dict) -> list:
     return [a for a in panel.get("asks") or [] if a.get("state") in ASK_OPEN]
+
+
+def rounds_used(asks, dispute) -> int:
+    """The rounds a dispute has used: every ask on it that has not failed (a queued one counts)."""
+    return sum(1 for a in asks or [] if isinstance(a, dict) and a.get("dispute") == dispute
+               and a.get("state") != "failed")
 
 
 def update(state, key, pid, fn: Callable[[dict], None]) -> dict:

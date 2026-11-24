@@ -195,6 +195,9 @@ class ServiceTest(unittest.TestCase):
     def ready(self, env=None, config=None, checkpoint="design"):
         """A panel opened and run in-process to `ready`."""
         pid = self.open(checkpoint, config=config)
+        self.assertTrue(state.reserve_job(self.S, K, pid, {"kind": "round1", "ask": None, "pid": None,
+                                                           "owner": "scheduler", "started": 0.0, "deadline": 1e12,
+                                                           "beat": 0.0, "seat_pgids": []}))
         with mock.patch.dict(os.environ, env or {}):
             run.round1(config or self.CFG, self.S, K, pid)
         self.assertEqual(self.panel(pid)["state"], "ready")
@@ -668,7 +671,7 @@ class ServiceTest(unittest.TestCase):
             service.schedule(self.CFG, self.S, K, jobs, now=now + service.KILL_GRACE_S + 1)
         self.assertIsNone(other.poll())   # alive: its own group was never signalled
         self.assertNotIn(os.getpgrp(), [c.args[0] for c in killpg.call_args_list])
-        self.assertNotIn(other.pid, [c.args[0] for c in kill.call_args_list])
+        self.assertNotIn(other.pid, [c.args[0] for c in kill.call_args_list if c.args[1] != 0])  # 0 only probes
         p = self.panel(pid)
         self.assertEqual((p["state"], p["error"], p["job"]), ("failed", "panel worker stopped", None))
 
@@ -714,9 +717,10 @@ class ServiceTest(unittest.TestCase):
         seat = self.T / "seat_group.py"
         seat.write_text(
             "import signal, subprocess, sys, time\n"
-            "m = subprocess.Popen([sys.executable, '-c', 'import signal, time; "
-            "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)'])\n"
-            f"open({str(member_file)!r}, 'w').write(str(m.pid))\n"
+            "subprocess.Popen([sys.executable, '-c', 'import os, signal, sys, time; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "open(sys.argv[1], \\'w\\').write(str(os.getpid())); time.sleep(30)', "
+            f"{str(member_file)!r}])\n"  # the member writes its own ready file, after SIG_IGN (g22)
             "time.sleep(30)\n")
         worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "panel.run", "round1", "--panel", pid],
                                   start_new_session=True)
@@ -725,8 +729,7 @@ class ServiceTest(unittest.TestCase):
             for proc in (worker, leader):
                 self.addCleanup(proc.wait)
                 self.addCleanup(proc.kill)
-            self.assertTrue(wait_for(member_file.exists))
-            time.sleep(0.2)   # the member sets SIG_IGN
+            self.assertTrue(wait_for(lambda: member_file.exists() and member_file.read_text()))
             member = int(member_file.read_text())
             self.addCleanup(lambda: _alive(member) and os.kill(member, signal.SIGKILL))
             now = 5000.0
@@ -950,6 +953,176 @@ class ServiceTest(unittest.TestCase):
         self.assertIsNone(self.jobs.alive(12345678))
         self.jobs.reap()
         self.assertIsNone(self.jobs.alive(pid))
+
+    # --- the fix wave: recovery, the watchdog, and the scheduler ---
+
+    def dead_pid(self):
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        return proc.pid
+
+    def hold(self, panel_id, **job):
+        base = {"kind": "round1", "ask": None, "pid": None, "owner": "scheduler", "started": 0.0,
+                "deadline": 1e12, "beat": 0.0, "seat_pgids": []}
+        self.assertTrue(state.reserve_job(self.S, K, panel_id, {**base, **job}))
+
+    def test_running_work_with_no_job_is_failed(self):  # final review 2
+        lost, waiting = self.open(), self.open()
+        state.update(self.S, K, lost, lambda p: p.update(state="running"))
+        ready = self.ready()
+        self.set_asks(ready, [{"id": "d1-1-o-1", "seat": "o", "dispute": "d1", "round": 1, "state": "running"},
+                              {"id": "d1-1-a-1", "seat": "a", "dispute": "d1", "round": 1, "state": "queued"}])
+        service.recover(self.CFG, self.S, K, time.time())
+        p = self.panel(lost)
+        self.assertEqual((p["state"], p["error"]), ("failed", "panel worker stopped"))
+        self.assertEqual(self.panel(waiting)["state"], "queued")  # a queued panel waits for the scheduler
+        asks = self.panel(ready)["asks"]
+        self.assertEqual([(a["state"], a.get("reason")) for a in asks],
+                         [("failed", "panel worker stopped"), ("queued", None)])
+        self.assertTrue(self.log(lost, verdicts={})["ok"])  # log is always possible
+
+    def test_schedule_reaps_workers_that_ended(self):  # panel g06
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        self.jobs._procs[proc.pid] = proc
+        self.assertTrue(wait_for(lambda: proc.poll() is not None))
+        service.schedule(self.CFG, self.S, K, self.jobs, notice=self.notice)
+        self.assertNotIn(proc.pid, self.jobs._procs)
+
+    def test_a_worker_takes_its_own_pid(self):  # panel g07
+        pid = self.open()
+        self.hold(pid)
+        w = run._Worker(self.CFG, self.S, K, pid, time.time)
+        w.update(lambda p: w.claim(p, "round1"))
+        self.assertEqual(self.job(pid)["pid"], os.getpid())
+        with self.assertRaises(run.NoJob):
+            w.update(lambda p: w.claim(p, "ask", "d1-1-o-1"))  # not this worker's kind of job
+        state.release_job(self.S, K, pid)
+        doc = run.round1(self.CFG, self.S, K, pid)  # no job: the worker writes nothing
+        self.assertEqual(doc["failed"], "no job")
+        self.assertEqual(self.panel(pid)["state"], "queued")
+
+    def test_a_pidless_job_of_a_running_panel_fails_it(self):  # panel g07
+        pid = self.open()
+        self.hold(pid, started=100.0)
+        state.update(self.S, K, pid, lambda p: p.update(state="running"))
+        service.schedule(self.CFG, self.S, K, FakeJobs(), now=100.0 + service.SPAWN_GRACE_S + 1)
+        p = self.panel(pid)
+        self.assertEqual((p["state"], p["error"]), ("failed", "panel worker stopped"))
+
+    def test_a_job_whose_pid_is_gone_is_stopped_at_once(self):
+        pid = self.open()
+        self.hold(pid, pid=self.dead_pid(), owner="foreground", beat=time.time())
+        service.watch(self.CFG, self.S, K, service.Jobs(), now=time.time())
+        self.assertEqual((self.job(pid)["stop"], self.job(pid)["worker_exited"]), ("panel worker exited", True))
+
+    def test_a_foreground_pid_is_signalled_alone(self):  # final review 4
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])  # no group of its own
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        job = {"pid": child.pid, "owner": "foreground", "seat_pgids": []}
+        self.assertEqual((service._groups(job), service._lone(job)), ([], [child.pid]))
+        self.assertTrue(service.tree_alive(job))
+        with mock.patch.object(os, "killpg", wraps=os.killpg) as killpg:
+            service.stop_tree(job, signal.SIGTERM)
+        self.assertNotIn(child.pid, [c.args[0] for c in killpg.call_args_list])
+        self.assertEqual(child.wait(10), -signal.SIGTERM)
+        self.assertEqual(service._lone({"pid": os.getpid(), "owner": "foreground"}), [])  # never bw itself
+
+    def test_foreground_kill_reaches_the_pid(self):  # final review 4
+        pid = self.open()
+        ready = self.T / "fg-ready"
+        child = subprocess.Popen([sys.executable, "-c", "import signal, sys, time; "
+                                  "signal.signal(signal.SIGTERM, signal.SIG_IGN); open(sys.argv[1], 'w').close(); "
+                                  "time.sleep(30)", str(ready)])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        self.assertTrue(wait_for(ready.exists))  # written after SIG_IGN is set
+        now = 5000.0
+        self.hold(pid, pid=child.pid, owner="foreground", started=now - 200, beat=now - service.BEAT_STALE_S - 1)
+        with mock.patch.object(service, "_command", return_value="python3 /x/bin/bw panel design t"):
+            service.schedule(self.CFG, self.S, K, service.Jobs(), now=now)
+        self.assertEqual((self.job(pid)["kill_groups"], self.job(pid)["kill_pids"]), ([], [child.pid]))
+        service.schedule(self.CFG, self.S, K, service.Jobs(), now=now + service.KILL_GRACE_S + 1)
+        self.assertEqual(child.wait(10), -signal.SIGKILL)
+        self.assertEqual(self.panel(pid)["state"], "failed")
+
+    def test_stale_kill_groups_are_confirmed_again(self):  # panel g09
+        job = {"pid": None, "kill_at": 1000.0, "kill_groups": [4242], "seat_pgids": []}
+        with mock.patch.object(service, "stop_tree") as stop, mock.patch.object(service, "_signal") as sig:
+            service._kill(self.S, K, "p1234567", job, FakeJobs(), 1000.0 + service.KILL_GRACE_S + 1)
+            stop.assert_called_once()
+            sig.assert_not_called()
+            stop.reset_mock()
+            service._kill(self.S, K, "p1234567", job, FakeJobs(), 1000.0 + service.KILL_TRUST_S + 1)
+            stop.assert_not_called()
+            sig.assert_called_once()
+
+    def test_a_reused_foreground_pid_is_not_trusted(self):  # panel g10
+        job = {"pid": os.getpid(), "owner": "foreground", "seat_pgids": [], "pid_start": "Mon Jan  1 00:00:00 2001"}
+        with mock.patch.object(service, "_command", return_value="python3 /x/bin/bw panel design t"):
+            trusted, skipped = service._trusted(job, "p1234567", service.Jobs())
+            self.assertEqual((trusted["pid"], skipped), (None, [os.getpid()]))
+            job["pid_start"] = service.started_at(os.getpid())
+            self.assertTrue(job["pid_start"])
+            trusted, skipped = service._trusted(job, "p1234567", service.Jobs())
+            self.assertEqual((trusted["pid"], skipped), (os.getpid(), []))
+
+    def test_ask_starts_are_bounded(self):  # panel g11
+        pid = self.ready()
+        ask = self.ask_on(pid, "o")
+        jobs = FakeJobs()
+        with mock.patch.object(jobs, "spawn", side_effect=OSError("no")):
+            for _ in range(service.MAX_SPAWNS + 1):
+                service.schedule(self.CFG, self.S, K, jobs, notice=self.notice)
+        a = self.panel(pid)["asks"][0]
+        self.assertEqual((a["id"], a["state"], a["reason"], a["spawns"]),
+                         (ask["id"], "failed", "worker did not start", service.MAX_SPAWNS))
+        self.assertIsNone(self.job(pid))
+
+    def test_rounds_are_checked_again_before_launch(self):  # panel g02
+        pid = self.ready()
+        first = self.ask_on(pid, "o")
+        self.set_asks(pid, [first, dict(first, id="d1-2-a-1", seat="a", round=2, state="done"),
+                            dict(first, id="d1-3-g-1", seat="g", round=3, state="done")])
+        jobs = FakeJobs()
+        service.schedule(self.CFG, self.S, K, jobs, notice=self.notice)
+        self.assertEqual(jobs.argvs, [])
+        a = self.panel(pid)["asks"][0]
+        self.assertEqual((a["state"], a["reason"]), ("failed", "dispute d1 has no round left"))
+
+    def test_an_ask_does_not_wait_behind_newer_panels(self):  # final review minor
+        pid = self.ready()
+        ask = self.ask_on(pid, "o")
+        newer = self.open()
+        state.update(self.S, K, newer, lambda p: p.update(created=time.time() + 60))
+        kind, p, ask_id = service._next_job(self.S, K)
+        self.assertEqual((kind, p["id"], ask_id), ("ask", pid, ask["id"]))
+        older = self.open()
+        state.update(self.S, K, older, lambda p: p.update(created=0.0))
+        kind, p, _ = service._next_job(self.S, K)
+        self.assertEqual((kind, p["id"]), ("round1", older))
+
+    def test_new_ids_avoid_the_logged_ones(self):  # panel g08
+        a = self.ready()
+        self.assertTrue(self.log(a)["ok"])
+        taken = a[1:] + "0"
+        with mock.patch.object(state.secrets, "token_hex", side_effect=[taken, "abcdef10"]):
+            pid = state.new_id(self.S, K, taken={a})
+        self.assertEqual(pid, "pabcdef1")
+        with mock.patch.object(state.secrets, "token_hex", side_effect=[a[1:] + "0", "1234abc0"]):
+            other = state.create(self.S, "otherkey", {"worktree": str(self.wt), "profile": "p"}, taken={a})
+        self.assertEqual(other["id"], "p1234abc")
+        with mock.patch.object(state, "create", wraps=state.create) as create:
+            self.open()
+        self.assertIn(a, create.call_args.kwargs["taken"])
+
+    def test_failed_panel_without_findings_is_amendable(self):  # panel g14
+        pid = self.failed_panel()
+        os.unlink(Path(state.work_dir(self.S, K, pid), "findings.json"))
+        self.assertTrue(self.log(pid, verdicts={})["ok"])
+        self.assertTrue(Path(state.work_dir(self.S, K, pid), "findings.json").exists())
+        r = self.amend(pid, "a1", {"notes": "checked again"})
+        self.assertTrue(r["ok"], r)
 
     def test_own_refuses_unknown(self):
         with self.assertRaisesRegex(ValueError, "^unknown panel p0000000$"):
