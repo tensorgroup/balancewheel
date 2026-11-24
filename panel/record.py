@@ -20,8 +20,35 @@ PROPOSAL_CHARS = 1500
 NOTES_CHARS = 2000
 
 
+_HALF_ESCAPE = re.compile(r"(?<!\\)((?:\\\\)*)\\(?:x[0-9a-f]?|u[0-9a-f]{0,3})?$")
+NOTE_CHARS = 200
+
+
 def _cut(value, limit):
-    return safe(value)[:limit]
+    """safe() text cut to `limit`, without a trailing half escape (an odd backslash run, or `\\x1`)."""
+    return _HALF_ESCAPE.sub(r"\1", safe(value)[:limit])
+
+
+def _unscored(doc):
+    return {s for s, v in doc["seats"].items() if v.get("unexpected_output") and not v.get("on_roster", True)}
+
+
+def _bw_notes(doc, unscored):
+    out = []
+    for s, v in doc["seats"].items():
+        name = _cut(s, 40)
+        if s in unscored:
+            out.append(f"seat {name} ran off-roster; not scored")
+            continue
+        lost = v.get("lost")
+        if not isinstance(lost, dict):
+            continue
+        bits = [f"{lost[k]} {text}" for k, text in (("skipped_blocks", "blocks skipped"),
+                ("skipped_entries", "entries skipped"), ("truncated", "findings over the cap"))
+                if isinstance(lost.get(k), int) and lost[k] > 0]
+        if bits:
+            out.append(f"seat {name}: " + ", ".join(bits))
+    return [_cut(n, NOTE_CHARS) for n in out]
 
 
 def _str_map(req, key):
@@ -93,10 +120,10 @@ def _disputes(req, ok):
     return out
 
 
-def _detail(doc, verdicts, groups, severity):
-    base = [dict(m, group=g["group"]) for g in doc["groups"] for m in g["members"]]
-    base.sort(key=lambda m: int(m["id"][1:]))
-    ids = {m["id"] for m in base}
+def _detail(doc, verdicts, groups, severity, unscored):
+    every = [dict(m, group=g["group"]) for g in doc["groups"] for m in g["members"]]
+    ids = {m["id"] for m in every}
+    base = sorted((m for m in every if m["seat"] not in unscored), key=lambda m: int(m["id"][1:]))
     unknown = sorted({k for src in (verdicts, groups, severity) for k in src} - ids)
     if unknown:
         raise ValueError("unknown finding ids: " + ", ".join(safe(u)[:40] for u in unknown))
@@ -125,8 +152,9 @@ def build(doc, req, config, moderator=None, rounds=1):
     notes = req.get("notes", "")
     if not isinstance(notes, str):
         raise ValueError("notes must be a string")
-    ok = {s: v for s, v in doc["seats"].items() if v.get("status") == "ok"}
-    detail = _detail(doc, verdicts, groups, severity) + _added(req, ok)
+    unscored = _unscored(doc)
+    ok = {s: v for s, v in doc["seats"].items() if v.get("status") == "ok" and s not in unscored}
+    detail = _detail(doc, verdicts, groups, severity, unscored) + _added(req, ok)
     disputes = _disputes(req, ok)
     seats = {}
     for s, v in ok.items():
@@ -137,8 +165,9 @@ def build(doc, req, config, moderator=None, rounds=1):
            "immediate_agreement": not disputes and rounds == 1, "findings_raw": doc["findings_raw"]}
     if doc.get("triage_required"):
         rec["findings_after_triage"] = sum(1 for f in detail if f["verdict"] != "dropped")
+    notes = " | ".join([n for n in [_cut(notes, NOTES_CHARS)] if n] + _bw_notes(doc, unscored))
     rec.update({"findings_detail": detail, "findings": log.compute_counts(detail), "disputes": disputes,
-                "notes": _cut(notes, NOTES_CHARS)})
+                "notes": notes})
     if moderator:
         rec["moderator"] = moderator
     return rec, [k for k in req if k not in REQUEST_KEYS]
@@ -150,7 +179,8 @@ def summary_line(rec, doc):
         status = f", failed: {safe(doc['failed'])}"
     else:
         status = ", short" if doc.get("short") else ""
-    ran = [s for s, v in doc["seats"].items() if v.get("status") == "ok"]
+    unscored = _unscored(doc)
+    ran = [s for s, v in doc["seats"].items() if v.get("status") == "ok" and s not in unscored]
     names = [f"{s} for {doc['seats'][s]['stand_in_for']}"
              if doc["seats"][s].get("stand_in_for") and not doc["seats"][s].get("on_roster", True) else s
              for s in ran]

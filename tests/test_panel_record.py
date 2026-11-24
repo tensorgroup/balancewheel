@@ -135,6 +135,38 @@ class Build(unittest.TestCase):
         self.assertNotIn("\x1b", rec["target"])
 
 
+class BwNotes(unittest.TestCase):
+    def test_lost_counts_become_notes_and_still_score(self):
+        doc = make_doc()
+        doc["seats"]["a"]["lost"] = {"skipped_blocks": 3, "truncated": 10}
+        rec, _ = record.build(doc, {**ALL_OK, "notes": "mine"}, CFG)
+        self.assertEqual(rec["notes"], "mine | seat a: 3 blocks skipped, 10 findings over the cap")
+        self.assertEqual(rec["findings"]["a"]["total"], 2)
+        log.validate_panel(rec, CFG, force=False)
+
+    def test_off_roster_seat_not_scored(self):
+        doc = make_doc()
+        doc["seats"]["g"] = {"model": "model-g", "status": "ok", "on_roster": False, "unexpected_output": True}
+        doc["groups"].append({"group": "g3", "title": "x", "members": [member("f4", "g", "minor", "q.py:1", "x")]})
+        doc["findings_raw"] = 4
+        rec, _ = record.build(doc, ALL_OK, CFG)
+        self.assertNotIn("g", rec["seats"])
+        self.assertNotIn("g", rec["findings"])
+        self.assertNotIn("f4", [f["id"] for f in rec["findings_detail"]])
+        self.assertEqual(rec["notes"], "seat g ran off-roster; not scored")
+        log.validate_panel(rec, CFG, force=False)
+        self.assertTrue(record.summary_line(rec, doc).startswith("Design panel, short (a, b; "))
+        self.assertRaises(ValueError, record.build, doc, {**ALL_OK, "added": [{**ADDED, "seat": "g"}]}, CFG)
+
+    def test_cut_never_leaves_a_half_escape(self):
+        self.assertEqual(record._cut("ab\x1b", 3), "ab")
+        self.assertEqual(record._cut("ab\x1b", 4), "ab")
+        self.assertEqual(record._cut("ab\x1b", 5), "ab")
+        self.assertEqual(record._cut("ab\x1b", 6), "ab\\x1b")
+        self.assertEqual(record._cut("ab\\\\", 4), "ab\\\\")  # a real doubled backslash stays
+        self.assertEqual(record._cut("ab\\\\", 3), "ab")
+
+
 class Summary(unittest.TestCase):
     def test_summary_line(self):
         rec, _ = record.build(DOC, {"verdicts": {"f1": "confirmed", "f2": "partial", "f3": "dropped"}}, CFG)
