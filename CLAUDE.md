@@ -70,7 +70,7 @@ OpenEscapement" section owns the install order and the reconcile rule.
   a verification checklist), deliberately **not** a dump of the private setup.
 - `docs/stack.md` — every tool used, planned, retired, or evaluated, and why; update it in
   the same commit as any change of tool.
-- `docs/orca.md` — Orca, the recommended (optional) canvas: what it does versus what
+- `docs/orca.md` — Orca, an optional canvas: what it does versus what
   balancewheel does, what we stopped building because of it, the spike's findings, and the
   integration rules `bw` and setup enforce.
 - `docs/roadmap.md` — dogfooding goals, the four extraction criteria, the planned

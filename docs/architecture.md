@@ -16,10 +16,11 @@ with the finding that resuming a session is not a cache, and the stand-in rule f
 whose subscription window is exhausted. Updated 2026-10-24: leads and rotation — the lead is
 the moderator; a project's profile may make a non-primary vendor's agent the default lead,
 which narrows "driver mode is failover, not promotion" to drivers outside a profile.
-Updated 2026-10-25: Orca named as the recommended canvas, and canvas control channels added
+Updated 2026-10-25: Orca named as a canvas, and canvas control channels added
 to what a sandbox must deny (`docs/orca.md`). Revised 2026-10-25: the lead's autonomy and
 the `bw guard` broker, with the trust boundary it rests on ("Leads, profiles, and rotation").
 Updated 2026-10-26: the registry and the cockpit as derived, read-only views.
+Revised 2026-11-22: Orca is optional; bw opens a Terminal tab unless `canvas` is `orca`.
 Updated 2026-11-11: reserved seats (the expensive top-tier model, held for deep panels and
 stuck debugging) and seat C on the vendor's default-tier model.
 Updated 2026-11-23: `bw panel` runs the mechanical half of the panel protocol; the lead keeps
@@ -107,7 +108,7 @@ of quota, caps, and time (`lead/rotation.py`); thresholds are on *remaining* quo
 are contained like drivers, by their own sandbox or by `bw sandbox` after an attack-verified
 pass; leads never share a worktree (an inherited lock). Design and amendments:
 `docs/superpowers/specs/2026-10-24-profiles-lead-rotation-cockpit-design.md`. Where the
-user watches leads is a canvas's job, not balancewheel's: Orca is the recommended one
+user watches leads is a canvas's job, not balancewheel's: a Terminal tab by default; Orca is one option
 (`docs/orca.md`), hosting `bw lead` panes; a canvas is also a host that a contained process
 could ask to run commands, so every sandbox denies its control channel.
 

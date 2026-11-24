@@ -1,6 +1,6 @@
 # Balancewheel and Orca
 
-*Written 2026-10-25 against Orca 1.4.240 (macOS, Homebrew cask `stablyai/orca/orca`), read
+*Revised 2026-11-22: Orca is optional, not the default canvas; `canvas` defaults to `terminal`. Written 2026-10-25 against Orca 1.4.240 (macOS, Homebrew cask `stablyai/orca/orca`), read
 from its docs, its source (main at `a4e6e1f0`), and a hands-on spike on the author's machine.
 A deep four-seat design review of the adoption followed (43 raw findings, 17 after dedupe,
 none refuted); its conclusions are folded in below. Orca ships near-daily, so re-check the
@@ -17,9 +17,9 @@ Earlier dates in this document were corrected to 2026-10-25, the day the work wa
 [Orca](https://github.com/stablyai/orca) is an MIT-licensed desktop "agent IDE": it runs
 Claude Code, Codex, agy, pi, Kimi Code and other CLI agents side by side, each in its own
 git worktree and terminal, with diffs, a browser, notifications, a mobile companion, and a
-scriptable `orca` CLI. Balancewheel recommends it as the **default canvas** — the window you
-watch your leads in — and never requires it: everything here works from plain terminal
-tabs.
+scriptable `orca` CLI. Balancewheel treats it as **an optional canvas** — the window you
+watch your leads in. The canvas defaults to a Terminal tab (`canvas: "terminal"`), and
+everything here works from plain terminal tabs. Set `canvas: "orca"` to use Orca.
 
 ## What each one is for
 
@@ -48,7 +48,9 @@ tells you, with numbers, which model is worth its plan.
 
 ## What we stopped building because Orca has it
 
-Recorded as amendments in the 2026-10-24 spec ("Orca as the default canvas"):
+Recorded as amendments in the 2026-10-24 spec ("Orca as the default canvas"). Since
+2026-11-22 Orca is optional, so these items hold only when `canvas` is `orca`. Without Orca,
+bw loses the canvas pane, Orca's notifications ("an agent is waiting"), the Codex and Kimi quota readings, the Claude per-model pool (`fableWeekly`), and the Gemini reading (Orca's `antigravity` entry; agy's own probe still awaits its shape). Kimi and Gemini plans then use observed caps (`quota: "none"`).
 
 - **Canvas driving.** `bw start` opens the lead in an Orca pane; nodeterm drops to "another
   canvas that can host `bw lead`".
@@ -119,7 +121,29 @@ bw's questions.
    it. It is now denied anyway. Orca's agent-hook endpoint takes a token that sits in the
    same denied directory (`agent-hooks/endpoint.env`).
 
+## Without Orca (the default path)
+
+Nothing here needs Orca. With `canvas: "terminal"` (the default for a new config), `bw start`
+opens a Terminal tab with `bw lead`: a `.command` file in the state dir, run with
+`open -a Terminal`. bw makes no `orca` call at all, unless a plan sets `orca_provider`.
+Every sandbox still denies Orca's control channel. Rotation runs on observed caps and
+`bw cap`, as v0 does. Codex and Kimi plans use observed caps (`quota: "none"`).
+
+Without Orca, bw loses the canvas pane, Orca's notifications ("an agent is waiting"), the
+Codex and Kimi quota readings, the Claude per-model pool (`fableWeekly`), and the Gemini
+reading (Orca's `antigravity` entry; agy's own probe still awaits its shape).
+
 ## How to integrate
+
+### Turn Orca on
+
+Set these config lines:
+
+- `"canvas": "orca"` makes `bw start` open an Orca pane. A schema-3 config with no `canvas`
+  key keeps Orca when it has `tools.orca` or a plan with `orca_provider`.
+- `tools.orca` lets `bw start` update and version-check Orca.
+- A plan's `orca_provider` (a name from `orca account list --json`) makes Orca that plan's
+  quota source. Add `orca_windows` to map a pool (`fableWeekly` or `bucket:<name>`) to leads.
 
 ### Install and first launch
 
@@ -145,7 +169,7 @@ bw's questions.
   --command "<cmd>"`, where `<cmd>` is
   `env BALANCEWHEEL_CONFIG=… BW_STATE_DIR=… <real path of bin/bw> lead` (the two assignments
   only when set in bw's own environment). If Orca is running but that command fails or times
-  out, `bw start` says so and opens a Terminal tab instead (see "Without Orca"). It refuses
+  out, `bw start` says so and opens a Terminal tab instead (see "Without Orca" above). It refuses
   first when bw lies inside the target worktree or its common git dir, and opens nothing when
   the worktree's lock is held.
   Orca's `agent launch`, orchestration workers, automations, and session restore are not used
@@ -219,13 +243,6 @@ bw's questions.
 - **agy has no probe yet.** `probe: "agy"` reads `unknown` ("awaiting Task G") until agy's
   `/usage` output has been observed in a live run. A Google plan reads Orca's `antigravity`
   entry meanwhile.
-
-### Without Orca
-
-Nothing changes in behaviour: `bw start` opens a Terminal tab (a `.command` file in the
-state dir, run with `open -a Terminal`) with `bw lead` (also the fallback when Orca is running
-but `orca terminal create` fails), plans whose only source is Orca (Codex, Kimi) read
-`unknown`, and rotation runs on observed caps and `bw cap`, as v0 does.
 
 ## Open items
 

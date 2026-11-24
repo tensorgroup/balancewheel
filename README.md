@@ -131,7 +131,7 @@ is a liability. In the reference setup the paths are:
 | `~/.codex/config.toml`, `~/.codex/review.config.toml` | default profile, read-only review profile | edits / creates |
 | `~/.pi/agent/settings.json`, `~/.pi/agent/models.json` | pi defaults and model pins | edits — *only if pi runs from its default agent dir; the reference setup gives each pi seat its own agent dir under the state dir, so these stay untouched there* |
 | `~/.config/git/ignore` | tool-litter patterns | appends |
-| `~/.codex/hooks.json`, `~/.gemini/settings.json`, `~/.gemini/config/hooks.json`, `~/.kimi-code/config.toml`, `~/.pi/agent/extensions` | vendor hook config | *nothing* — listed because [Orca](docs/orca.md), the recommended canvas, adds its status hooks here (and to the Claude Code settings and Codex config above, plus pi extensions) on first launch; back up before installing it |
+| `~/.codex/hooks.json`, `~/.gemini/settings.json`, `~/.gemini/config/hooks.json`, `~/.kimi-code/config.toml`, `~/.pi/agent/extensions` | vendor hook config | *nothing* — listed because [Orca](docs/orca.md), an optional canvas, adds its status hooks here (and to the Claude Code settings and Codex config above, plus pi extensions) on first launch; back up before installing it |
 | `~/.cc-switch/settings.json` | [cc-switch](docs/stack.md)'s settings (usage view; optional) | creates, only when absent, before its first launch (`bw setup cc-switch`); refuses to overwrite a file that differs |
 | `~/.local/state/balancewheel/inbox.jsonl` | the asks leads put to you, bw's notices, and your answers (`bw inbox`, `bw answer`); the user's own record | nothing at setup; backed up. Its `inbox-view/` answers files are regenerated from it and stay out |
 | `~/.codex/auth.json`, `~/.pi/agent/auth.json`, your secrets file | credentials | reads only; never written, never backed up |
@@ -339,11 +339,11 @@ worktree has open inbox items or when `bw start` last updated tools more than a 
 outside a git worktree it shows `bw status`.
 
     bw                       # in a project: lead it here; elsewhere: bw status
-    bw start [path]          # update tools, re-verify, pick the lead, open it in Orca or a Terminal tab
+    bw start [path]          # update tools, re-verify, pick the lead, open it in a Terminal tab (or Orca)
     bw lead                  # start the profile's lead for this worktree (what plain bw does in one)
     bw lead --use <lead>     # pin a lead for this worktree; bw lead --auto unpins
     bw status                # plans (quota, caps), worktrees, leads, how each is contained, open inbox items
-    bw probe [plan...]       # read quota now (OpenRouter key, Orca), one line per plan
+    bw probe [plan...]       # read quota now (OpenRouter key, Orca when mapped), one line per plan
     bw inbox [--project] [--all]   # open asks from leads and notices from bw (--all: answered too)
     bw improve [note "…"|done <key>] # changes worth making, from how you work; add a note; mark one dealt with
     bw triage install claude       # the question-triage hook in Claude Code's settings (uninstall removes it)
@@ -461,17 +461,20 @@ once for each bw-contained lead runtime.
      leaves a runtime `pending` with the reason when the test cannot run (plan capped,
      version unreadable, agy's hook spike not done) or with `--no-verify`.
   3. **reads and shows the quota** of every plan the profile touches (OpenRouter's key
-     endpoint and Orca's cache, see "Quota sources") and the lead it would start.
-  4. **opens the worktree.** With Orca running: an Orca pane titled `<worktree basename> lead`
-     through `orca terminal create --worktree path:<worktree> --command "<bw> lead"`. Otherwise
-     a Terminal tab, through a small `.command` file under the state dir's `start/` that
-     `open -a Terminal` runs; so too when Orca is running but `orca terminal create` fails
-     (bw says so first). If neither works, it prints the command and exits 1. A
+     endpoint and, for a plan that maps it, Orca's cache; see "Quota sources") and the lead it
+     would start.
+  4. **opens the worktree.** By default it opens a Terminal tab, through a small `.command`
+     file under the state dir's `start/` that `open -a Terminal` runs. With `canvas: "orca"`
+     and Orca running, it opens an Orca pane titled `<worktree basename> lead` instead, through
+     `orca terminal create --worktree path:<worktree> --command "<bw> lead"`; when
+     `orca terminal create` fails, it falls back to the Terminal tab (bw says so first). A
+     schema-3 config with no `canvas` key keeps Orca when it has `tools.orca` or an
+     `orca_provider`. If no canvas works, bw prints the command and exits 1. A
      worktree that already has a lead is not opened again. `bw start` never starts the
      cockpit; it prints the `bw cockpit` hint.
 
   Runs are recorded in `start.json` in the state dir (`bw status` shows the `last start:`
-  line). `--dry-run` runs only git and `orca status` and changes nothing. **Runtime locks:**
+  line). `--dry-run` runs only git (and `orca status` when the canvas is Orca) and changes nothing. **Runtime locks:**
   every `bw lead` holds a shared lock on its runtime from before the verification check
   through the session, so an update can land neither between the check and the launch nor
   under a running lead. `bw lead` waits for an update of its runtime that is in progress when
@@ -481,7 +484,7 @@ once for each bw-contained lead runtime.
   come from: `statusline` (Claude Code reports them; `bin/bw-statusline`), `probe` (a
   documented vendor surface, chosen by `plans.*.probe`, which defaults from the plan's
   `vendor`: `openrouter` reads OpenRouter's key endpoint, `google` is agy's `/usage`), `orca`
-  (Orca's cached poll of that provider, named by `orca_provider`), or `none`. Every source
+  (an opt-in source: Orca's cached poll of that provider, named by `orca_provider`), or `none`. Every source
   writes its own snapshot under the state dir's `quota/`, and bw picks per plan by precedence:
   a `statusline` plan reads the statusline only, a `probe` plan its probe and then Orca (when
   `orca_provider` is set), an `orca` plan Orca; the first source whose reading is known and
@@ -550,13 +553,15 @@ once for each bw-contained lead runtime.
   it holds managed Claude or Codex accounts; it says so when Orca is installed but not running.
   `cc-switch:` checks the settings `bw setup cc-switch` wrote. bw reads Orca's profile
   database only through a sealed copy in the state dir, which every sandbox denies.
-- **Where you watch it: Orca (recommended, never required).** [Orca](https://github.com/stablyai/orca)
-  is an MIT desktop app that hosts agent panes per worktree, with notifications and a
-  per-plan quota view. `bw start` opens `bw lead` in an Orca terminal
-  (`orca terminal create --command "bw lead"`); never launch a lead through Orca's own
-  agent launch, which bypasses permissions and bw's worktree lock. Orca adds hooks to every vendor's config when it first starts, and a
-  sandboxed process can drive Orca's control channel unless the sandbox denies it — read
-  [docs/orca.md](docs/orca.md) before installing it. Plain terminal tabs work the same.
+- **Where you watch it: a Terminal tab (Orca is one option).** `bw start` opens `bw lead` in
+  a Terminal tab. [Orca](https://github.com/stablyai/orca) is an MIT desktop app that hosts
+  agent panes per worktree, with notifications and a per-plan quota view. To use it, set
+  `canvas: "orca"`; `bw start` then opens `bw lead` in an Orca terminal
+  (`orca terminal create --command "bw lead"`). Without Orca, bw loses the canvas pane, Orca's notifications ("an agent is waiting"), the Codex and Kimi quota readings, the Claude per-model pool (`fableWeekly`), and the Gemini reading (Orca's `antigravity` entry; agy's own probe still awaits its shape). Everything else works the same in a Terminal tab.
+  Never launch a lead through Orca's own agent launch. It bypasses permissions and bw's
+  worktree lock. Orca adds hooks to every vendor's config when it first starts. A sandboxed
+  process can drive Orca's control channel unless the sandbox denies it, and every `bw`
+  sandbox denies it. Read [docs/orca.md](docs/orca.md) before you install Orca.
 - **The cockpit and the registry (`bw cockpit`, `bw registry`; since 2026-10-26).** `bw cockpit
   [--port N] [--no-open]` serves one read-only page on `127.0.0.1` until Ctrl-C, with five tabs.
   **Models**: seat rows (panels, confirmed findings, unique catches, standout panels, dispute
@@ -619,8 +624,8 @@ once for each bw-contained lead runtime.
    Each run spends a little model quota. Changing `cockpit.port` changes the containment key
    (the attack probes every denied port), so verify again after it.
 5. **Lead.** In a project's worktree, `bw status` shows plans, leads and guard lines; `bw
-   start` updates and re-verifies, then opens the profile's lead (an Orca pane or a Terminal
-   tab), or `bw lead` starts it in the terminal you are in. Quit the
+   start` updates and re-verifies, then opens the profile's lead (a Terminal tab or an Orca
+   pane), or `bw lead` starts it in the terminal you are in. Quit the
    lead to end the session; `bw guard review` later shows what a guarded lead's guard
    logged.
 6. **Seats.** You do not need `bw seat` in normal use: the panel runs the seats. `bw start`
