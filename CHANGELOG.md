@@ -161,6 +161,8 @@ not against the prose.
 - **`panel/roster.py`**: panel rosters. Reserved seats run on deep panels only. The panel owns
   stand-ins: one run per seat id, one hop, and a stand-in never satisfies a required seat. At most one
   agy-runtime seat runs per panel.
+- **Panel state** (`panel/state.py`): panel state in `state_dir/panels/`, the lead's read-only view in
+  `state_dir/inbox-view/<key>/panels/`, and the `panel_run` event.
 - **`bw improve`** (`lead/improve.py`, `bin/bw`): suggestions from how the user works, each with its
   evidence, a minimum sample, and no effect until the user acts. `bw improve note "…"` adds a note,
   `bw improve done <key>` marks one dealt with (`improve.json` in the state dir, added to `setup/paths.txt`). An
