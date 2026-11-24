@@ -50,7 +50,7 @@ tells you, with numbers, which model is worth its plan.
 
 Recorded as amendments in the 2026-10-24 spec ("Orca as the default canvas"). Since
 2026-11-22 Orca is optional, so these items hold only when `canvas` is `orca`. Without Orca,
-bw loses the canvas pane, Orca's notifications ("an agent is waiting"), the Codex and Kimi quota readings, the Claude per-model pool (`fableWeekly`), and the Gemini reading (Orca's `antigravity` entry; agy's own probe still awaits its shape). Kimi and Gemini plans then use observed caps (`quota: "none"`).
+bw loses the canvas pane, Orca's notifications ("an agent is waiting"), the Codex and Kimi quota readings, the Claude per-model pool (`fableWeekly`), and the Gemini reading (Orca's `antigravity` entry; agy's own probe still awaits its shape). Kimi plans use `quota: "none"` (observed caps). Gemini plans stay on `probe`, which reads `unknown` until agy's shape lands.
 
 - **Canvas driving.** `bw start` opens the lead in an Orca pane; nodeterm drops to "another
   canvas that can host `bw lead`".

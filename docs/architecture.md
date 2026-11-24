@@ -20,9 +20,9 @@ Updated 2026-10-25: Orca named as a canvas, and canvas control channels added
 to what a sandbox must deny (`docs/orca.md`). Revised 2026-10-25: the lead's autonomy and
 the `bw guard` broker, with the trust boundary it rests on ("Leads, profiles, and rotation").
 Updated 2026-10-26: the registry and the cockpit as derived, read-only views.
-Revised 2026-11-22: Orca is optional; bw opens a Terminal tab unless `canvas` is `orca`.
 Updated 2026-11-11: reserved seats (the expensive top-tier model, held for deep panels and
 stuck debugging) and seat C on the vendor's default-tier model.
+Revised 2026-11-22: Orca is optional; bw opens a Terminal tab unless `canvas` is `orca`.
 Updated 2026-11-23: `bw panel` runs the mechanical half of the panel protocol; the lead keeps
 the judgment (see "The panel protocol"). Updated again 2026-11-23 after the review fixes: a
 worktree has up to three open panels and one running job, and bw fails work that no job holds.*

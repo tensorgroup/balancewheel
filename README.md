@@ -494,7 +494,7 @@ once for each bw-contained lead runtime.
   probe interval without one). Readings from `probe` and `orca` older than twice
   `probe_every_min`, dated in the future, or malformed are `unknown`. A `cli` reading is fresh
   for `rotation.cli_fresh_min` minutes (default 120, schema 3 only), and `unknown` after its
-  window's reset. The `cli` reading updates only when a real Codex seat runs. A seat attack
+  window's reset. No CLI feeds `cli` yet: Codex 0.164.0 prints no `rate_limits`, so the source waits for a later Codex version. A seat attack
   (`bw seat verify`, `bw start`) runs in its own state dir and feeds no quota. bw does not read
   the output of a Codex lead's TUI. Between seat runs, rotation uses observed caps. `bw probe [plan...]`
   reads now and prints one line per plan; `bw start` and `bw lead` (at its start and each
