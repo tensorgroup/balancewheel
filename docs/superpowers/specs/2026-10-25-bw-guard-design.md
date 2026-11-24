@@ -10,6 +10,8 @@ date: Claude Code 2.1.310, Codex CLI 0.154.0, agy 1.4.7, pi 0.85.1, Kimi Code CL
 Revised again 2026-10-25 after the v0 build: "Amendments from the v0 build" below names twelve decisions the build made or changed; where it and an earlier section disagree, it wins. Revised 2026-10-25 after spike 1a: pi hook behaviour observed (see "What exists today"); agy spike 1b pending quota reset. Builds on `2026-10-24-profiles-lead-rotation-cockpit-design.md` (leads, profiles,
 `bw sandbox`, handoffs, the inbox) and `docs/orca.md`.*
 
+*Promotion, the judge, and acting: superseded by the 2026-11-22 design, Project 4.*
+
 ## Intent
 
 The user runs agents with permission prompts bypassed, nearly always (their shell aliases

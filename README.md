@@ -405,9 +405,10 @@ once for each bw-contained lead runtime.
   runtime's own classifier decides), `guard` (bw's rules-only guard decides), `bypass`, or
   `manual` (today's prompts). The defaults are Claude Code and Codex `native`, agy and pi
   `guard`, Kimi `manual`. **Schema 3 moves Codex leads to `--approve-for-me` by default;** a
-  schema-2 file keeps today's argv exactly. In v0 the guard runs **in shadow**: for a pi lead
+  schema-2 file keeps today's argv exactly. The guard starts **in shadow**: for a pi lead
   it logs what it would have decided and allows everything (prompts off, plus logging);
-  nothing is blocked or asked. `bw guard review` shows the stops and a sample of the allows,
+  nothing is blocked or asked. Since 2026-11-23 it can promote itself (see "Acting and the
+  gate" below). `bw guard review` shows the stops and a sample of the allows,
   you mark each right or wrong, and the evidence accumulates per evidence key: profile,
   runtime, rules version, policy digest, judge model, and prompt hash (not per lead, and not per
   runtime version). A guarded agy lead
@@ -433,8 +434,24 @@ once for each bw-contained lead runtime.
     After 3 judge failures in a row, bw stops calling the judge for 5 minutes and writes one
     `guard-judge-down` notice to `bw inbox`. Every judge failure or skip records the rules' own
     decision. `guard.on_judge_failure` is deprecated: it is still accepted and changes nothing.
+  - **Acting and the gate (since 2026-11-23).** `guard.mode` is `shadow`, `auto`, or `acting`
+    for each profile. A schema-3 profile you do not name is `auto`; a schema-2 file keeps
+    `shadow`. An explicit `"shadow"` is a pin: it never promotes. At lead start, bw checks six
+    conditions for the profile and runtime: enough reviewed marks (50 reviewed, 20 sampled
+    allows, under 10% false stops, no false allow); a judge model; a passing `bw guard eval`;
+    a guard attack pass; the one-time interactive check; and the cooldown after a demotion.
+    **The guard promotes itself only after you set a judge model (`guard.model`) and the evidence
+    holds.** With no judge it stays shadow, and `bw status` says so. In acting, the rules
+    decide first. A rule block blocks. A rule ask asks. The judge sees only gray calls and can
+    answer only `allow` or `ask`; if it fails or times out, the rules' own decision stands, so
+    acting is never weaker than shadow. bw steps back to shadow by itself when a sampled allow is
+    marked wrong, the evidence key changes, the guard key is unverified, the eval fails, or false
+    stops reach 10%. After a demotion on evidence, acting needs 7 days and 5 new marks. A
+    profile pinned `acting` on an unverified key exits 7. `bw improve` suggests `auto` for a
+    profile pinned `shadow` when every other condition holds.
   - **After upgrading.** pi and Kimi leads need `bw sandbox verify` again (the adapter hash
-    changed); run `bw guard verify pi` once to record a guard pass; and launch a Claude
+    changed); run `bw guard verify pi` once to record a guard pass, and `bw guard verify pi --interactive`
+    once at a terminal (the guard key changed in 2026-11-23); and launch a Claude
     Code or Codex lead once interactively to confirm its native flag is accepted by your
     installed version. pi models reached through OpenRouter need the `openrouter/` provider
     prefix in the model id.

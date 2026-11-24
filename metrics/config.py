@@ -22,7 +22,7 @@ CANVASES = {"terminal", "orca"}
 V3_LEAD_KEYS = {"autonomy"}
 V3_PROFILE_KEYS = {"protected_branches", "deploy_commands"}
 GUARD_KEYS = {"mode", "model", "key_env", "on_judge_failure", "rules_on_native"}
-GUARD_MODES = {"shadow", "acting"}
+GUARD_MODES = {"shadow", "auto", "acting"}
 JUDGE_FAILURES = {"allow", "ask"}
 TRIAGE_KEYS = {"mode", "model", "key_env", "thresholds"}
 TRIAGE_MODES = {"off", "shadow", "acting"}
@@ -344,14 +344,14 @@ def _validate_guard(obj, profiles, leads, version):
     bad = sorted(set(given) - GUARD_KEYS)
     if bad:
         raise ConfigError(f"guard.{bad[0]}: unknown key")
-    mode = {p: "shadow" for p in profiles}
+    # Schema 3 defaults to auto: the gate decides. Schema 2 keeps shadow. An explicit "shadow" is a pin.
+    mode = {p: "auto" if version >= 3 else "shadow" for p in profiles}
     m_in = given.get("mode", {})
     _expect(isinstance(m_in, dict), "guard.mode: must be an object")
     for prof, m in m_in.items():
         kp = f"guard.mode.{prof}"
         _expect(prof in profiles, f"{kp}: unknown profile {prof!r}")
         _expect(m in GUARD_MODES, f"{kp}: must be one of {sorted(GUARD_MODES)}, got {m!r}")
-        _expect(m != "acting", f"{kp}: acting arrives with build step 4 (needs `bw guard eval`)")
         mode[prof] = m
     model = given.get("model")
     if model is not None:

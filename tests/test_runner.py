@@ -625,6 +625,62 @@ class GuardRunner(RunnerCase):
         self.assertEqual(broker.mode, "shadow")
         self.assertFalse(os.path.exists(runner.gate.path(str(self.state))))
 
+    def schema3(self, guard=None):
+        c = json.loads(self.cfg.read_text())
+        c["schema_version"] = 3
+        if guard is not None:
+            c["guard"] = guard
+        self.cfg.write_text(json.dumps(c))
+
+    def test_default_auto_profile_without_evidence_runs_shadow(self):
+        self.schema3()  # the profile is unnamed: schema 3 defaults it to auto
+        ctx = self.in_process()
+        self.assertEqual(ctx.config["guard"]["mode"]["p"], "auto")
+        broker = self.build_until_bind(ctx, runner.gate.decide)
+        self.assertEqual(broker.mode, "shadow")
+        said = [l for l in ctx.out.getvalue().splitlines() if "guard" in l]
+        self.assertEqual(len(said), 1, said)  # one line: the key has no attack pass yet
+        self.assertIn("bw guard verify pi", said[0])
+        self.assertFalse(os.path.exists(runner.gate.path(str(self.state))))
+
+    def test_explicit_shadow_never_promotes(self):  # G-p
+        self.schema3({"mode": {"p": "shadow"}})
+        ctx = self.in_process()
+        seen, real = [], runner.gate.decide
+
+        def decide(*a):
+            seen.append(runner.gate.pin(ctx.config, "p"))
+            return real(*a)
+        broker = self.build_until_bind(ctx, decide)
+        self.assertEqual((seen, broker.mode), (["shadow"], "shadow"))
+        self.assertNotIn("guard", ctx.out.getvalue())  # a pinned shadow says nothing
+
+    def test_effective_mode_is_passed_to_broker_and_hook_env(self):
+        # BW_GUARD_MODE is built from broker.mode (runner._launch), so the broker's mode is the env's.
+        for mode in ("acting", "shadow"):
+            ctx = self.in_process()
+
+            def decide(*a, mode=mode):
+                return runner.gate.Outcome(mode, False, None, None)
+            self.assertEqual(self.build_until_bind(ctx, decide).mode, mode)
+
+    def test_pinned_acting_unverified_exits_7(self):
+        self.schema3({"mode": {"p": "acting"}})
+        p = self.start("--use", "lb", "--guard", "pi")
+        out = p.communicate(timeout=30)[0]
+        self.assertEqual(p.returncode, 7, out)
+        self.assertIn("pinned acting", out)
+        self.assertIn("bw guard verify pi", out)
+        self.assertIsNone(self.fake("b"))
+
+    def test_guard_mode_event_logged_once(self):
+        ctx = self.in_process()
+
+        def decide(*a):
+            return runner.gate.Outcome("acting", False, "bw: gate line", {"type": "guard_mode", "to": "acting"})
+        self.build_until_bind(ctx, decide)
+        self.assertEqual([e["to"] for e in self.events("guard_modes")], ["acting"])
+
     def test_a_failing_gate_runs_shadow_and_says_so_once(self):
         ctx = self.in_process()
 

@@ -119,9 +119,12 @@ lead`** (outside the sandbox) and a thin client in the runtime (a pi extension, 
 hook). The trust boundary is that the client forwards the raw tool call over a socket the
 lead cannot write or rebind, with a per-session token, and the broker alone normalises it,
 decides, and writes the evidence; a lead can send requests but can neither answer them nor
-change the code that answers. In v0 the broker only shadows (logs the decision it would
-make and allows), and `bw guard review` turns that log into right/wrong marks that gate any
-move to acting. The guard watches calls; it is not an execution boundary, which stays the
+change the code that answers. The broker starts in shadow (it logs the decision it would
+make and allows). `bw guard review` turns that log into right/wrong marks. As of 2026-11-23, a
+gate at lead start promotes a profile to acting when six conditions hold (marks, a judge model, an
+eval pass, an attack pass, an interactive check, a cooldown), and demotes it by itself when the
+evidence turns. With no judge model it stays in shadow. In acting the rules decide first, and a
+judge failure never makes a call weaker than the rules' own decision. The guard watches calls; it is not an execution boundary, which stays the
 sandbox's job. Design: `docs/superpowers/specs/2026-10-25-bw-guard-design.md`.
 
 **The registry and the cockpit are derived, read-only views.** `bw registry` writes a snapshot

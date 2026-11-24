@@ -27,8 +27,19 @@ not against the prose.
   the cooldown. bw steps back to shadow by itself on a wrong sampled allow, a changed evidence key, an unverified
   guard key, a failed eval, or false stops at 10% or more. After an evidence demotion, acting needs 7 days and 5
   new marks. A pinned `acting` profile on an unverified guard key exits 7, and a cap switch onto it stays on the
-  current lead. A profile pinned `shadow` resets a stored `acting`. The config still accepts only `shadow`, so
-  every real profile stays shadow until the config change.
+  current lead. A profile pinned `shadow` resets a stored `acting`.
+- **`guard.mode` takes `shadow`, `auto`, or `acting`.** The default for a profile you do not name is now `auto`,
+  **in schema 3 files only**; a schema-2 file keeps `shadow`. **An explicit `"shadow"` already in your config stays
+  a pin and never promotes.** Change it to `auto` to let the gate decide. `bw improve` suggests that change when
+  every other gate condition holds. A profile reaches acting only when all six conditions hold, and none holds
+  without a judge, so set `guard.model` first. With no judge model the guard stays shadow. At lead start bw
+  prints one line: the key needs `bw guard verify <runtime>`, the gate promoted, or the gate demoted. The example
+  config sets `guard.model` to `null` (no judge, gray calls ask) and `guard.mode.product` to `auto`.
+- **`guard.on_judge_failure` is deprecated.** The config still accepts it. It changes nothing: a judge failure
+  gives the rules' own decision.
+- **After this version, each guarded lead re-verifies once.** Run `bw sandbox verify <runtime>` and
+  `bw guard verify <runtime>`. At a terminal, run `bw guard verify <runtime> --interactive` once. The guard key
+  and the evidence key changed. Lead containment did not change.
 - **`state_dir/guard-mode.json`**: `{profile: {runtime: {mode, key: {evidence, verify}, since, reason,
   demotions}}}`, written only by bw under an flock. It keeps the last 10 demotions.
 - **The `guard_mode` metrics event**: `{profile, runtime, from, to, reason, evidence: {reviewed, sampled_allows,

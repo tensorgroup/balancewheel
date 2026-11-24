@@ -123,7 +123,7 @@ class SchemaV3(unittest.TestCase):
 
     def test_guard_resolved(self):
         g = cfg.load_config(str(V3))["guard"]
-        self.assertEqual(g, {"mode": {"careful": "shadow", "quick": "shadow"}, "model": "vendor/judge-model",
+        self.assertEqual(g, {"mode": {"careful": "auto", "quick": "auto"}, "model": "vendor/judge-model",
                              "key_env": "OPENROUTER_API_KEY", "on_judge_failure": "allow", "rules_on_native": False})
 
     def test_guard_defaults_when_absent(self):
@@ -136,9 +136,31 @@ class SchemaV3(unittest.TestCase):
         o = v3(); del o["guard"]
         self.assertIsNone(load_obj(o)["guard"]["model"])
 
-    def test_guard_acting_rejected(self):
-        o = v3(); o["guard"]["mode"] = {"careful": "acting"}
-        self.rejects(o, "guard.mode.careful", "acting arrives with build step 4 (needs `bw guard eval`)")
+    def test_guard_mode_accepts_auto_and_acting(self):
+        o = v3(); o["guard"]["mode"] = {"careful": "acting", "quick": "auto"}
+        self.assertEqual(load_obj(o)["guard"]["mode"], {"careful": "acting", "quick": "auto"})
+
+    def test_unnamed_profile_defaults_to_auto_in_schema_3(self):
+        o = v3(); o["guard"]["mode"] = {"careful": "shadow"}
+        self.assertEqual(load_obj(o)["guard"]["mode"], {"careful": "shadow", "quick": "auto"})
+
+    def test_schema_2_default_stays_shadow(self):  # B12
+        self.assertEqual(set(cfg.load_config(str(V2))["guard"]["mode"].values()), {"shadow"})
+
+    def test_auto_without_model_is_allowed(self):
+        for mode in ("auto", "acting"):
+            o = v3(); o["guard"]["mode"] = {"careful": mode}; o["guard"]["model"] = None
+            self.assertEqual(load_obj(o)["guard"]["mode"]["careful"], mode)
+
+    def test_example_has_no_judge_model(self):  # G-l
+        g = cfg.load_config(str(HERE.parent / "balancewheel.example.json"))["guard"]
+        self.assertIsNone(g["model"])
+        self.assertEqual(set(g["mode"].values()), {"auto"})
+
+    def test_on_judge_failure_still_accepted(self):  # G-f: deprecated and inert, not refused
+        for v in ("allow", "ask"):
+            o = v3(); o["guard"]["on_judge_failure"] = v
+            self.assertEqual(load_obj(o)["guard"]["on_judge_failure"], v)
 
     def test_guard_rules_on_native_true_rejected(self):
         o = v3(); o["guard"]["rules_on_native"] = True

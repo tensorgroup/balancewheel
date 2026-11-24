@@ -58,8 +58,9 @@ def _when(ts):
 
 
 class _Rules:
-    def __init__(self, data, items, now, done, thresholds):
+    def __init__(self, data, items, now, done, thresholds, gates=()):
         self.data, self.items, self.now, self.done = data, items, now, done
+        self.gates = gates
         self.thresholds = thresholds or triage.DEFAULT_THRESHOLDS
 
     def fresh(self, key, ts):
@@ -107,6 +108,20 @@ class _Rules:
         else:
             yield key, f"shadow mode would have decided {len(answers)} questions and you only agreed with {n}", \
                 "tighten triage.thresholds before turning it on"
+
+    def pinned_shadow(self):
+        """A profile pinned shadow whose other gate conditions all hold. The attack check may be unknown
+        here (it needs the runtime), so an unknown attack does not block the suggestion."""
+        for g in self.gates:
+            if g.get("pin") != "shadow":
+                continue
+            rest = [c for c in g.get("conditions", []) if c.get("name") != "mode"]
+            if rest and all(c.get("ok") is True or (c.get("name") == "attack" and c.get("ok") is None) for c in rest):
+                key = f"guard-pinned-shadow:{g['profile']}:{g['runtime']}"
+                if self.done.get(key, 0) > self.now - WINDOW_S:  # dealt with lately
+                    continue
+                yield key, f"profile {g['profile']} ({g['runtime']}) is pinned shadow and every other guard condition holds", \
+                    f"set guard.mode.{g['profile']} to auto: the guard's evidence supports acting"
 
     def skipped(self):
         key = "ask-no-recommendation"
@@ -185,15 +200,33 @@ class _Rules:
                 "check that the lead follows lead/protocol/panel.md, and strengthen its logging line"
 
 
-def suggestions(data, items, now, notes=(), done=None, thresholds=None):
+def suggestions(data, items, now, notes=(), done=None, thresholds=None, gates=()):
     """Every suggestion the evidence supports: {"key", "evidence", "action"}."""
     done = done or {}
-    r = _Rules(data, items, now, done, thresholds)
-    found = [*r.reversed_(), *r.stamped(), *r.shadow(), *r.skipped(), *r.failing(), *r.ratings(), *r.switches(), *r.seats(),
+    r = _Rules(data, items, now, done, thresholds, gates)
+    found = [*r.reversed_(), *r.stamped(), *r.shadow(), *r.pinned_shadow(), *r.skipped(), *r.failing(), *r.ratings(), *r.switches(), *r.seats(),
              *r.seat_timeouts(), *r.unlogged()]
     found += [(f"note:{n['id']}", f"{n.get('from', 'someone')} noted: {n.get('text', '')}", "decide what to change")
               for n in notes if n.get("id") and f"note:{n['id']}" not in done]
     return [{"key": k, "evidence": e, "action": a} for k, e, a in found]
+
+
+def gate_facts(config, state, now):
+    """The guard gate's conditions for each profile pinned shadow, per guarded runtime. Never raises."""
+    try:
+        from .guard import gate
+        runtimes = sorted({ld["runtime"] for ld in config.get("leads", {}).values() if ld.get("autonomy") == "guard"})
+        out = []
+        for profile, pin in sorted(((config.get("guard") or {}).get("mode") or {}).items()):
+            if pin != "shadow":
+                continue
+            for rt in runtimes:
+                conds = gate.conditions(config, state, profile, rt, None, now)
+                out.append({"profile": profile, "runtime": rt, "pin": pin,
+                            "conditions": [{"name": c.name, "ok": c.ok} for c in conds]})
+        return out
+    except Exception:
+        return []
 
 
 def load_done(state):

@@ -1,5 +1,5 @@
 {
-  "_comment": "Replace these rows with your own. Names of seats, leads, plans, and profiles are yours; model ids are data and are expected to change. Copy to ~/.config/balancewheel/config.json.",
+  "_comment": "Replace these rows with your own. Names of seats, leads, plans, and profiles are yours; model ids are data and are expected to change. Copy to ~/.config/balancewheel/config.json. guard.model is null, so there is no judge and gray calls ask; set it to a cheap model id to turn the judge on.",
   "schema_version": 3,
   "canvas": "terminal",
   "plans": {
@@ -234,9 +234,9 @@
   },
   "guard": {
     "mode": {
-      "product": "shadow"
+      "product": "auto"
     },
-    "on_judge_failure": "allow"
+    "model": null
   },
   "triage": {
     "mode": {

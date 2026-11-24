@@ -284,7 +284,9 @@ class CliTests(unittest.TestCase):
         return subprocess.run([sys.executable, BW, *args], env=self.env, capture_output=True, text=True, input=inp)
 
     def test_status_guard_lines_only_with_decisions(self):
-        self.assertNotIn("guard:", self.bw("status").stdout)
+        first = self.bw("status").stdout  # the example is auto with no judge: only the note, no evidence line
+        self.assertNotIn("decisions ·", first)
+        self.assertIn("no judge: gray calls ask", first)
         seed(self.state, [dec("s1"), dec("t1", self_test=True)])
         out = self.bw("status").stdout
         self.assertIn("guard:", out)

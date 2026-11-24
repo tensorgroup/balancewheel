@@ -273,6 +273,30 @@ class Notes(unittest.TestCase):
         self.assertTrue(inbox.load(self.state)["items"][0]["reversed"])
 
 
+def gate(pin="shadow", **ok):
+    names = ["mode", "marks", "judge", "eval", "attack", "interactive", "cooldown"]
+    return {"profile": "p", "runtime": "pi", "pin": pin,
+            "conditions": [{"name": n, "ok": ok.get(n, n == "mode" and pin != "shadow" or n != "mode")} for n in names]}
+
+
+class PinnedShadow(unittest.TestCase):
+    def test_pinned_shadow_with_a_holding_gate_suggests_auto(self):  # G-p
+        (s,) = improve.suggestions(data(), [], NOW, gates=[gate()])
+        self.assertEqual(s["key"], "guard-pinned-shadow:p:pi")
+        self.assertIn("set guard.mode.p to auto: the guard's evidence supports acting", s["action"])
+
+    def test_no_suggestion_when_a_condition_is_open(self):  # G-p
+        self.assertEqual(keys(gates=[gate(eval=False)]), [])
+        self.assertEqual(keys(gates=[gate(marks=False)]), [])
+
+    def test_an_unknown_attack_does_not_block_and_an_auto_pin_says_nothing(self):
+        self.assertEqual(keys(gates=[gate(attack=None)]), ["guard-pinned-shadow:p:pi"])
+        self.assertEqual(keys(gates=[gate(pin="auto")]), [])
+
+    def test_done_silences_it_for_the_window(self):
+        self.assertEqual(keys(done={"guard-pinned-shadow:p:pi": NOW - 10}, gates=[gate()]), [])
+
+
 class State(unittest.TestCase):
     def test_done_round_trips(self):
         with tempfile.TemporaryDirectory() as d:

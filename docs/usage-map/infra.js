@@ -64,7 +64,7 @@ window.USAGE_MAP_INFRA = {
           files: ['lead/triage.py', 'lead/triage_hook.py'] },
         { id: 'broker', kind: 'persona', title: 'Guard broker', sub: 'Judges each tool call of a guarded lead',
           wants: 'The raw tool call over a socket the lead cannot write.',
-          desc: 'Runs inside bw lead, outside the sandbox. Thin clients in pi and agy forward each tool call; the broker decides by pure rules and logs to guard.jsonl. In v0 it runs in shadow: it logs and allows.',
+          desc: 'Runs inside bw lead, outside the sandbox. Thin clients in pi and agy forward each tool call; the broker decides by pure rules and logs to guard.jsonl. It starts in shadow (log and allow); a gate at lead start can promote a profile to acting.',
           files: ['lead/guard/broker.py', 'lead/guard/pi_guard.ts', 'lead/guard/hook.py'] },
         { id: 'orca', kind: 'persona', tone: 'ext', title: 'Orca', sub: 'Optional canvas (off by default)',
           wants: 'Settings bw can live with; it is never a control channel for a contained lead.',
@@ -221,7 +221,6 @@ window.USAGE_MAP_INFRA = {
       nodes: [
         { id: 'seatsgen', status: 'planned', plannedIn: 'docs/roadmap.md', title: 'seats/', sub: 'Generate the uniform seat.sh wrapper' },
         { id: 'packsexport', status: 'planned', plannedIn: 'docs/roadmap.md', title: 'packs/', sub: 'Regenerate model-seats from the log' },
-        { id: 'guardacting', status: 'planned', plannedIn: 'README.md (autonomy and the guard)', title: 'Guard acting', sub: 'Block, not only log (v0 is shadow)' },
       ],
     },
   ],
@@ -290,7 +289,6 @@ window.USAGE_MAP_INFRA = {
     { from: 'metricslog', to: 'packsexport', label: 'will regenerate', kind: 'planned' },
     { from: 'packsexport', to: 'modelseats', kind: 'planned' },
     { from: 'seatsgen', to: 'seats', label: 'wrappers', kind: 'planned' },
-    { from: 'guardacting', to: 'broker', kind: 'planned' },
   ],
 
   flows: [
@@ -370,12 +368,12 @@ window.USAGE_MAP_INFRA = {
     },
     {
       id: 'guardaudit', title: 'Audit the guard', persona: 'you',
-      desc: 'In v0 the guard only logs. Your verdicts are the evidence for ever letting it act.',
+      desc: 'The guard starts in shadow: it logs and allows. Your verdicts are the evidence the gate reads before it lets a profile act.',
       steps: [
         { node: 'broker', text: 'For a guarded lead, the broker judges each tool call and logs what it would have done.' },
         { node: 'guardlog', text: 'Decisions go to guard.jsonl, scrubbed.' },
         { node: 'greview', text: 'Review the stops and a sample of the allows, and mark each right or wrong.', command: 'bw guard review' },
-        { node: 'guardacting', text: 'Acting mode (block, not log) is planned; the review evidence is what would justify it.' },
+        { node: 'broker', text: 'At lead start the gate promotes a profile to acting when six conditions hold, and only after you set a judge model. Otherwise it stays in shadow.' },
       ],
     },
     {

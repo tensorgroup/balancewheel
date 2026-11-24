@@ -318,7 +318,8 @@ def _suggestions(config, state, now):
         data["panels"] = data["panels"] + store.load(log)["panels"]
     data["panels"] = sorted(data["panels"], key=lambda p: str(p.get("ts")))
     return improve.suggestions(data, inbox.load(state)["items"], now, notes=inbox.notes(state),
-                               done=improve.load_done(state), thresholds=config.get("triage", {}).get("thresholds"))
+                               done=improve.load_done(state), thresholds=config.get("triage", {}).get("thresholds"),
+                               gates=improve.gate_facts(config, state, now))
 
 
 def cmd_improve(a, config, state):
