@@ -169,6 +169,9 @@ not against the prose.
   A request may be one fenced JSON block. A hard-linked request file or a duplicate JSON key is refused.
 - **Panel templates** (`panel/render.py`, `panel/templates/`): one seat brief per checkpoint and `next.md`,
   the moderator's steps for one panel. Paths in shell commands are quoted; seat and lead text is escaped.
+- **The panel worker** (`python3 -m panel.run`, `panel/run.py`): one brief for every seat, blind parallel
+  `bw seat` runs, stand-ins on a cap, `findings.json` and `next.md`; and one `ask` that resumes the seat's
+  round-1 session.
 - **`bw improve`** (`lead/improve.py`, `bin/bw`): suggestions from how the user works, each with its
   evidence, a minimum sample, and no effect until the user acts. `bw improve note "…"` adds a note,
   `bw improve done <key>` marks one dealt with (`improve.json` in the state dir, added to `setup/paths.txt`). An

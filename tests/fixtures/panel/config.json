@@ -1,0 +1,19 @@
+{
+  "schema_version": 3,
+  "seats": {
+    "a": {"runtime": "codex", "model": "model-a", "roles": ["design", "review"], "fallback": "g"},
+    "o": {"runtime": "claude-code", "model": "model-o", "roles": ["design", "review"]},
+    "g": {"runtime": "pi", "model": "router/model-g", "roles": ["design", "review"]},
+    "r": {"runtime": "codex", "model": "model-r", "roles": ["design"], "tier": "reserved"}
+  },
+  "profiles": {
+    "p": {
+      "checkpoints": {
+        "design": {"seats": ["a", "o", "g"], "required": ["a"]},
+        "review": {"seats": ["a", "o"]}
+      }
+    }
+  },
+  "default_profile": "p",
+  "panel": {"cap_min": 1}
+}
