@@ -4,6 +4,9 @@ Pure functions over the resolved config and `store.load()` output. An entry is `
 Numbers count only the panels where the seat ran its current model. Entries carry no target, finding
 title, path, project, profile name, lead id, or conversation.
 """
+import json
+import re
+
 from lead import paths  # noqa: F401  (puts metrics/ on sys.path)
 from lead import quota
 from seats import verify
@@ -158,3 +161,162 @@ def entries(config, data, state):
         owner[e["name"]] = seat
         out.append(e)
     return out
+
+
+# ---- the pack text: markers, render, version bump, bullet -------------------------------------
+
+MARK_BEGIN = "# bw:catalog:begin"
+MARK_END = "# bw:catalog:end"
+PACK_NAME = "model-seats"
+MARKER_HELP = (f"The pack has no bw catalog block. Put `{MARK_BEGIN}` and `{MARK_END}` "
+               "around the catalog entries bw will own.")
+
+_BEGIN = re.compile(r"^([ \t]*)" + re.escape(MARK_BEGIN) + r"[ \t]*\r?$", re.M)
+_END = re.compile(r"^[ \t]*" + re.escape(MARK_END) + r"[ \t]*\r?$", re.M)
+_CATALOG = re.compile(r"^catalog:", re.M)
+_NAME = re.compile(r"^name:[ \t]*(.*?)[ \t]*\r?$", re.M)
+_VERSION_LINE = re.compile(r"^version:", re.M)
+_VERSION = re.compile(r"^version:[ \t]*([\"']?)(\d+)\.(\d+)\.(\d+)\1[ \t]*\r?$", re.M)
+_ITEM = re.compile(r"^- name:[ \t]*(.*)$")
+_FIELD = re.compile(r"^(category|status|notes):[ \t]*(.*)$")
+
+
+def pack_name(text):
+    m = _NAME.search(text)
+    if not m:
+        return None
+    value = m.group(1)
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    return value
+
+
+def find_block(text):
+    """(start, end, indent): the offsets strictly between the begin line and the end line."""
+    begins, ends = list(_BEGIN.finditer(text)), list(_END.finditer(text))
+    if not begins or not ends:
+        raise PackError(MARKER_HELP)
+    if len(begins) > 1 or len(ends) > 1:
+        raise PackError(f"The pack has more than one `{MARK_BEGIN}` or `{MARK_END}` line. Keep one of each.")
+    begin, end = begins[0], ends[0]
+    if end.start() < begin.start():
+        raise PackError(f"`{MARK_END}` comes before `{MARK_BEGIN}`. Swap the two lines.")
+    catalog = _CATALOG.search(text)
+    if not catalog or catalog.start() > begin.start():
+        raise PackError(f"No top-level `catalog:` line comes before `{MARK_BEGIN}`. Put the markers inside `catalog:`.")
+    start = begin.end() + (1 if text[begin.end():begin.end() + 1] == "\n" else 0)
+    return start, end.start(), begin.group(1)
+
+
+def find_version(text):
+    """(start, end, (X, Y, Z)): the offsets of the version number only."""
+    if len(_VERSION_LINE.findall(text)) != 1:
+        raise PackError("The pack needs exactly one top-level `version:` line.")
+    m = _VERSION.search(text)
+    if not m:
+        raise PackError("The pack `version:` line is not in the form X.Y.Z.")
+    return m.start(2), m.end(4), tuple(int(m.group(i)) for i in (2, 3, 4))
+
+
+def _newline(text, block_start):
+    return "\r\n" if text[max(block_start - 2, 0):block_start] == "\r\n" else "\n"
+
+
+def render(entries, indent, newline):
+    out = []
+    for e in entries:
+        out.append(f"{indent}- name: {json.dumps(e['name'], ensure_ascii=True)}")
+        out.append(f"{indent}  category: model-seat")
+        out.append(f"{indent}  status: {e['status']}")
+        out.append(f"{indent}  notes: {json.dumps(e['notes'], ensure_ascii=True)}")
+    return "".join(line + newline for line in out)
+
+
+def _bad_line(n):
+    return PackError(f"line {n} inside the bw:catalog markers is not a one-line catalog field; "
+                     "bw owns this block — move hand-written entries outside the markers")
+
+
+def _value(raw, n):
+    if raw.startswith('"'):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            raise _bad_line(n) from None
+    if raw[:1] in ("|", ">"):
+        raise _bad_line(n)
+    return raw.strip()
+
+
+def parse_block(block, first_line=1):
+    """The entries in the current block. `first_line` is the file line number of the block's first line."""
+    found, current = [], None
+    for i, line in enumerate(block.split("\n")):
+        n = first_line + i
+        s = line.rstrip("\r").strip()
+        if not s or s.startswith("#"):
+            continue
+        item, field = _ITEM.match(s), _FIELD.match(s)
+        if item:
+            current = {"name": _value(item.group(1), n), "status": "", "notes": ""}
+            found.append(current)
+        elif field and current is not None:
+            if field.group(1) != "category":
+                current[field.group(1)] = _value(field.group(2), n)
+        else:
+            raise _bad_line(n)
+    return found
+
+
+def bump_kind(old, new):
+    if old == new:
+        return None
+    if {e["name"] for e in old} != {e["name"] for e in new}:
+        return "minor"
+    status = {e["name"]: e["status"] for e in old}
+    return "minor" if any(status[e["name"]] != e["status"] for e in new) else "patch"
+
+
+def next_version(version, kind):
+    major, minor, patch = version
+    return f"{major}.{minor + 1}.0" if kind == "minor" else f"{major}.{minor}.{patch + 1}"
+
+
+def rewrite(text, entries):
+    """(new_text, old_version, new_version, old_entries). `new_version` is None when nothing changed."""
+    start, end, indent = find_block(text)
+    vstart, vend, version = find_version(text)
+    old_version = ".".join(str(p) for p in version)
+    if start <= vstart < end:
+        raise PackError("The `version:` line lies inside the bw:catalog markers. Move it outside.")
+    old = parse_block(text[start:end], first_line=text.count("\n", 0, start) + 1)
+    kind = bump_kind(old, entries)
+    if kind is None:
+        return text, old_version, None, old
+    new_version = next_version(version, kind)
+    spans = [(start, end, render(entries, indent, _newline(text, start))), (vstart, vend, new_version)]
+    for a, b, replacement in sorted(spans, reverse=True):
+        text = text[:a] + replacement + text[b:]
+    return text, old_version, new_version, old
+
+
+def bullet(old_version, new_version, old, new, today):
+    before, after = {e["name"]: e for e in old}, {e["name"]: e for e in new}
+    quote = lambda names: ", ".join(f'"{n}"' for n in names)  # noqa: E731
+    parts = []
+    added = [n for n in after if n not in before]
+    removed = [n for n in before if n not in after]
+    if added:
+        parts.append(f"added {quote(added)}")
+    if removed:
+        parts.append(f"removed {quote(removed)}")
+    both = [n for n in after if n in before]
+    for n in both:
+        if before[n]["status"] != after[n]["status"]:
+            parts.append(f'"{n}": {before[n]["status"]} to {after[n]["status"]}')
+    refreshed = sum(1 for n in both if before[n]["notes"] != after[n]["notes"])
+    if refreshed:
+        parts.append(f"record lines refreshed for {refreshed} entries")
+    head = (f"- `{PACK_NAME}` {new_version} ({today}, exported by `bw pack export` from the balancewheel log; "
+            f"was {old_version}): ")
+    return head + "; ".join(parts)

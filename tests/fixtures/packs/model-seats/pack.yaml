@@ -1,0 +1,17 @@
+schema: 1
+name: model-seats
+version: 0.1.0
+description: A synthetic pack for tests.
+rules:
+  - rules/synthetic.md
+catalog:
+  - name: Moderator seat (synthetic)
+    category: model-seat
+    status: preferred
+    notes: A synthetic hand entry.
+  # bw:catalog:begin
+  # bw:catalog:end
+  - name: A synthetic banned pattern
+    category: model-seat
+    status: banned
+    notes: A synthetic hand entry.

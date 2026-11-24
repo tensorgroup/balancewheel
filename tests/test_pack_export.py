@@ -218,5 +218,99 @@ class Leads(Base):
                                  "Lead (reference roster, not yet run, m-lead via claude-code, p2 plan)"])
 
 
+FX = HERE / "fixtures" / "packs" / "model-seats" / "pack.yaml"
+E1 = {"name": "Planning seat (reference roster, 2026-11, model-a via codex)", "status": "preferred", "notes": "P. Record ..."}
+
+
+class PackTextTests(unittest.TestCase):
+    def test_rewrite_keeps_hand_entries_byte_for_byte(self):
+        text = FX.read_text()
+        new, old_v, new_v, _ = export.rewrite(text, [E1])
+        b0, e0, _ = export.find_block(text)
+        b1, e1, _ = export.find_block(new)
+        self.assertEqual(text[:b0].replace("version: 0.1.0", ""), new[:b1].replace("version: 0.2.0", ""))
+        self.assertEqual(text[e0:], new[e1:])
+        self.assertEqual((old_v, new_v), ("0.1.0", "0.2.0"))
+        self.assertEqual(export.parse_block(new[b1:e1]), [E1])
+
+    def test_render_values_are_single_line_json(self):
+        hostile = 'Quote " hash # colon: ok\nnew line, café, sep   end'
+        block = export.render([dict(E1, notes=hostile)], "  ", "\n")
+        lines = block.splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertTrue(all(l.isascii() for l in lines))
+        self.assertEqual(json.loads(lines[3].split("notes: ", 1)[1]), hostile)
+
+    def test_crlf_and_no_final_newline_preserved(self):
+        text = FX.read_text().replace("\n", "\r\n").rstrip("\r\n")
+        new, *_ = export.rewrite(text, [E1])
+        self.assertFalse(new.endswith("\n"))
+        self.assertNotIn("\n", new.replace("\r\n", ""))
+
+    def test_bad_markers_refused(self):
+        base = FX.read_text()
+        begin, end = "  # bw:catalog:begin\n", "  # bw:catalog:end\n"
+        cases = {"missing": base.replace(begin, ""), "twice": base.replace(begin, begin * 2),
+                 "order": base.replace(begin, "@@").replace(end, begin).replace("@@", end),
+                 "above catalog": begin + base.replace(begin, "")}
+        for label, text in cases.items():
+            with self.subTest(label), self.assertRaises(export.PackError):
+                export.find_block(text)
+
+    def test_missing_markers_message_is_the_instruction(self):
+        with self.assertRaises(export.PackError) as e:
+            export.find_block(FX.read_text().replace("  # bw:catalog:begin\n", ""))
+        self.assertIn("# bw:catalog:begin", str(e.exception))
+
+    def test_bad_version_refused(self):
+        base = FX.read_text()
+        for label, text in {"not semver": base.replace("0.1.0", "0.1"),
+                            "twice": base.replace("version: 0.1.0", "version: 0.1.0\nversion: 0.1.0"),
+                            "missing": base.replace("version: 0.1.0\n", "")}.items():
+            with self.subTest(label), self.assertRaises(export.PackError):
+                export.find_version(text)
+
+    def test_version_inside_block_refused(self):
+        text = FX.read_text().replace("version: 0.1.0\n", "").replace(
+            "  # bw:catalog:end\n", "version: 0.1.0\n  # bw:catalog:end\n")
+        with self.assertRaises(export.PackError):
+            export.rewrite(text, [E1])
+
+    def test_multiline_value_inside_block_refused(self):
+        for bad in ('  - name: "a\n    b"\n', "  - name: x\n    notes: |\n      two\n      lines\n",
+                    '  - name: "unterminated\n'):
+            with self.subTest(bad), self.assertRaises(export.PackError) as e:
+                export.parse_block(bad)
+            self.assertIn("inside the bw:catalog markers", str(e.exception))
+
+    def test_one_line_hand_entry_inside_block_is_replaced_and_named(self):
+        text = FX.read_text().replace(
+            "  # bw:catalog:end\n", "  - name: Hand entry\n    status: reserved\n    notes: x\n  # bw:catalog:end\n")
+        new, _, _, old = export.rewrite(text, [E1])
+        self.assertEqual([e["name"] for e in old], ["Hand entry"])
+        self.assertNotIn("Hand entry", new)
+        self.assertIn("removed", export.bullet("0.1.0", "0.2.0", old, [E1], "2026-11-22"))
+
+    def test_bump_rule(self):
+        num = dict(E1, notes="P. Record ... 3 panels")
+        self.assertIsNone(export.bump_kind([E1], [E1]))
+        self.assertEqual(export.bump_kind([E1], [num]), "patch")
+        self.assertEqual(export.bump_kind([E1], [dict(E1, status="review-required")]), "minor")
+        self.assertEqual(export.bump_kind([E1], [dict(E1, name=E1["name"].replace("model-a", "model-a2"))]), "minor")
+        self.assertEqual(export.bump_kind([E1], []), "minor")
+        self.assertEqual([export.next_version((0, 5, 3), k) for k in ("minor", "patch")], ["0.6.0", "0.5.4"])
+
+    def test_no_change_keeps_text_and_version(self):
+        once, *_ = export.rewrite(FX.read_text(), [E1])
+        again, old_v, new_v, _ = export.rewrite(once, [E1])
+        self.assertEqual((again, new_v), (once, None))
+
+    def test_bullet_names_changes(self):
+        b = export.bullet("0.1.0", "0.2.0", [], [E1], "2026-11-22")
+        self.assertTrue(b.startswith("- `model-seats` 0.2.0 (2026-11-22,"))
+        self.assertIn("added", b)
+        self.assertIn(E1["name"], b)
+
+
 if __name__ == "__main__":
     unittest.main()
