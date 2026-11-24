@@ -29,7 +29,8 @@ them), the cargo token denies, and the `--approve` control; updated 2026-11-23 a
 the live attack on the codex and agy seats: the codex install read, the codex CA bundle, the zsh denial line, and the agy tool step shape;
 updated 2026-11-23 a fifth time after the seat review fixes: the agy seat moves to its own gemini dir in the seat
 home (`--gemini_dir`), seats lose the agent sockets and the keychain, and the parent of each code
-name is rename-proof (see Seat runtimes under `bw seat`).*
+name is rename-proof (see Seat runtimes under `bw seat`); updated 2026-11-23 a sixth time: the panel instructions
+now live in this repo as `bw panel` (see Panel instructions).*
 
 ## The cast
 
@@ -734,6 +735,26 @@ cheaper tier would have failed. Promotion to enforcement needs criteria written 
 the data is read, a held-out comparison against the current pins, and a rollback switch — and
 an enforcing hook that rewrites a subagent's model must not also grant tool permission, which
 a rewrite response can do as a side effect (Claude Code: `permissionDecision: "allow"`).
+
+## Panel instructions (`bw panel`, 2026-11-23)
+
+The private setup once kept the panel's steps in one instruction file the moderator read. That
+file is now two parts in this repo:
+
+- `panel/templates/` holds the seat briefs (one per checkpoint, plus `brief-output.md` for the
+  output shape) and the moderator's steps (`next.md`, `next-triage.md`, `next-follow-up.md`).
+  `bw` renders them. Paths in shell commands are quoted, and seat text is escaped.
+- `lead/protocol/panel.md` is the text a lead gets in its first prompt. It holds the profile's
+  checkpoints, the literal request and view paths, and the rules: verify every finding, relay
+  one claim at a time, log every panel, and tell the user three lines.
+
+To rebuild: pin the seats in config, then run `bw seat verify` for each seat. Then let a lead
+convene one panel on a seeded buggy file. Traps:
+
+- The lead sandbox must read-deny the panel work dirs. A lead started before this change has an
+  old pass. Run `bw sandbox verify <runtime>` once for each lead runtime.
+- A panel runs at most one agy-runtime seat. Do not put two in one roster.
+- The wait helper must run from the copy in the lead's view, with no other words on the line.
 
 ## Verification checklist (before trusting any seat)
 

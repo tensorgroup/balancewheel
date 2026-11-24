@@ -21,7 +21,9 @@ to what a sandbox must deny (`docs/orca.md`). Revised 2026-10-25: the lead's aut
 the `bw guard` broker, with the trust boundary it rests on ("Leads, profiles, and rotation").
 Updated 2026-10-26: the registry and the cockpit as derived, read-only views.
 Updated 2026-11-11: reserved seats (the expensive top-tier model, held for deep panels and
-stuck debugging) and seat C on the vendor's default-tier model.*
+stuck debugging) and seat C on the vendor's default-tier model.
+Updated 2026-11-23: `bw panel` runs the mechanical half of the panel protocol; the lead keeps
+the judgment (see "The panel protocol").*
 
 ## The problem
 
@@ -238,6 +240,21 @@ usually a branch diff or a plan file, which is what the brief points at.
    the moderator's ruling and reasoning, and each seat's unique catches, attributed.
 6. **Mandatory outcome logging.** The moderator appends a structured record (below).
    A panel that isn't logged didn't happen, as far as tuning is concerned.
+
+**Who does what (since 2026-11-23).** The protocol splits into mechanics and judgment.
+`bw panel` does the mechanics. It renders one brief per checkpoint from templates, runs round 1
+(blind, in parallel, each seat capped), merges and groups the findings, counts them, relays one
+disputed claim on request, and builds and validates the record. The lead does the judgment. It
+convenes the panel at its checkpoints, verifies each finding against the code, applies the
+substance bar, rules on disputes, logs the verdicts, and tells the user in three lines. The
+lead and `bw` talk through files only. The lead writes a request file; `bw` writes a response,
+a `status.json`, and a `next.md` (the moderator's steps for that panel) into a read-only view
+under `inbox-view/<worktree key>/panels/<panel id>/`. A panel has the states `queued`,
+`running`, `ready`, `logged`, and `failed`. One panel job runs per worktree at a time. A
+panel runs at most one agy-runtime seat. The lead cannot read the panel work dirs (raw seat
+output stays out of its reach, so a relay stays claim-only); it reads only its view. A panel
+that fails before its seats start still logs, with every roster seat absent. The user does not
+type `bw panel` in normal use.
 
 ## The metrics loop
 

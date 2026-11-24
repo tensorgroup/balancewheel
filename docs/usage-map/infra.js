@@ -110,7 +110,7 @@ window.USAGE_MAP_INFRA = {
         { id: 'p-dispute', title: 'Disputes', sub: 'Only disputed claims', desc: 'The lead relays the specific disputed claim, never the whole transcript. Rounds are capped; seats are wall-clock capped.' },
         { id: 'p-bar', title: 'Filter', sub: 'Drop weak challenges (substance bar)', desc: 'The lead drops challenges that do not meet the substance bar.' },
         { id: 'p-verify', title: 'Verify', sub: 'Lead checks the code', desc: 'Every surviving finding is checked against the code by the lead. That check is the ground truth the scoreboard rests on.' },
-        { id: 'p-log', title: 'Log', sub: 'One panel record', usage: 'python3 metrics/log.py panel --help', desc: 'One structured panel record is appended to metrics.jsonl: seats, findings, disputes, verdicts.', files: ['metrics/log.py'] },
+        { id: 'p-log', title: 'Log', sub: 'One panel record', usage: 'bw panel log <panel-id> < verdicts.json', desc: 'bw fills the mechanical fields and appends one panel record to metrics.jsonl: seats, findings, disputes, verdicts.', files: ['panel/record.py', 'metrics/log.py'] },
       ],
     },
     {
@@ -219,7 +219,7 @@ window.USAGE_MAP_INFRA = {
       files: ['docs/roadmap.md'],
       nodes: [
         { id: 'seatsgen', status: 'planned', plannedIn: 'docs/roadmap.md', title: 'seats/', sub: 'Generate the uniform seat.sh wrapper' },
-        { id: 'paneltpl', status: 'planned', plannedIn: 'docs/roadmap.md', title: 'panel/', sub: 'The protocol as instruction templates' },
+        { id: 'paneltpl', title: 'panel/', sub: 'The panel package: templates plus mechanics', desc: 'Seat brief templates, the round 1 worker, merging and counts, the record, and the request files.', files: ['panel/render.py', 'panel/run.py', 'panel/service.py'] },
         { id: 'packsexport', status: 'planned', plannedIn: 'docs/roadmap.md', title: 'packs/', sub: 'Regenerate model-seats from the log' },
         { id: 'guardacting', status: 'planned', plannedIn: 'README.md (autonomy and the guard)', title: 'Guard acting', sub: 'Block, not only log (v0 is shadow)' },
       ],
@@ -348,7 +348,7 @@ window.USAGE_MAP_INFRA = {
       desc: 'The panel protocol, from brief to logged record.',
       steps: [
         { node: 'profile:high-stakes', text: 'The profile names the seats for this checkpoint, which are required, and the minimum count.' },
-        { node: 'p-brief', text: 'The lead writes one shared brief. You can convene a panel yourself.', command: 'bw panel <checkpoint> [target] [--deep] [--background]' },
+        { node: 'p-brief', text: 'The lead writes a request file at a checkpoint. bw renders one shared brief. You normally never run bw panel. A panel is queued, running, ready, logged, or failed.', command: 'bw panel <checkpoint> [target] [--deep] [--background]' },
         { node: 'p-blind', text: 'Seats review blind and in parallel.' },
         { node: 'seats', text: 'Each seat is another vendor\'s CLI, enforced read-only. A capped seat\'s fallback stands in.' },
         { node: 'p-dispute', text: 'Only disputed claims are cross-examined, the claim relayed alone.', command: 'bw panel ask <panel-id> <seat> "<claim>"' },

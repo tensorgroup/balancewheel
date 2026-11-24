@@ -353,12 +353,30 @@ outside a git worktree it shows `bw status`.
     bw guard review          # audit the guard's stops and sampled allows, one evidence key at a time
     bw guard verify <rt>     # attack-test the guard on a runtime (pi) and record a pass
     bw guard install agy     # add the guard's entry to agy's hooks file (uninstall: bw guard uninstall agy)
+    bw panel <checkpoint> [target]  # convene a review panel (your lead does this for you; see below)
+    bw panel status [<panel-id>]    # open panels of this worktree (also: ask, log, amend)
     bw seat list             # seats, their verification, and caps (the panel runs seats; you rarely run one)
     bw seat <id> "prompt"    # run one read-only seat by hand
     bw seat verify [<id>...] # attack-test each seat, fresh and resumed, and record a pass per seat id
     bw setup cc-switch       # write cc-switch's settings before its first launch (optional usage view)
 
 First time? See "Start leading" at the end of this section.
+
+**What a panel looks like.** You normally never type `bw panel`. Your lead convenes a panel
+at each checkpoint of its profile, writes a request file, and keeps working. `bw` runs round
+1: it renders one brief, runs the seats blind and in parallel, merges their findings, and
+counts them. The lead then checks each finding against the code, relays disputed claims one
+at a time, and logs the panel. You see three lines:
+
+    Seats: astra, opus. kimi was absent (usage cap).
+    7 findings, 5 confirmed, 2 refuted. Most important: the retry loop never stops on a 4xx.
+    One dispute (astra against opus on the lock order). The code agreed with astra.
+
+A panel has the states `queued`, `running`, `ready`, `logged`, and `failed`. One panel job
+runs per worktree at a time. A panel runs at most one agy-runtime seat. A lead cannot read the
+panel work dirs (its sandbox denies the reads); it reads its own view under `inbox-view/`
+and runs the wait helper `bin/bw-panel-wait`, which `bw` copies into the lead's view. After
+you deploy this version, run `bw sandbox verify <runtime>` once for each lead runtime.
 
 - **Switching.** When the current lead's plan is capped, bw stops the lead (its whole
   process group, confirmed gone), writes a handoff from git facts and the lead's last

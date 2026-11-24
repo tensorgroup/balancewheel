@@ -38,7 +38,12 @@ the evidence record, review, and verification; `tests/attack/guard_attack.sh` at
 (also spends model quota). `seats/` holds `bw seat`: the adapters (`adapters.py`), the brief
 (`brief.py`), sessions and caps (`sessions.py`, `caps.py`), one run (`run.py`), verification
 state and the attack judge (`verify.py`, `judge.py`), and the command line (`cli.py`);
-`tests/attack/seat_readonly.sh` attacks it (also spends model quota). `bw` must run from a checkout no lead edits. `tests/fixtures/` are synthetic — keep
+`tests/attack/seat_readonly.sh` attacks it (also spends model quota). `panel/` holds `bw panel`:
+the seat briefs (`templates/`, `render.py`), the worker that runs round 1 (`run.py`), merging
+and counts (`merge.py`), the record (`record.py`), state and the lead's view (`state.py`), request
+files (`channel.py`), the service with its watchdog (`service.py`), and the command line (`cli.py`);
+`bin/bw-panel-wait` is the wait helper a lead runs, and `lead/protocol/panel.md` is the lead's
+instruction text. `bw` must run from a checkout no lead edits. `tests/fixtures/` are synthetic — keep
 them that way (privacy firewall). Commits use a lowercase summary with a `feat:`/`fix:`/
 `test:`/`docs:` prefix.
 
