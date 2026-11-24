@@ -32,7 +32,8 @@ home (`--gemini_dir`), seats lose the agent sockets and the keychain, and the pa
 name is rename-proof (see Seat runtimes under `bw seat`); updated 2026-11-23 a sixth time: the panel instructions
 now live in this repo as `bw panel` (see Panel instructions); updated 2026-11-23 a seventh time after the
 first live panel: the kimi seat runs `-p` with no `--auto` (Kimi Code 2.3.2 refuses the pair); updated 2026-11-23 with the known limits of the lead guard rules (see Lead guard rules); updated 2026-11-23 an eighth time: the
-Codex `cli` quota reading is not applicable on `codex-cli 0.164.0` (see the note under the runtime table).*
+Codex `cli` quota reading is not applicable on `codex-cli 0.164.0` (see the note under the runtime table); updated
+2026-11-24: one more known limit of the lead guard rules (`eval`, `trap`, and `alias` text).*
 
 ## The cast
 
@@ -781,6 +782,8 @@ cannot lift it. These cases stay outside the rules:
   decides.
 - A change to `IFS` splits a later unquoted expansion in a different way. The command is gray.
 - The rules do not parse a heredoc body. The command is gray.
+- `eval`, `trap`, and `alias` text that does not lex, or that is split across several operands, stays
+  gray. The rules do not join the parts.
 - One command can plant a symlink (`cp -P`, or `mv` of a link) and then write through it. The
   rules judge the path before the link exists, so they can allow that write. The sandbox still
   limits where the write lands.
