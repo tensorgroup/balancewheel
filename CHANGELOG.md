@@ -112,6 +112,15 @@ not against the prose.
 
 ### Fixed
 
+- **The guard judge child gets a small environment** (`lead/guard/judging.py`). It inherits only the key's
+  variable, `PATH`, `HOME`, `TMPDIR`, `LANG` and `LC_*`, and the proxy and SSL variables. No other secret of
+  bw's environment reaches it.
+- **A judge cache hit reports `judge_ms` 0 and 0 attempts.** No child ran for that call. The judge's time
+  now also counts the step that prepares the call text.
+- **The judge-down attack case accepts an open breaker.** A `judge-skipped` row with the reason "judge
+  circuit open" also proves the rules-only floor (`lead/guard/verify.py`). Before, a live attack whose
+  earlier failures opened the breaker failed by mistake.
+- **`bw start` runs an incomplete guard eval again at most once a day**, not at each start.
 - **Panel jobs always end** (`panel/service.py`, `panel/run.py`, `panel/cli.py`, `panel/state.py`). The
   scheduler fails a `running` panel or ask that no job holds, so `log` is always possible. A
   `bw panel` run with no `bw lead` here runs the watch step first: a dead job is stopped and then

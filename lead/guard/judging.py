@@ -3,7 +3,9 @@
 The judge (judge.py) is untrusted and may fail. Every failure or skip keeps the rules' decision:
 `final_decision` lifts a gray ask to allow only on a real judge verdict, and never changes a rule's
 own decision. The child gets the call text and the name of the key's variable on stdin; the key itself
-reaches the child only through its inherited environment, never argv, a record, or a log.
+reaches the child only through its environment, never argv, a record, or a log. That environment is
+child_env(): the key's variable and a few basics, no other secret of bw's. A cache hit starts no child,
+so it reports ms 0 and attempts 0.
 
 A breaker opens after BREAKER_AFTER failures in a row and stays open for BREAKER_S; on opening it sends
 one `guard-judge-down` notice, and a later success closes it and allows a new notice. Only successes
@@ -43,6 +45,9 @@ BREAKER_S = 300
 URL_TIMEOUT_MARGIN = 0.05  # urllib's own timeout ends just before the child is killed
 MIN_URL_TIMEOUT = 0.05
 MAX_FAIL_REASON = 80
+# What the judge child inherits besides the key's variable: no other secret of bw's environment.
+CHILD_ENV = ("PATH", "HOME", "TMPDIR", "LANG", "SSL_CERT_FILE", "SSL_CERT_DIR",
+             "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
 DOWN_TEXT = ("The guard judge failed %d times in a row. Gray calls keep the rules' decision for %d minutes. "
              "Check the judge's key and model.")
 
@@ -64,6 +69,15 @@ def acting_budget(rules_s):
 def clean_reason(text):
     """A judge's reason as bw shows or records it: no control characters, secrets scrubbed, capped."""
     return judge.scrub(redact(judge._clean(text)))[:judge.MAX_REASON]
+
+
+def child_env(key_env, environ=None):
+    """The judge child's environment: the key's variable, PATH, HOME, TMPDIR, LANG and LC_*, and the
+    proxy and SSL variables (either case). Nothing else of bw's environment reaches the child."""
+    environ = os.environ if environ is None else environ
+    keep = set(CHILD_ENV)
+    return {k: v for k, v in environ.items()
+            if k == key_env or k.upper() in keep or k.startswith("LC_")}
 
 
 def _skipped(reason):
@@ -88,17 +102,17 @@ class JudgeRunner:
     def judge(self, call, digest, budget_s):
         if not self.cfg["model"]:
             return _skipped("no judge")
-        user, why = judge.prepare(call, self.worktree, self.home)
+        start = self.clock()  # read once here and once after each attempt (the tests count on it)
+        user, why = judge.prepare(call, self.worktree, self.home)  # its time is in ms too
         if user is None:
             return _skipped(why)
         key = (digest, call.cwd)
-        start = self.clock()  # read once here and once after each attempt (the tests count on it)
         with self._lock:
             if self._open_until is not None and start < self._open_until:
                 return _skipped("judge circuit open")
             hit = self._cache.get(key)
             if hit is not None and start - hit[0] < CACHE_S:
-                return hit[1]
+                return hit[1]._replace(ms=0, attempts=0)  # no child ran for this call
         if budget_s < MIN_ATTEMPT_S:
             return _skipped("no time left")
         end = start + budget_s
@@ -119,7 +133,8 @@ class JudgeRunner:
             with tempfile.TemporaryFile("w+") as f:
                 json.dump(given, f)
                 f.seek(0)
-                r = (self.run or proc.run)(list(self.argv), timeout, stdin=f, reap=True)
+                r = (self.run or proc.run)(list(self.argv), timeout, stdin=f, reap=True,
+                                           env=child_env(self.cfg["key_env"]))
             return self._read(r)
         except Exception as e:  # noqa: BLE001 — a type name only: an exception's text can carry the key
             return "judge-failed", None, type(e).__name__

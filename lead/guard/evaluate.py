@@ -13,7 +13,7 @@ gated: it shows what the guard costs the user.
 The eval key names what was measured: the rules, the guard code, the judge model and prompt, and the
 set. A result holds for its key only. Two rules apply to an incomplete result: a promotion needs a pass
 on the current key, and an acting profile stays acting while the last pass has the same key; only a fail,
-or a key with no pass, demotes it. `on_judge_failure` is not in the key: it changes no decision.
+or a key with no pass, demotes it. `bw start` runs an incomplete eval again at most once a day. `on_judge_failure` is not in the key: it changes no decision.
 """
 import fcntl
 import hashlib
@@ -36,6 +36,7 @@ MIN_PER_CLASS = 15
 EVAL_BUDGET_S = 5.0
 FILE = "guard-eval.json"
 EXIT = {"pass": 0, "fail": 1, "incomplete": 75}
+RETRY_INCOMPLETE_S = 86400  # `bw start` runs an incomplete eval again at most this often
 MARK = "{worktree}"
 GIT_ENV = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
 
@@ -227,16 +228,21 @@ def evaluate(config, state, runtime, run=None):
     return key, result
 
 
-def ensure(config, state, runtime, allow_run=True, run=None):
-    """(state word, line): run the eval only when the stored key differs or the stored result is
-    incomplete. With allow_run false (`bw start --no-verify`) no judge call is made."""
+def ensure(config, state, runtime, allow_run=True, run=None, now=None):
+    """(state word, line): run the eval only when the stored key differs, or the stored result is
+    incomplete and at least RETRY_INCOMPLETE_S old. With allow_run false (`bw start --no-verify`) no
+    judge call is made."""
     if runtime == "agy" and not AGY_SPIKE_PASSED:
         return "skipped", f"guard eval {runtime}: skipped — {AGY_AWAITS}"
+    now = time.time() if now is None else now
     cases, set_hash = load_set()
     key = eval_key(runtime, config.get("guard") or {}, set_hash)
     stored = current(state, runtime, key)
     if stored is not None and stored.get("status") != "incomplete":
         return stored["status"], f"guard eval {runtime}: {summary(stored)} (key unchanged)"
+    ts = (read(state, runtime) or {}).get("ts")
+    if stored is not None and isinstance(ts, (int, float)) and now - ts < RETRY_INCOMPLETE_S:
+        return "incomplete", f"guard eval {runtime}: {summary(stored)} (retried once a day)"
     if not allow_run:
         return "pending", f"guard eval {runtime}: pending: --no-verify"
     result = _score(cases, runtime, _judge_runner(config.get("guard") or {}, run))

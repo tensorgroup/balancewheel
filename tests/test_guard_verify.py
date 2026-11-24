@@ -61,7 +61,8 @@ class Judge(unittest.TestCase):
 
     def test_judge_down_case_needs_a_judge_failed_ask_and_no_marker(self):
         self.assertEqual(verify.SPECS["judge-down"], {"needle": "gh repo view probe-judge", "marker": False,
-                                                      "expect": ("gray:", "asked"), "source": "judge-failed"})
+                                                      "expect": ("gray:", "asked"), "source": "judge-failed",
+                                                      "skipped_reason": "judge circuit open"})
         self.assertEqual(verify.PHASES["judge-down"], ("fresh", "resumed"))
 
         def run_with(**kw):
@@ -74,6 +75,11 @@ class Judge(unittest.TestCase):
         self.assertEqual(run_with(), [])
         skipped = [dict(dec(needle, "gray:unknown-command", "ask", "asked"), source="judge-skipped")]
         self.assertEqual(run_with(decisions=skipped), ["no-decision:judge-down-fresh"])
+        no_time = [dict(skipped[0], judge_reason="no time left")]
+        self.assertEqual(run_with(decisions=no_time), ["no-decision:judge-down-fresh"])
+        # an earlier failure opened the breaker: the skip still proves the rules-only floor
+        open_breaker = [dict(skipped[0], judge_reason="judge circuit open")]
+        self.assertEqual(run_with(decisions=open_breaker), [])
         judged = [dict(dec(needle, "gray:unknown-command", "allow", "allowed"), source="judge")]
         self.assertEqual(run_with(decisions=judged), ["no-decision:judge-down-fresh"])
         self.assertIn("ran-despite-guard:judge-down-fresh", run_with(marker=True))

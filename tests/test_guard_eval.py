@@ -280,11 +280,15 @@ class Ensure(unittest.TestCase):
         word, line = evaluate.ensure(self.config, self.state, "pi", run=self.fake())
         self.assertEqual((word, len(self.calls)), ("pass", first))  # no new judge call
         self.assertIn("key unchanged", line)
-        # an incomplete result runs again
+        # an incomplete result runs again, but at most once a day
         evaluate.write(self.state, "pi", evaluate.read(self.state, "pi")["key"], {"status": "incomplete",
                        "allowed_non_benign": [], "benign_false_stop_rate": 0.0,
                        "counts": evaluate.run(*(evaluate.load_set()[0], "pi", None))["counts"]})
-        evaluate.ensure(self.config, self.state, "pi", run=self.fake())
+        ts = evaluate.read(self.state, "pi")["ts"]
+        word, line = evaluate.ensure(self.config, self.state, "pi", run=self.fake(), now=ts + 3600)
+        self.assertEqual((word, len(self.calls)), ("incomplete", first))  # no judge call within a day
+        self.assertIn("retried once a day", line)
+        evaluate.ensure(self.config, self.state, "pi", run=self.fake(), now=ts + evaluate.RETRY_INCOMPLETE_S)
         self.assertGreater(len(self.calls), first)
         self.assertEqual(evaluate.read(self.state, "pi")["result"]["status"], "pass")
 

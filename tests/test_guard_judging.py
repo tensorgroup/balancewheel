@@ -37,7 +37,8 @@ class Clock:
 def fake_run(out, rc=0, calls=None):
     def run(argv, timeout, **kw):
         if calls is not None:
-            calls.append({"argv": argv, "timeout": timeout, "stdin": json.load(kw["stdin"]), "reap": kw.get("reap")})
+            calls.append({"argv": argv, "timeout": timeout, "stdin": json.load(kw["stdin"]), "reap": kw.get("reap"),
+                          "env": kw.get("env")})
         return proc.Result(rc, out, "", False)
     return run
 
@@ -118,11 +119,23 @@ class TestJudgeRunner(unittest.TestCase):
         r = runner(run=fake_run(ALLOW, calls=calls)).judge(CALL, "d", 0.02)
         self.assertEqual((r.source, r.reason, calls), ("judge-skipped", "no time left", []))  # no child at all
 
+    def test_the_child_env_holds_only_the_key_and_basics(self):
+        calls = []
+        env = {"BW_TEST_JUDGE_KEY": "k-test", "PATH": "/usr/bin", "HOME": "/tmp/h", "TMPDIR": "/tmp/t",
+               "LANG": "C.UTF-8", "LC_ALL": "C", "HTTPS_PROXY": "http://proxy.test:1", "no_proxy": "localhost",
+               "SSL_CERT_FILE": "/tmp/ca.pem", "OTHER_API_KEY": "must-not-pass", "GITHUB_TOKEN": "must-not-pass",
+               "BW_STATE_DIR": "/tmp/state"}
+        with mock.patch.dict("os.environ", env, clear=True):
+            runner(run=fake_run(ALLOW, calls=calls)).judge(CALL, "d", 1.0)
+        self.assertEqual(calls[0]["env"], {k: v for k, v in env.items()
+                                           if k not in ("OTHER_API_KEY", "GITHUB_TOKEN", "BW_STATE_DIR")})
+
     def test_the_key_never_reaches_argv_or_stdin(self):
         calls = []
         with mock.patch.dict("os.environ", {"BW_TEST_JUDGE_KEY": "sk-or-v1-not-a-real-key-0000"}):
             runner(run=fake_run(ALLOW, calls=calls)).judge(CALL, "d", 1.0)
-        self.assertNotIn("not-a-real-key", json.dumps(calls))
+        self.assertNotIn("not-a-real-key", json.dumps([dict(c, env=None) for c in calls]))
+        self.assertEqual(calls[0]["env"]["BW_TEST_JUDGE_KEY"], "sk-or-v1-not-a-real-key-0000")  # env only
 
     def test_timeout_and_garbage_fail(self):
         self.assertEqual(runner(run=timed_out).judge(CALL, "d", 1.0).reason, "timeout")
@@ -197,7 +210,7 @@ class TestJudgeRunner(unittest.TestCase):
         j = runner(run=fake_run(ALLOW, calls=calls), clock=clock)
         first = j.judge(CALL, "d", 1.0)
         clock.t += 599
-        self.assertEqual(j.judge(CALL, "d", 1.0), first)
+        self.assertEqual(j.judge(CALL, "d", 1.0), first._replace(ms=0, attempts=0))
         self.assertEqual(len(calls), 1)
         j.judge(CALL._replace(cwd=WT + "/sub"), "d", 1.0)  # another cwd is another key
         self.assertEqual(len(calls), 2)
@@ -250,7 +263,26 @@ class TestActingBudget(unittest.TestCase):
     def test_a_cache_hit_needs_no_time(self):
         j = runner(run=fake_run(ALLOW), clock=Clock())
         first = j.judge(CALL, "d", 1.0)
-        self.assertEqual(j.judge(CALL, "d", 0.0), first)
+        self.assertEqual(j.judge(CALL, "d", 0.0), first._replace(ms=0, attempts=0))
+
+    def test_a_cache_hit_reports_no_time_and_no_attempts(self):
+        j = runner(run=fake_run(ALLOW), clock=fake_clock_advancing(0.2))
+        first = j.judge(CALL, "d", 1.0)
+        self.assertEqual((first.attempts, first.ms > 0), (1, True))
+        hit = j.judge(CALL, "d", 1.0)
+        self.assertEqual((hit.source, hit.decision, hit.reason, hit.ms, hit.attempts),
+                         ("judge", "allow", "local read", 0, 0))
+
+    def test_ms_counts_the_prepare_step(self):
+        clock = Clock()
+        real = judge.prepare
+
+        def slow_prepare(*a):
+            clock.t += 0.25
+            return real(*a)
+        with mock.patch.object(judge, "prepare", slow_prepare):
+            r = runner(run=fake_run(ALLOW), clock=clock).judge(CALL, "d", 1.0)
+        self.assertAlmostEqual(r.ms, 250.0)
 
     def test_child_timeout_is_the_remaining_budget(self):
         calls = []
