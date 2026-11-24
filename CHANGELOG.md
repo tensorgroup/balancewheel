@@ -15,6 +15,7 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **`bw pack export --to <dir> [--dry-run]` (`packs/export.py`).** It rewrites the `# bw:catalog:begin` / `# bw:catalog:end` block of esc's `model-seats` `pack.yaml` and its version (minor on a status, model, or membership change; patch on numbers only). It refuses a wrong name, a dirty file, a `pack.yaml` git does not track (untracked or ignored), and missing markers. It saves esc's changelog bullet to `state_dir/packs/` and logs a `pack_export` event. It reads every log in `improve.panel_logs`.
 - **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.
 - **The guard review offer (`lead/guard/offer.py`).** On a terminal, before the lead opens, `bw start` offers a
   short review of unmarked guard decisions: 5 once a day while the profile is under the gate's counts (2 are
@@ -234,6 +235,7 @@ not against the prose.
 
 ### Changed
 
+- `CLAUDE.md`: balancewheel writes esc's `pack.yaml`, only through `bw pack export`.
 - **Guard records keep the final decision and the rules' decision apart** (`lead/guard/record.py`,
   `broker.py`, `review.py`). A `guard.jsonl` decision row gains `rule_decision` (the rules' own
   decision), `judge_reason` (string or null), and `judge_ms` (number or null). `decision` is now the

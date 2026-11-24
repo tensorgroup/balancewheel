@@ -4,12 +4,16 @@ Pure functions over the resolved config and `store.load()` output. An entry is `
 Numbers count only the panels where the seat ran its current model. Entries carry no target, finding
 title, path, project, profile name, lead id, or conversation.
 """
+import difflib
 import json
+import os
 import re
 
+from lead import handoff
 from lead import paths  # noqa: F401  (puts metrics/ on sys.path)
 from lead import quota
 from seats import verify
+import store  # noqa: E402
 import summary  # noqa: E402
 
 NOT_YET = "not yet run"
@@ -320,3 +324,107 @@ def bullet(old_version, new_version, old, new, today):
     head = (f"- `{PACK_NAME}` {new_version} ({today}, exported by `bw pack export` from the balancewheel log; "
             f"was {old_version}): ")
     return head + "; ".join(parts)
+
+
+def _write_text_atomic(path, data, mode=0o644):
+    """A temp file in the same directory, then `os.replace`. A failure leaves no temp file behind."""
+    tmp = os.path.join(os.path.dirname(path), f".{os.path.basename(path)}.{os.getpid()}.tmp")
+    try:
+        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            os.fchmod(f.fileno(), mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _read_pack(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as f:
+        return f.read()
+
+
+def _check_git(pack_dir, git_rc):
+    timeout = f"git timed out in {pack_dir}; try again"
+    unreadable = f"git config in {pack_dir} could not be read; git not run"
+    rc, _, _ = git_rc(pack_dir, "ls-files", "--error-unmatch", "--", "pack.yaml")
+    if rc == 124:
+        raise PackError(timeout)
+    if rc == 125:
+        raise PackError(unreadable)
+    if rc != 0:
+        rc2, _, _ = git_rc(pack_dir, "rev-parse", "--git-dir")
+        if rc2 != 0:
+            raise PackError(f"{pack_dir} is not a git checkout; bw writes pack.yaml only where git can show the change")
+        raise PackError("pack.yaml is not tracked by git (untracked or ignored); commit it first")
+    rc, out, _ = git_rc(pack_dir, "status", "--porcelain", "--untracked-files=all", "--ignored", "--", "pack.yaml")
+    if rc == 124:
+        raise PackError(timeout)
+    if rc == 125:
+        raise PackError(unreadable)
+    if rc != 0:
+        raise PackError(f"git status failed in {pack_dir}; pack.yaml not written")
+    if out.strip():
+        raise PackError("pack.yaml has uncommitted changes; commit or discard them first")
+
+
+def export(config, data, pack_dir, state, dry_run=False, today=None, git_rc=None):
+    """Rewrite the marked catalog block and the version of `<pack_dir>/pack.yaml`. See the plan for the order."""
+    git_rc = git_rc or handoff._git_rc
+    today = today or store.now_ts()[:10]
+    path = os.path.join(pack_dir, "pack.yaml")
+    try:
+        st = os.lstat(path)
+    except OSError:
+        raise PackError(f"{path} does not exist") from None
+    if os.path.islink(path):
+        raise PackError(f"{path} is a symlink; bw does not write through symlinks")
+    if not os.path.isfile(path):
+        raise PackError(f"{path} is not a regular file")
+    try:
+        raw = _read_pack(path)
+    except OSError as e:
+        raise PackError(f"could not read {path}: {e.strerror}") from None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise PackError(f"{path} is not valid UTF-8") from None
+    name = pack_name(text)
+    if name != PACK_NAME:
+        raise PackError(f"{path}: name is {name}, not {PACK_NAME}")
+    _check_git(pack_dir, git_rc)
+    new_entries = entries(config, data, state)
+    new_text, old_version, new_version, old = rewrite(text, new_entries)
+    result = {"path": path, "changed": False, "old_version": old_version, "new_version": None,
+              "diff": "", "bullet": None, "bullet_path": None}
+    if new_version is None:
+        return result
+    diff = "".join(difflib.unified_diff(text.splitlines(True), new_text.splitlines(True),
+                                        "a/pack.yaml", "b/pack.yaml"))
+    text_bullet = bullet(old_version, new_version, old, new_entries, today)
+    result.update(changed=True, new_version=new_version, diff=diff, bullet=text_bullet)
+    if dry_run:
+        return result
+    bullet_path = os.path.join(state, "packs", f"{PACK_NAME}-{new_version}.md")
+    os.makedirs(os.path.dirname(bullet_path), exist_ok=True)
+    _write_text_atomic(bullet_path, (text_bullet + "\n").encode("utf-8"))
+    result["bullet_path"] = bullet_path
+    try:
+        again = _read_pack(path)
+    except OSError:
+        raise PackError("pack.yaml changed during the export; run it again") from None
+    if again != raw:
+        raise PackError("pack.yaml changed during the export; run it again")
+    _write_text_atomic(path, new_text.encode("utf-8"), mode=st.st_mode & 0o7777)
+    kind = bump_kind(old, new_entries)
+    try:
+        store.append(store.log_path(config), {"type": "pack_export", "pack": PACK_NAME, "from": old_version,
+                                              "to": new_version, "bump": kind, "entries": len(new_entries)})
+    except OSError as e:
+        result["event_error"] = type(e).__name__
+    return result

@@ -33,6 +33,8 @@
   bw improve                                      what bw has seen of how you work, as changes worth making
   bw improve note "<text>"                        add your own note on what got in the way
   bw improve done <key>                           dealt with: it returns only on new evidence (a note never)
+  bw pack export --to <dir> [--dry-run]           regenerate the marked catalog block of esc's model-seats pack.yaml
+                                                  from the log (prints esc's changelog bullet)
   bw triage install claude                        add the question-triage hook to Claude Code's settings
   bw triage uninstall claude                      remove it (other entries are left alone)
   bw guard install agy                            add the guard hook entry to agy's hooks file
@@ -62,6 +64,7 @@ from lead.guard.review import safe  # noqa: E402
 from lead import improve, triage_install  # noqa: E402
 from seats import cli as seat_cli  # noqa: E402
 from panel import cli as panel_cli  # noqa: E402
+from packs import export as pack_export  # noqa: E402
 from lead.paths import ConfigError, load_config, state_dir  # noqa: E402  (also puts metrics/ on sys.path)
 import store  # noqa: E402
 from lead.projects import resolve_project, worktree_key  # noqa: E402
@@ -69,7 +72,7 @@ from lead import proc  # noqa: E402
 from lead.paths import read_json, write_json_atomic  # noqa: E402
 
 COMMANDS = ("lead", "status", "registry", "probe", "start", "inbox", "answer", "cockpit", "cap", "sandbox", "guard", "triage", "improve",
-            "setup", "seat", "panel")
+            "setup", "seat", "panel", "pack")
 DECIDED_SEEN = "triage-seen.json"  # when `bw inbox --all` last showed the decided items
 START_STALE_S = 86400  # tools not updated by bw start for this long get a one-line nudge
 
@@ -313,11 +316,24 @@ def cmd_verify(a, config, state):
     return _report(*verify.sandbox_verify(config, state, a.runtime, a.lead))
 
 
-def _suggestions(config, state, now):
+def _panel_data(config):
+    """The main log plus every `improve.panel_logs` log: panels (first copy of an id wins, sorted by ts), watches, usage."""
     data = store.load(store.log_path(config))
-    for log in config.get("improve", {}).get("panel_logs", []):  # panels a setup logs somewhere other than metrics_log
-        data["panels"] = data["panels"] + store.load(log)["panels"]
+    seen = {p["id"] for p in data["panels"]}
+    for log in config.get("improve", {}).get("panel_logs", []):  # logs a setup keeps somewhere other than metrics_log
+        extra = store.load(log)
+        for p in extra["panels"]:
+            if p["id"] not in seen:
+                seen.add(p["id"])
+                data["panels"] = data["panels"] + [p]
+        data["watches"] = data["watches"] + extra["watches"]
+        data["usage"] = data["usage"] + extra["usage"]
     data["panels"] = sorted(data["panels"], key=lambda p: str(p.get("ts")))
+    return data
+
+
+def _suggestions(config, state, now):
+    data = _panel_data(config)
     return improve.suggestions(data, inbox.load(state)["items"], now, notes=inbox.notes(state),
                                done=improve.load_done(state), thresholds=config.get("triage", {}).get("thresholds"),
                                gates=improve.gate_facts(config, state, now))
@@ -393,6 +409,32 @@ def cmd_guard(a, config, state):
     return 0
 
 
+def cmd_pack(a, config, state):
+    try:
+        r = pack_export.export(config, _panel_data(config), os.path.abspath(a.to), state, dry_run=a.dry_run)
+    except pack_export.PackError as e:
+        print(f"bw: pack export: {e}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"bw: pack export: could not write {os.path.join(a.to, 'pack.yaml')}: {e.strerror}", file=sys.stderr)
+        return 1
+    if not r["changed"]:
+        print(f"bw: pack is current at {r['old_version']}; nothing written")
+        return 0
+    print(r["diff"], end="")
+    print()
+    print(r["bullet"])
+    if a.dry_run:
+        print("bw: dry run; nothing written")
+        return 0
+    print(f"bw: wrote {r['path']} ({r['old_version']} to {r['new_version']})")
+    if r.get("event_error"):
+        print(f"bw: warning: the pack_export event was not logged ({r['event_error']})")
+    print(f"bw: next: paste the bullet in {r['bullet_path']} into esc's CHANGELOG.md, "
+          "re-sign the pack with esc, and commit both in the esc repo")
+    return 0
+
+
 def cmd_setup(a):
     code, msg = ccswitch.write_settings()
     print(msg)
@@ -442,6 +484,9 @@ def main(argv=None):
         trs.add_parser(name).add_argument("runtime", choices=["claude"])
     im = sub.add_parser("improve"); im.add_argument("what", nargs="?", choices=["note", "done"])
     im.add_argument("rest", nargs="*")
+    pk = sub.add_parser("pack"); pks = pk.add_subparsers(dest="sub", required=True)
+    pe = pks.add_parser("export"); pe.add_argument("--to", required=True, metavar="DIR")
+    pe.add_argument("--dry-run", action="store_true")
     st = sub.add_parser("setup"); st.add_argument("what", choices=["cc-switch"])
     sub.add_parser("seat", add_help=False)  # listed for --help; `bw seat` parses its own argv
     sub.add_parser("panel", add_help=False)  # likewise
@@ -478,7 +523,7 @@ def _dispatch(a):
     return {"lead": cmd_lead, "start": cmd_start, "status": cmd_status, "cap": cmd_cap, "registry": cmd_registry, "probe": cmd_probe,
             "cockpit": cmd_cockpit,
             "sandbox": cmd_verify, "inbox": cmd_inbox, "answer": cmd_answer, "improve": cmd_improve,
-            "seat": cmd_seat, "panel": cmd_panel}[a.cmd](a, config, state)
+            "seat": cmd_seat, "panel": cmd_panel, "pack": cmd_pack}[a.cmd](a, config, state)
 
 
 if __name__ == "__main__":

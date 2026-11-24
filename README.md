@@ -14,7 +14,7 @@ vibes.
 Sibling project to [OpenEscapement](https://github.com/tensorgroup/openescapement):
 esc *ships* policy into a repo as a signed rule pack; balancewheel is the collaboration
 pattern that *generates and justifies* the policy. The two install at different levels
-and never touch the same file; see [Working with OpenEscapement](#working-with-openescapement).
+and write the same file in one place only; see [Working with OpenEscapement](#working-with-openescapement).
 
 ## The core ideas (one screen)
 
@@ -346,6 +346,7 @@ outside a git worktree it shows `bw status`.
     bw probe [plan...]       # read quota now (OpenRouter key, Orca when mapped), one line per plan
     bw inbox [--project] [--all]   # open asks from leads and notices from bw (--all: answered too)
     bw improve [note "…"|done <key>] # changes worth making, from how you work; add a note; mark one dealt with
+    bw pack export --to <dir> [--dry-run] # regenerate the marked catalog block of esc's model-seats pack.yaml from the log
     bw triage install claude       # the question-triage hook in Claude Code's settings (uninstall removes it)
     bw answer <id> "<text>"  # answer an ask, or close a notice
     bw cap <plan>            # record that a plan is capped (for leads without a statusline)
@@ -697,7 +698,7 @@ work by *where the rule lives*.
 | **Installed** | once per machine | once per repo (`esc init`, `esc sync`), from a signed pack the org maintains |
 | **Changes by** | a moderator instruction edit that cites the scoreboard | a pack version bump, reviewed as a diff in a PR |
 
-They never write the same file. esc never writes your agent's configuration: nothing
+They write the same file in one place only: `bw pack export --to <dir>` rewrites the marked catalog block and the `version:` line of esc's `model-seats` `pack.yaml`, only when you run it. esc never writes your agent's configuration: nothing
 under `~/.claude/`, no wrapper, no credential. What it does keep under your home
 directory is its own: a pack cache in the OS cache directory and, if you run its portal,
 that data under `~/.escapement/server`. Its one look at agent configuration is a read,
@@ -720,8 +721,8 @@ never edits a repo's instruction files.
   status with its reason and, where it departs from the vendor's own default, the
   condition that would reverse it, and a `model-seats` pack that is this repo's seat
   policy in pack form: seats named by role, the models behind them a dated config
-  detail. The planned `packs/` directory here is the export step that regenerates it
-  from the log.
+  detail. `bw pack export` regenerates its catalog block from the log; you add the
+  markers once.
 
 **Install balancewheel first, then esc per repo.** That is the recommended order, not a
 dependency: neither tool reads the other's state. Balancewheel is the working
@@ -734,11 +735,11 @@ declines to overwrite the edit until someone forces it. Adjust your own rule, or
 PR against the pack.
 
 **The hand-off.** Balancewheel's log is the evidence a seat policy stands on, and a rule
-pack is the form that policy takes once it applies to more than one person. The planned
+pack is the form that policy takes once it applies to more than one person. The
 `packs/` directory exports seat policy in esc's rule-pack shape (roles per target kind,
 the substance bar, the re-promotion criteria), with the dashboard numbers cited in the
 pack's changelog and the version bump reviewed like any policy change. esc's `model-seats` example pack is that policy in pack form today, written by hand;
-the export step that regenerates it from the log is what `packs/` still owes. Once a pack carries the panel protocol as a
+`bw pack export` now regenerates its catalog block from the log. Once a pack carries the panel protocol as a
 skill, keep the pack's copy in each repo and drop your user-level one, so the version
 agents run is the signed one.
 

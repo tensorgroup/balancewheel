@@ -51,8 +51,8 @@ commands, launchd sync, local dashboard). Goals of this phase:
   from this repo's seat policy: duties per seat, the substance bar, wall-clock
   caps, mandatory logging, and a re-promotion criterion for any seat demoted on evidence, with the models behind
   the seats a dated catalog roster (the 2026-08-25 draft that named stealth ids was
-  superseded). What `packs/` still owes is the export step: regenerate that pack's
-  catalog and changelog from the log and the dashboard numbers instead of by hand. A pack that also carries the
+  superseded). `packs/` is the export of one marked catalog block (`bw pack export`, landed 2026-11-22); the
+  changelog bullet is printed for the user to paste, because esc owns its changelog. A pack that also carries the
   panel protocol as a skill makes the user-level copy redundant in governed repos; esc
   already reports that overlap as an informational duplicate.
 - Knowledge layer stays out of scope for v1 — it's separable, and the panel is the

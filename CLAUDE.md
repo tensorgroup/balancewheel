@@ -42,7 +42,7 @@ state and the attack judge (`verify.py`, `judge.py`), and the command line (`cli
 the seat briefs (`templates/`, `render.py`), the worker that runs round 1 (`run.py`), merging
 and counts (`merge.py`), the record (`record.py`), state and the lead's view (`state.py`), request
 files (`channel.py`), the service with its watchdog (`service.py`), and the command line (`cli.py`);
-`bin/bw-panel-wait` is the wait helper a lead runs, and `lead/protocol/panel.md` is the lead's
+`packs/` holds `bw pack export` (`export.py`). `bin/bw-panel-wait` is the wait helper a lead runs, and `lead/protocol/panel.md` is the lead's
 instruction text. `bw` must run from a checkout no lead edits. `tests/fixtures/` are synthetic — keep
 them that way (privacy firewall). Commits use a lowercase summary with a `feat:`/`fix:`/
 `test:`/`docs:` prefix.
@@ -50,12 +50,12 @@ them that way (privacy firewall). Commits use a lowercase summary with a `feat:`
 Sibling project: [OpenEscapement](https://github.com/tensorgroup/openescapement)
 (esc). Division of labor: balancewheel is the collaboration pattern that *generates and
 justifies* seat policy; esc *ships* policy into a repo as a signed rule pack. The two
-live at different levels and never write the same file: balancewheel's setup writes only
+live at different levels and write the same file in one place only: `bw pack export --to <dir>` rewrites the marked catalog block and the `version:` line of esc's `model-seats` `pack.yaml`, only when the user runs it. Otherwise balancewheel's setup writes only
 under the user's home directory (`setup/paths.txt`, plus its state dir and backups); esc
 writes agent-readable files only in a repo and keeps just a pack cache and portal data
 under the home directory. esc ships `examples/packs/model-seats`, this repo's seat policy in
-pack form (seats by role, models as a dated config detail); the planned `packs/` here is
-the export step that regenerates it from the log, not the pack itself. The README's "Working with
+pack form (seats by role, models as a dated config detail); `packs/` here is
+that export step, not the pack itself. The README's "Working with
 OpenEscapement" section owns the install order and the reconcile rule.
 
 ## The docs and what each one owns

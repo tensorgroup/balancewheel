@@ -1,4 +1,4 @@
-import copy, json, os, shutil, sys, tempfile, unittest
+import copy, json, os, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -310,6 +310,214 @@ class PackTextTests(unittest.TestCase):
         self.assertTrue(b.startswith("- `model-seats` 0.2.0 (2026-11-22,"))
         self.assertIn("added", b)
         self.assertIn(E1["name"], b)
+
+
+BW = str(HERE.parent / "bin" / "bw")
+GIT_ID = ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+
+
+def commit_all(repo):
+    subprocess.run(["git", "-C", repo, "add", "-A"], check=True)
+    subprocess.run(["git", "-C", repo, *GIT_ID, "commit", "-qm", "init"], check=True)
+
+
+def pack_repo(path, text=None, add=True):
+    os.makedirs(path)
+    Path(path, "pack.yaml").write_text(FX.read_text() if text is None else text)
+    subprocess.run(["git", "-C", str(path), "init", "-q"], check=True)
+    if add:
+        commit_all(str(path))
+    return str(path)
+
+
+class ExportRun(Base):
+    def setUp(self):
+        super().setUp()
+        self.repo = pack_repo(Path(self.tmp) / "esc")
+        self.log = os.path.join(self.tmp, "m.jsonl")
+        self.cfg = self.make_config(top={"state_dir": self.state, "metrics_log": self.log})
+        self.data = self.load([panel("p1", "2026-11-01T00:00:00Z", {"alpha": "model-a"}, {"alpha": (1, 0, 0, 1)})])
+
+    def pack(self):
+        return Path(self.repo, "pack.yaml")
+
+    def test_export_writes_block_version_bullet_and_event(self):
+        r = export.export(self.cfg, self.data, self.repo, self.state, today="2026-11-22")
+        text = self.pack().read_text()
+        self.assertTrue(r["changed"])
+        self.assertIn("version: 0.2.0", text)
+        self.assertTrue(Path(self.state, "packs", "model-seats-0.2.0.md").read_text().startswith("- `model-seats` 0.2.0"))
+        self.assertEqual([e["type"] for e in store.load(self.log)["events"]][-1], "pack_export")
+
+    def test_dry_run_writes_nothing(self):
+        before = self.pack().read_bytes()
+        r = export.export(self.cfg, self.data, self.repo, self.state, dry_run=True)
+        self.assertTrue(r["diff"])
+        self.assertTrue(r["bullet"])
+        self.assertEqual(self.pack().read_bytes(), before)
+        self.assertFalse(Path(self.state, "packs").exists())
+        self.assertFalse(Path(self.log).exists())
+
+    def test_second_export_is_a_no_op(self):
+        export.export(self.cfg, self.data, self.repo, self.state)
+        commit_all(self.repo)
+        r = export.export(self.cfg, self.data, self.repo, self.state)
+        self.assertFalse(r["changed"])
+        self.assertIsNone(r["new_version"])
+
+    def refused(self, repo, part, **kw):
+        with self.assertRaises(export.PackError) as e:
+            export.export(self.cfg, self.data, repo, self.state, **kw)
+        self.assertIn(part, str(e.exception))
+
+    def test_wrong_name_refused(self):
+        repo = pack_repo(Path(self.tmp) / "o", FX.read_text().replace("name: model-seats", "name: other-pack"))
+        self.refused(repo, "not model-seats")
+
+    def test_dirty_file_refused(self):
+        with open(self.pack(), "a") as f:
+            f.write("# more\n")
+        self.refused(self.repo, "uncommitted changes")
+
+    def test_untracked_file_refused(self):
+        self.refused(pack_repo(Path(self.tmp) / "u", add=False), "not tracked by git")
+
+    def test_ignored_untracked_file_refused(self):
+        repo = pack_repo(Path(self.tmp) / "i", add=False)
+        Path(repo, ".gitignore").write_text("pack.yaml\n")
+        self.refused(repo, "not tracked by git")
+
+    def test_git_timeout_reported(self):
+        self.refused(self.repo, "git timed out", git_rc=lambda d, *a: (124, "", "x"))
+
+    def test_git_config_unreadable_reported(self):
+        self.refused(self.repo, "could not be read", git_rc=lambda d, *a: (125, "", "x"))
+
+    def test_not_a_git_checkout_refused(self):
+        d = Path(self.tmp) / "plain"
+        d.mkdir()
+        (d / "pack.yaml").write_text(FX.read_text())
+        self.refused(str(d), "not a git checkout")
+
+    def test_missing_file_refused(self):
+        d = Path(self.tmp) / "empty"
+        d.mkdir()
+        self.refused(str(d), "pack.yaml")
+
+    def test_symlink_refused(self):
+        d = Path(self.tmp) / "sl"
+        d.mkdir()
+        (d / "real.yaml").write_text(FX.read_text())
+        os.symlink("real.yaml", d / "pack.yaml")
+        self.refused(str(d), "symlink")
+
+    def test_bullet_write_failure_leaves_pack_unchanged(self):
+        Path(self.state, "packs").write_text("a file")
+        before = self.pack().read_bytes()
+        with self.assertRaises(OSError):
+            export.export(self.cfg, self.data, self.repo, self.state)
+        self.assertEqual(self.pack().read_bytes(), before)
+        self.assertEqual(sorted(os.listdir(self.repo)), [".git", "pack.yaml"])
+
+    def test_changed_during_export_refused(self):
+        def git_rc(d, *a):
+            Path(d, "pack.yaml").write_text("changed\n")
+            return 0, "", ""
+        self.refused(self.repo, "changed during the export", git_rc=git_rc)
+
+    def test_mode_is_kept(self):
+        os.chmod(self.pack(), 0o600)
+        export.export(self.cfg, self.data, self.repo, self.state, git_rc=lambda d, *a: (0, "", ""))
+        self.assertEqual(self.pack().stat().st_mode & 0o7777, 0o600)
+
+    def test_event_failure_does_not_undo_the_write(self):
+        with mock.patch("store.append", side_effect=OSError("disk")):
+            r = export.export(self.cfg, self.data, self.repo, self.state)
+        self.assertTrue(r["changed"])
+        self.assertEqual(r["event_error"], "OSError")
+        self.assertIn("version: 0.2.0", self.pack().read_text())
+
+    def test_privacy_no_target_title_path_or_project_leaks(self):
+        canary = "CANARY-7f3a"
+        dispute = {"summary": f"{canary}-dsummary", "challenger": "alpha", "winner": "alpha",
+                   "proposals": {"alpha": f"{canary}-proposal"}, "reason": f"{canary}-dreason"}
+        events = [panel("p1", "2026-11-01T00:00:00Z", {"alpha": "model-a"}, {"alpha": (1, 0, 0, 1)},
+                        target=f"{canary}-target", notes=f"{canary}-note", disputes=[dispute],
+                        absent={"beta": f"{canary}-absent"},
+                        findings_detail=[{"seat": "alpha", "title": f"{canary}-title", "where": f"/{canary}/x.py:1",
+                                          "claim": f"{canary}-claim", "evidence": f"{canary}-evidence",
+                                          "ref": f"{canary}-ref", "notes": f"{canary}-fnote",
+                                          "verdict": "confirmed", "severity": "major"}]),
+                  {"type": "watch", "id": "w1", "kind": "redundant-seat", "target": "alpha", "status": "open",
+                   "detail": f"{canary}-wdetail"},
+                  {"type": "session", "phase": "start", "session_id": "s1", "lead": "l1", "runtime": "claude-code",
+                   "model": "m-lead", "project": f"{canary}-project", "worktree": f"/{canary}",
+                   "ts": "2026-11-01T00:00:00Z"},
+                  {"type": "usage", "seat": "alpha", "model": "model-a", "dir": f"/{canary}/repo", "ok": True}]
+        r = export.export(self.cfg, self.load(events), self.repo, self.state, today="2026-11-22")
+        for out in (r["diff"], r["bullet"], self.pack().read_text(), Path(r["bullet_path"]).read_text(),
+                    Path(self.log).read_text().splitlines()[-1]):
+            self.assertNotIn(canary, out)
+
+
+class Cli(Base):
+    def setUp(self):
+        super().setUp()
+        self.repo = pack_repo(Path(self.tmp) / "esc")
+        self.log = os.path.join(self.tmp, "m.jsonl")
+        self.log2 = os.path.join(self.tmp, "m2.jsonl")
+        obj = copy.deepcopy(BASE)
+        obj.update({"state_dir": self.state, "metrics_log": self.log, "improve": {"panel_logs": [self.log2]}})
+        self.config = os.path.join(self.tmp, "cli.json")
+        Path(self.config).write_text(json.dumps(obj))
+        self.env = {k: v for k, v in os.environ.items() if k != "BALANCEWHEEL_METRICS_LOG"}
+        self.env.update(BALANCEWHEEL_CONFIG=self.config, BW_STATE_DIR=self.state)
+
+    def bw(self, *args):
+        return subprocess.run([sys.executable, BW, "pack", "export", "--to", self.repo, *args],
+                              capture_output=True, text=True, env=self.env)
+
+    def test_cli_dry_run(self):
+        before = Path(self.repo, "pack.yaml").read_bytes()
+        r = self.bw("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("bw: dry run; nothing written", r.stdout)
+        self.assertEqual(Path(self.repo, "pack.yaml").read_bytes(), before)
+
+    def test_cli_refusal(self):
+        with open(Path(self.repo, "pack.yaml"), "a") as f:
+            f.write("# more\n")
+        r = self.bw()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("bw: pack export:", r.stderr)
+
+    def test_cli_success_says_paste_and_resign(self):
+        store.append(self.log, panel("p1", "2026-11-01T00:00:00Z", {"alpha": "model-a"}, {"alpha": (1, 0, 0, 1)}))
+        r = self.bw()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("paste the bullet", r.stdout)
+        self.assertIn("re-sign the pack with esc", r.stdout)
+
+    def test_cli_unchanged(self):
+        self.assertEqual(self.bw().returncode, 0)
+        commit_all(self.repo)
+        r = self.bw()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("pack is current at", r.stdout)
+
+    def test_cli_reads_every_log(self):
+        store.append(self.log, panel("p1", "2026-11-01T00:00:00Z", {"alpha": "model-a"}, {"alpha": (1, 0, 0, 1)}))
+        for e in (panel("p1", "2026-11-01T00:00:00Z", {"alpha": "model-a"}, {"alpha": (1, 0, 0, 1)}),
+                  panel("p2", "2026-11-05T00:00:00Z", {"alpha": "model-a"}, {"alpha": (1, 0, 0, 0)}),
+                  {"type": "usage", "seat": "beta", "model": "model-b", "ts": "2026-10-07T00:00:00Z", "ok": True},
+                  {"type": "watch", "id": "w1", "kind": "redundant-seat", "target": "alpha", "status": "open"}):
+            store.append(self.log2, e)
+        r = self.bw()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = Path(self.repo, "pack.yaml").read_text()
+        self.assertIn("2 panels", text)
+        self.assertIn("review-required", text)
+        self.assertIn("2026-10", text)
 
 
 if __name__ == "__main__":
