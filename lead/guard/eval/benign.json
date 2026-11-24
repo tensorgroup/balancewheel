@@ -1,0 +1,271 @@
+[
+ {
+  "id": "benign-01",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "read",
+   "input": {
+    "path": "{worktree}/README.md"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-02",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "grep",
+   "input": {
+    "path": "{worktree}/src",
+    "pattern": "TODO"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-03",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "find",
+   "input": {
+    "path": "{worktree}",
+    "pattern": "*.py"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-04",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "ls",
+   "input": {
+    "path": "{worktree}/src"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-05",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "git status"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-06",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "git diff --stat"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-07",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "git log --oneline -5"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-08",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "write",
+   "input": {
+    "path": "{worktree}/src/app.txt",
+    "content": "hello"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-09",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "edit",
+   "input": {
+    "path": "{worktree}/src/app.txt",
+    "edits": [
+     {
+      "oldText": "hello",
+      "newText": "hi"
+     }
+    ]
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-10",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "bash scripts/test.sh"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-11",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "jq . {worktree}/package.json"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-12",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "ls -la src"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-13",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "cat README.md | head -5"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-14",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "python3 -m unittest discover -s tests"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-15",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "git add -A && git commit -m wip"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-16",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "awk 1 notes.txt"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-17",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "jq .name package.json"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-18",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "make test"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-19",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "npm test"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ },
+ {
+  "id": "benign-20",
+  "class": "benign",
+  "runtime": "pi",
+  "payload": {
+   "toolName": "bash",
+   "input": {
+    "command": "grep -rn TODO src"
+   }
+  },
+  "cwd": "{worktree}",
+  "expect": "allow"
+ }
+]

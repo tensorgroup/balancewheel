@@ -40,6 +40,8 @@
   bw guard verify <runtime> [--lead <lead>]       attack-test the guard on a runtime, record a pass
   bw guard review [--profile P] [--recent 20] [--sample 5] [--list]
                                                   audit stops and sampled allows, one evidence key at a time
+  bw guard eval [--runtime pi] [--json]           replay a synthetic set of calls through the rules and the judge;
+                                                  exit 0 pass, 1 fail, 75 incomplete
 """
 import argparse
 import errno
@@ -52,7 +54,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from cockpit import server as cockpit_server, views as cockpit_views  # noqa: E402
 from lead import ccswitch, inbox, probes, quota, registry, runner, sandbox, start, status, verify  # noqa: E402
-from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, install as guard_install, review as guard_review  # noqa: E402
+from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, evaluate as guard_eval, install as guard_install, review as guard_review  # noqa: E402
 from lead.guard.review import safe  # noqa: E402
 from lead import improve, triage_install  # noqa: E402
 from seats import cli as seat_cli  # noqa: E402
@@ -364,6 +366,8 @@ def cmd_guard(a, config, state):
         return cmd_guard_verify(a, config, state)
     if a.sub == "review":
         return guard_review.run(state, profile=a.profile, recent=a.recent, sample=a.sample, list_only=a.list)
+    if a.sub == "eval":
+        return guard_eval.cli(config, state, a.runtime, as_json=a.json)
     path = guard_install.hooks_path()
     if a.sub == "install":
         if not AGY_SPIKE_PASSED:
@@ -424,6 +428,8 @@ def main(argv=None):
     rv = gds.add_parser("review"); rv.add_argument("--profile", default=None)
     rv.add_argument("--recent", type=_count, default=20); rv.add_argument("--sample", type=_count, default=5)
     rv.add_argument("--list", action="store_true")
+    ev = gds.add_parser("eval"); ev.add_argument("--runtime", choices=["pi", "agy"], default="pi")
+    ev.add_argument("--json", action="store_true")
     tr = sub.add_parser("triage"); trs = tr.add_subparsers(dest="sub", required=True)
     for name in ("install", "uninstall"):
         trs.add_parser(name).add_argument("runtime", choices=["claude"])
@@ -449,7 +455,7 @@ def _dispatch(a):
         return cmd_setup(a)
     if a.cmd == "triage":  # touches only Claude Code's settings file, so it needs no config
         return cmd_triage(a)
-    if a.cmd == "guard" and a.sub not in ("review", "verify"):  # touches only the hooks file, so it needs no config
+    if a.cmd == "guard" and a.sub not in ("review", "verify", "eval"):  # touches only the hooks file, so it needs no config
         return cmd_guard(a, None, None)
     try:
         config = load_config()

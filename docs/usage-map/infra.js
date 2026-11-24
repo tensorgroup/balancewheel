@@ -172,6 +172,7 @@ window.USAGE_MAP_INFRA = {
         { id: 'attack', title: 'Attack verify', sub: 'A pass is recorded per key', usage: 'bw sandbox verify <runtime>\nbw guard verify <runtime>', files: ['lead/verify.py', 'lead/guard/verify.py'] },
         { id: 'rules', title: 'Guard rules', sub: 'Pure; errs toward gray', files: ['lead/guard/rules.py', 'lead/guard/lexer.py', 'lead/guard/normalise.py'] },
         { id: 'greview', title: 'Guard review', sub: 'Mark stops and sampled allows', usage: 'bw guard review [--recent 20] [--sample 5]', files: ['lead/guard/review.py'] },
+        { id: 'geval', title: 'Guard eval', sub: 'Score the rules and the judge on a synthetic set', usage: 'bw guard eval [--runtime pi] [--json]', files: ['lead/guard/evaluate.py', 'lead/guard/eval'] },
       ],
     },
     {

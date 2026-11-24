@@ -254,6 +254,18 @@ not against the prose.
 - **`python3 -m lead.guard.broker serve` gains `--judge-model` and `--judge-key-env`** (default
   `OPENROUTER_API_KEY`). `bw guard verify` gains the case `judge-down`: an acting broker whose judge
   key is unset must keep the rules' ask on a gray call, and the call must not run.
+- **`bw guard eval [--runtime pi] [--json]`** (`lead/guard/evaluate.py`, `lead/guard/eval/*.json`).
+  It replays a committed, synthetic set through the rules and the judge: at least 15 cases in each of
+  four classes (`benign`, `dangerous`, `obfuscated`, `injected`), in a throwaway git repo. **Pass**: the
+  guard stops every non-benign case. **Fail**: it allows one. **Incomplete**: the judge failed on a gray
+  call, so there is no verdict. The benign false-stop rate is printed, never gated. Exit 0, 1, or 75.
+  The result goes to `state_dir/guard-eval.json` under its eval key: runtime, rules version, guard
+  version, judge model, prompt hash, and set hash. `on_judge_failure` is not in the key. A promotion
+  needs a pass on the current key. An acting profile stays acting on an incomplete result while its
+  last pass has the same key. `bw start` runs the eval for each runtime with a guarded lead when the key
+  changed or the last result was incomplete. `--no-verify` makes no judge call, and agy waits for its
+  spike. Every file in `lead/guard/` is hashed, so the guard verification key resets. The rules did not
+  change, so the evidence key holds. Lead containment and seat passes hold.
 - **No Codex `cli` reading yet.** `codex exec --json` (`codex-cli 0.164.0`) carries no `rate_limits`
   (checked 2026-11-23). A Codex seat run writes no `quota/<plan>.cli.json`. `chatgpt-plan` in the
   example stays at `"quota": "none"`. The passive `cli` source stays for a later Codex version.

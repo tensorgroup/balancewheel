@@ -7,7 +7,9 @@ One `bw start:` line per event. Steps:
   2. update every tool in parallel (`lead.updates`), unless --no-update;
   3. re-verify every lead runtime's keys on a pool, one worker per runtime: a runtime is
      submitted when its tool's update finishes, or at once when no tool updates it (all of
-     them with --no-update); the pool is joined before the workspace opens;
+     them with --no-update); the pool is joined before the workspace opens; then, for each runtime
+     with a guarded lead, the guard eval (`lead.guard.evaluate`) runs when its key changed or its last
+     result was incomplete (--no-verify: no judge call, the line says pending);
   4. refresh quota for every plan the profile touches (`lead.probes`: OpenRouter's key, one Orca
      read when a plan maps Orca; agy awaits its shape), one line per plan with its source and age, then the lead
      decision at the "start" moment;
@@ -34,6 +36,7 @@ from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
 from .projects import refuse_inside, resolve_project
 from .rotation import decide
+from .guard import evaluate
 from seats import verify as seat_verify
 
 PASSED_ENV = ("BALANCEWHEEL_CONFIG", "BW_STATE_DIR")
@@ -177,6 +180,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
             for rt in waiting:  # a runtime whose tool never reported still gets its check
                 submit(rt, True)
     verify_items = [i for rt in runtimes for i in items_by_rt.get(rt, [])]
+    _guard_evals(config, runtimes, state, verify, run, say)
 
     # 4. quota (probes, one Orca read; expired caps cleared) and the lead, on a fresh clock
     started, now = now, clock()
@@ -215,6 +219,18 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     for w in config.get("warnings", []):
         say(f"config warning: {w}")
     return code
+
+
+def _guard_evals(config, runtimes, state, verify, run, say):
+    """The guard eval for each runtime with a guarded lead; it runs only when its key changed."""
+    for rt in runtimes:
+        if not any(kind == "guard" for kind, _ in verifymod.items_for_runtime(config, rt)):
+            continue
+        try:
+            _, line = evaluate.ensure(config, state, rt, allow_run=verify, run=run)
+        except Exception as e:  # one runtime's failure is its line, never the start's end, and never the text
+            line = f"guard eval {rt}: failed to run ({type(e).__name__})"
+        say(line)
 
 
 def _seats(config, state, verify, bw, say, env):
