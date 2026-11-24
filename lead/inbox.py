@@ -257,12 +257,14 @@ def write_view(state, worktree_key):
                 os.unlink(tmp)
 
 
-def read_at(dfd, name, limit=READ_LIMIT):
-    """At most `limit` bytes of a regular file (None when it is not one), never following a link or
-    blocking on a FIFO. `panel/channel.py` reads its requests with it too."""
+def read_at(dfd, name, limit=READ_LIMIT, single_link=False):
+    """At most `limit` bytes of a regular file (None when it is not one, or, with `single_link`, when
+    it has a second hard link), never following a link or blocking on a FIFO. `panel/channel.py`
+    reads its requests with it too."""
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or (single_link and st.st_nlink > 1):
             return None
         chunks, n = [], 0
         while n < limit:

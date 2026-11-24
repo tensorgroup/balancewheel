@@ -166,6 +166,7 @@ not against the prose.
 - **Panel requests as files** (`panel/channel.py`): a lead publishes `<id>.request` in `$BW_PANEL` by
   rename. bw writes each response in `$BW_PANEL_VIEW/responses/`. The inbox gains the notice kind `panel`,
   and `inbox.notice` takes a `key`: one open notice per kind and key.
+  A request may be one fenced JSON block. A hard-linked request file or a duplicate JSON key is refused.
 - **Panel templates** (`panel/render.py`, `panel/templates/`): one seat brief per checkpoint and `next.md`,
   the moderator's steps for one panel. Paths in shell commands are quoted; seat and lead text is escaped.
 - **`bw improve`** (`lead/improve.py`, `bin/bw`): suggestions from how the user works, each with its

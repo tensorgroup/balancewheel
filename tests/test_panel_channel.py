@@ -80,6 +80,27 @@ class Ingest(ChannelCase):
         self.assertIn("d.request", problems[0])
         self.assertTrue((self.rd / "d.request").is_dir())
 
+    def test_many_dirs_make_bounded_problems(self):
+        for i in range(200):
+            (self.rd / f"d{i}.request").mkdir()
+        _, problems = channel.ingest(self.S, "k")
+        self.assertEqual(len(problems), inbox.NAMES_SHOWN + 1)
+        self.assertEqual(problems[-1], f"and {200 - inbox.NAMES_SHOWN} more")
+
+    def test_long_name_cut(self):
+        self.publish("x" * 70 + ".y" + "z" * 100, b"{}")
+        _, (problem,) = channel.ingest(self.S, "k")
+        self.assertNotIn("z" * 100, problem)
+
+    def test_hard_link_refused(self):
+        outside = self.root / "outside.json"
+        outside.write_bytes(enc({"v": 1, "type": "panel", "checkpoint": "design", "target": "t"}))
+        os.link(outside, self.rd / "h.request")
+        ((rid, err),), _ = channel.ingest(self.S, "k")
+        self.assertEqual((rid, str(err)), ("h", channel.HARD_LINK))
+        self.assertFalse(any(self.rd.iterdir()))
+        self.assertTrue(outside.exists())
+
     def test_bad_stem_dropped(self):
         self.publish("a.b", {"v": 1, "type": "panel", "checkpoint": "design", "target": "t"})
         reqs, problems = channel.ingest(self.S, "k")
@@ -213,6 +234,40 @@ class Parse(unittest.TestCase):
                     {"paths": ["../up"]}, {"paths": ["a/../../b"]}, {"paths": [3]}, {"paths": [""]},
                     {"deep": "yes"}):
             self.assertRaises(ValueError, channel.parse, enc({**ok, **bad}))
+
+    def test_panel_request_drops_unknown_keys(self):
+        req = channel.parse(enc({"v": 1, "type": "panel", "checkpoint": "design", "target": "t", "nonce": "n",
+                                 "transcript": "x", "roster": ["a"]}))
+        self.assertEqual(set(req), {"v", "type", "nonce", "checkpoint", "target", "focus", "stakes", "paths", "deep"})
+
+    def test_seat_and_checkpoint_capped(self):
+        self.assertRaises(ValueError, channel.check_ask, "s" * 65, "c", "d1")
+        self.assertRaises(ValueError, channel.check_ask, "", "c", "d1")
+        self.assertIsNone(channel.check_ask("s" * 64, "c", "d1"))
+        ok = {"v": 1, "type": "panel", "target": "t"}
+        for bad in ("c" * 65, ""):
+            with self.assertRaises(ValueError) as cm:
+                channel.parse(enc({**ok, "checkpoint": bad}))
+            self.assertNotIn("c" * 65, str(cm.exception))
+        self.assertEqual(channel.parse(enc({**ok, "checkpoint": "c" * 64}))["checkpoint"], "c" * 64)
+
+    def test_duplicate_keys_refused(self):
+        body = b'{"v": 1, "type": "log", "panel": "p1234567", "verdicts": {}, "panel": "p7654321"}'
+        self.assertRaisesRegex(ValueError, "duplicate key", channel.parse, body)
+        nested = b'{"v": 1, "type": "log", "panel": "p1234567", "verdicts": {"f1": "a", "f1": "b"}}'
+        self.assertRaisesRegex(ValueError, "duplicate key", channel.parse, nested)
+
+    def test_fenced_request_accepted(self):
+        body = json.dumps({"v": 1, "type": "panel", "checkpoint": "design", "target": "t"})
+        for text in (f"```json\n{body}\n```", f"\n  ```\n{body}\n```\n\n"):
+            self.assertEqual(channel.parse(text.encode())["target"], "t")
+
+    def test_bad_fences_refused(self):
+        body = json.dumps({"v": 1, "type": "panel", "checkpoint": "design", "target": "t"})
+        for text in (f"```json\n```json\n{body}\n```\n```", f"```json\n{body}\n```\ntrailing",
+                     f"Here it is:\n```json\n{body}\n```", f"```python\n{body}\n```", f"```json\n{body}",
+                     "```json\n```"):
+            self.assertRaises(ValueError, channel.parse, text.encode())
 
     def test_log_and_amend(self):
         base = {"v": 1, "panel": "p1234567"}

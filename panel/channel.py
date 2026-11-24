@@ -12,7 +12,10 @@ Every request file is hostile input:
 - a panel id must match `state.PANEL_ID` before it reaches a path, and the claim of an `ask` is one
   claim of at most CLAIM_LIMIT characters with no attachment;
 - a request id that already has a response is refused under a new name, and the old response stays;
-- every lead-chosen name in a problem line is escaped and cut. `ingest` never raises.
+- a request file with a second hard link is refused, and so is JSON with a duplicate key;
+- one fenced block (a ```json line, the body, a ``` line) is unfenced, then parsed strictly;
+- every lead-chosen name in a problem line is escaped and cut, and at most `inbox.NAMES_SHOWN`
+  problem lines are kept, then one line counts the rest. `ingest` never raises.
 """
 import json
 import os
@@ -22,7 +25,8 @@ import stat
 import time
 from typing import Optional
 
-from lead import handoff, inbox, paths
+from lead import inbox, paths
+from lead.guard.review import safe
 from panel import state as pstate
 
 READ_LIMIT = 64 * 1024
@@ -38,12 +42,16 @@ ENVELOPE = ("v", "type", "panel", "nonce")
 SUFFIX = ".request"
 STAKES = ("normal", "high")
 NAME_CHARS = 80
+HARD_LINK = "request file has more than one hard link"
+SEAT_LIMIT = 64
+CHECKPOINT_LIMIT = 64
+PANEL_FIELDS = ("checkpoint", "target", "focus", "stakes", "paths", "deep")
 
 
 def check_ask(seat, claim, dispute) -> None:
     """The claim-only checks for an `ask`: one ValueError each. The CLI path calls this too."""
-    if not isinstance(seat, str):
-        raise ValueError("seat must be a string")
+    if not isinstance(seat, str) or not 1 <= len(seat) <= SEAT_LIMIT:
+        raise ValueError(f"seat must be a string of 1 to {SEAT_LIMIT} characters")
     if not isinstance(claim, str) or not claim:
         raise ValueError("claim must be a non-empty string")
     if len(claim) > CLAIM_LIMIT:
@@ -59,8 +67,9 @@ def _repo_relative(p) -> bool:
 
 
 def _panel_request(req: dict) -> None:
-    if not isinstance(req.get("checkpoint"), str):
-        raise ValueError("checkpoint must be a string")
+    cp = req.get("checkpoint")
+    if not isinstance(cp, str) or not 1 <= len(cp) <= CHECKPOINT_LIMIT:
+        raise ValueError(f"checkpoint must be a string of 1 to {CHECKPOINT_LIMIT} characters")
     target = req.get("target")
     if not isinstance(target, str) or not 1 <= len(target) <= TARGET_LIMIT:
         raise ValueError(f"target must be a string of 1 to {TARGET_LIMIT} characters")
@@ -76,10 +85,40 @@ def _panel_request(req: dict) -> None:
         raise ValueError("deep must be true or false")
 
 
+class _DuplicateKey(ValueError):
+    pass
+
+
+def _no_duplicates(pairs) -> dict:
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise _DuplicateKey("request has a duplicate key")
+        out[k] = v
+    return out
+
+
+FENCE_OPEN = ("```", "```json")
+FENCE_CLOSE = "```"
+
+
+def _unfence(text: str) -> str:
+    """The body of a request whose whole content is one fenced block (a lead often copies the fence
+    with the JSON); any other text is returned unchanged and parsed strictly."""
+    lines = text.strip().split("\n")
+    if len(lines) >= 2 and lines[0].strip() in FENCE_OPEN and lines[-1].strip() == FENCE_CLOSE:
+        return "\n".join(lines[1:-1])
+    return text
+
+
 def parse(data: bytes) -> dict:
-    """The request as a dict, defaults filled in. ValueError with one message the lead can read."""
+    """The request as a dict, defaults filled in. ValueError with one message the lead can read.
+    A `panel` request keeps only its own fields and the envelope; `log` and `amend` keep every key,
+    so the drain can name the ignored ones."""
     try:
-        req = json.loads(data.decode("utf-8"))
+        req = json.loads(_unfence(data.decode("utf-8")), object_pairs_hook=_no_duplicates)
+    except _DuplicateKey as e:
+        raise ValueError(str(e)) from None
     except (UnicodeDecodeError, ValueError):
         raise ValueError("request is not UTF-8 JSON") from None
     if not isinstance(req, dict):
@@ -95,7 +134,7 @@ def parse(data: bytes) -> dict:
         raise ValueError("type must be one of " + ", ".join(TYPES))
     if kind == "panel":
         _panel_request(req)
-        return req
+        return {k: req[k] for k in ENVELOPE + PANEL_FIELDS if k in req}
     pid = req.get("panel")
     if not isinstance(pid, str) or not pstate.PANEL_ID.fullmatch(pid):
         raise ValueError("panel must be a panel id such as p3f9a1c2")
@@ -112,7 +151,7 @@ def parse(data: bytes) -> dict:
 def _nonce(data: bytes) -> Optional[str]:
     """The request's nonce when it has a valid one, so a refusal can still echo it."""
     try:
-        req = json.loads(data.decode("utf-8"))
+        req = json.loads(_unfence(data.decode("utf-8")))
     except (UnicodeDecodeError, ValueError):
         return None
     n = req.get("nonce") if isinstance(req, dict) else None
@@ -122,15 +161,15 @@ def _nonce(data: bytes) -> Optional[str]:
 def open_request_dir(state, key) -> int:
     """The request dir as a descriptor. The checkpoint dir is made with no link followed; the
     `panel` dir in it is made 0700 when absent. A symlink at either level raises OSError."""
-    cp_path = handoff.checkpoint_dir(state, pstate._key(key))
-    pstate._ensure(state, cp_path)
+    cp_path, leaf = pstate.request_dir_parts(state, key)
+    pstate.ensure_dir(state, cp_path)
     cp = os.open(cp_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         try:
-            os.mkdir("panel", 0o700, dir_fd=cp)
+            os.mkdir(leaf, 0o700, dir_fd=cp)
         except FileExistsError:
             pass
-        return os.open("panel", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=cp)
+        return os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=cp)
     finally:
         os.close(cp)
 
@@ -176,7 +215,7 @@ def ingest(state, key) -> tuple:
         except OSError as e:
             return [], [f"the panel request dir cannot be listed ({type(e).__name__})"]
         for name in names:
-            shown = inbox.first_line(name, NAME_CHARS)
+            shown = safe(name)[:NAME_CHARS]
             stem = name[:-len(SUFFIX)]
             try:
                 st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
@@ -191,13 +230,17 @@ def ingest(state, key) -> tuple:
                     os.unlink(name, dir_fd=dfd)
                     out.append((stem, _error("not a regular file")))
                     continue
+                if st.st_nlink > 1:
+                    os.unlink(name, dir_fd=dfd)
+                    out.append((stem, _error(HARD_LINK)))
+                    continue
                 try:
-                    data = inbox.read_at(dfd, name, READ_LIMIT)
+                    data = inbox.read_at(dfd, name, READ_LIMIT, single_link=True)
                 except OSError:
                     data = None  # swapped for a link or a FIFO after the stat
                 os.unlink(name, dir_fd=dfd)
-                if data is None:
-                    out.append((stem, _error("not a regular file")))
+                if data is None:  # swapped after the stat: a link, a FIFO, or a hard link
+                    out.append((stem, _error("not a regular file or hard-linked")))
                     continue
                 if os.path.lexists(os.path.join(responses, f"{stem}.json")):
                     err = _refusal(stem)
@@ -215,7 +258,13 @@ def ingest(state, key) -> tuple:
                 problems.append(f"a request was not ingested: {shown} ({type(e).__name__})")
     finally:
         os.close(dfd)
-    return out, problems
+    return out, _capped(problems)
+
+
+def _capped(problems) -> list:
+    """At most `inbox.NAMES_SHOWN` problem lines, then one line that counts the rest."""
+    more = len(problems) - inbox.NAMES_SHOWN
+    return problems if more <= 0 else problems[:inbox.NAMES_SHOWN] + [f"and {more} more"]
 
 
 def respond(state, key, req_id, obj: dict, nonce=None, reused=False) -> str:
@@ -223,7 +272,7 @@ def respond(state, key, req_id, obj: dict, nonce=None, reused=False) -> str:
     `responses/<req_id>.reused-<n>.json` (the old response stays). Returns the path."""
     if not isinstance(req_id, str) or not REQ_ID.fullmatch(req_id):
         raise ValueError(f"bad request id: {req_id!r}")
-    d = pstate._ensure(state, _responses(state, key))
+    d = pstate.ensure_dir(state, _responses(state, key))
     body = {**obj, "nonce": nonce, "received": time.time()}
     if not reused:
         dest = os.path.join(d, f"{req_id}.json")

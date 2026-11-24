@@ -36,10 +36,14 @@ INPUT_KEYS = ("worktree", "profile", "checkpoint", "target", "focus", "stakes", 
               "originals", "fallbacks", "created", "session_id", "lead", "seats")
 
 
-def _key(key) -> str:
+def check_key(key) -> str:
+    """The worktree key when it is one plain path segment; ValueError otherwise."""
     if not isinstance(key, str) or not KEY.fullmatch(key):
         raise ValueError(f"bad worktree key: {key!r}")
     return key
+
+
+_key = check_key
 
 
 def _pid(pid) -> str:
@@ -48,9 +52,18 @@ def _pid(pid) -> str:
     return pid
 
 
+REQUEST_LEAF = "panel"
+
+
+def request_dir_parts(state, key) -> tuple:
+    """(the checkpoint dir, the leaf name): the request dir is the leaf in the checkpoint dir. A caller
+    that opens it one level at a time (no link followed) uses these parts, never its own path."""
+    return handoff.checkpoint_dir(state, _key(key)), REQUEST_LEAF
+
+
 def request_dir(state, key) -> str:
     """`$BW_PANEL`: the lead writes its requests here (inside its write grant)."""
-    return os.path.join(handoff.checkpoint_dir(state, _key(key)), "panel")
+    return os.path.join(*request_dir_parts(state, key))
 
 
 def view_root(state, key) -> str:
@@ -70,7 +83,7 @@ def _work_root(state, key) -> str:
     return os.path.join(state, "panels", _key(key))
 
 
-def _ensure(state, path) -> str:
+def ensure_dir(state, path) -> str:
     """Make `path` (a dir under `state`) one component at a time, each new one 0700.
     An existing component that is a symlink or not a dir raises OSError: no link is followed."""
     rel = os.path.relpath(path, state)
@@ -89,6 +102,9 @@ def _ensure(state, path) -> str:
         if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
             raise OSError(f"not a plain dir: {cur}")
     return path
+
+
+_ensure = ensure_dir
 
 
 def _no_links(state, path) -> bool:
