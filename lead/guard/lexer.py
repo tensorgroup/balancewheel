@@ -7,11 +7,20 @@ unquoted or double-quoted `$` or backtick, an unquoted backslash, an unquoted `{
 expansion), or a `~user`. A leading `~` or `~/` becomes `home`. Quoted text is data. An unquoted `#` at the start of a word begins a comment that runs to the end of the line.
 Unterminated
 quotes raise ValueError; heredoc and subshell bodies are not parsed (the rules treat them as gray).
+When the only unexpanded parts of a word are plain `$NAME` or `${NAME}` references, `unexpanded`
+is a Refs tuple (truthy) of (start, end, name, in_double_quotes) spans in `text`, so the rules can
+expand exactly the variables bw set for the lead. Any other unexpanded part makes it True.
 """
+import re
 from collections import namedtuple
 
 Word = namedtuple("Word", "text quoted unexpanded")
 Op = namedtuple("Op", "op")
+_REF = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
+
+
+class Refs(tuple):
+    """The plain variable references in a word; never empty, so always truthy."""
 
 _OPS = ["<<<", "&>>", "<<", ">>", "&>", ">&", "&&", "||", "|&", ";", "&", "|", "<", ">", "(", ")"]
 _STOP = " \t\n;&|<>()"
@@ -25,14 +34,24 @@ def _match(s, i):
 
 
 def lex(command, home):
-    out, buf, quoted, unexp, have = [], [], False, False, False
+    out, buf, quoted, unexp, have, refs = [], [], False, False, False, []
     i, n = 0, len(command)
 
     def flush():
-        nonlocal buf, quoted, unexp, have
+        nonlocal buf, quoted, unexp, have, refs
         if have:
-            out.append(Word("".join(buf), quoted, unexp))
-        buf, quoted, unexp, have = [], False, False, False
+            out.append(Word("".join(buf), quoted, True if unexp else Refs(refs) if refs else False))
+        buf, quoted, unexp, have, refs = [], False, False, False, []
+
+    def ref(j, dq):
+        """A plain $NAME or ${NAME} at j: record its span, return where it ends (None if not one)."""
+        m = _REF.match(command, j)
+        if not m:
+            return None
+        start = sum(len(b) for b in buf)
+        buf.append(m.group(0))
+        refs.append((start, start + len(m.group(0)), m.group(1) or m.group(2), dq))
+        return m.end()
 
     while i < n:
         c = command[i]
@@ -65,6 +84,11 @@ def lex(command, home):
                     buf.append(command[j + 1])
                     j += 2
                     continue
+                if d == "$":
+                    end = ref(j, True)
+                    if end is not None:
+                        j = end
+                        continue
                 if d in "$`\\":
                     unexp = True
                 buf.append(d)
@@ -74,6 +98,9 @@ def lex(command, home):
             unexp = have = True
             buf.append(command[i + 1:i + 2])
             i += 2
+        elif c == "$" and _REF.match(command, i):
+            i = ref(i, False)
+            have = True
         elif c in "$`{":
             unexp = have = True
             buf.append(c)

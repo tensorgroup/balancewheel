@@ -171,6 +171,19 @@ not against the prose.
 
 ### Changed
 
+- **The guard allows a lead's writes into its own checkpoint dir by rule** (`lead/guard/rules.py`).
+  The write tool, `>`/`>>`, `mkdir`, `touch`, `cp`, `mv`, and `tee` may write into
+  `handoffs/<key>/`, except bw's own `guard-unreachable` and `cap-signal`. `rm` and the other
+  writers stay worktree-only. `tee` accepts only `-a`. `RuleContext` gains `checkpoint_dir`,
+  `lead_env`, and `panel_wait` (each default `None`). The rules expand `$NAME` and `${NAME}` for the
+  `BW_CHECKPOINT`, `BW_ASKS`, `BW_INBOX`, and `BW_PANEL` values bw gave the lead; any other variable
+  stays gray. `python3 <panel wait helper>`, with no other words, is allowed. A change to a name bw
+  sets for the lead (those four, `BW_PANEL*`, `BW_SESSION`, `BW_GUARD_*`, `BW_STATE_DIR`) is the rule
+  ask `ask:bw-env`; the judge cannot lift it. A lead that works on balancewheel itself gets this ask
+  when its tests set `BW_STATE_DIR=...`. The standalone broker takes `--checkpoint-dir`. The line
+  "Never set, export, or unset a variable whose name starts with BW_." moved from `panel.md` to
+  `checkpoint.md`, so every lead gets it. The rules changed, so the guard verification key and the
+  evidence key both reset.
 - **No Codex `cli` reading yet.** `codex exec --json` (`codex-cli 0.164.0`) carries no `rate_limits`
   (checked 2026-11-23). A Codex seat run writes no `quota/<plan>.cli.json`. `chatgpt-plan` in the
   example stays at `"quota": "none"`. The passive `cli` source stays for a later Codex version.

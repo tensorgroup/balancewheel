@@ -21,6 +21,12 @@ class LexerTest(unittest.TestCase):
                     "echo {a,b}", "echo ~root", "echo ~+", 'echo "a\\nb"'):
             self.assertTrue(any(isinstance(t, Word) and t.unexpanded for t in lex(src, H)), src)
 
+    def test_plain_variable_references_are_listed(self):
+        self.assertEqual(lex("echo $A/x", H)[1].unexpanded, ((0, 2, "A", False),))
+        self.assertEqual(lex('echo "${B}"/x$C', H)[1].unexpanded, ((0, 4, "B", True), (6, 8, "C", False)))
+        for src in ("echo \\$A", "echo $A`id`", "echo ${A:-x}", "echo $1", 'echo "\\$A"', "echo {a,b}$A"):
+            self.assertIs(lex(src, H)[1].unexpanded, True, src)
+
     def test_single_quotes_and_escaped_quote_do_not(self):
         self.assertFalse(lex("echo '$X'", H)[1].unexpanded)
         self.assertEqual(lex('echo "a\\"b"', H)[1], Word('a"b', True, False))

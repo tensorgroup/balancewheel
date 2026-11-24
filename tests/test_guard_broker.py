@@ -378,6 +378,31 @@ class TestBindFailure(BrokerBase):
         self.assertFalse(os.path.lexists(b.sock_path))
 
 
+class StandaloneServeTests(unittest.TestCase):
+    def ctx_from(self, *extra):
+        seen = {}
+
+        class Stop(Exception):
+            pass
+
+        def fake_broker(state, gdir, token, mode, session, ctx, reply_garbage=False):
+            seen["ctx"] = ctx
+            raise Stop()
+
+        tmp = tempfile.mkdtemp(dir="/tmp")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        argv = ["serve", "--state-dir", tmp, "--guard-dir", tmp, "--worktree", tmp, "--runtime", "pi",
+                "--mode", "shadow", "--token-env", "BW_TEST_TOKEN", *extra]
+        with mock.patch.dict(os.environ, {"BW_TEST_TOKEN": "x"}), mock.patch.object(brk, "Broker", fake_broker), \
+                self.assertRaises(Stop):
+            brk.main(argv)
+        return seen["ctx"]
+
+    def test_checkpoint_dir_flag_reaches_the_rules(self):
+        self.assertEqual(self.ctx_from("--checkpoint-dir", "/tmp/cp").checkpoint_dir, "/tmp/cp")
+        self.assertIsNone(self.ctx_from().checkpoint_dir)
+
+
 if __name__ == "__main__":
     unittest.main()
 

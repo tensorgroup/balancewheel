@@ -71,6 +71,19 @@ class PristineTests(unittest.TestCase):
         c = launch.rule_context(Project(wt, os.path.join(wt, ".git")), PROFILE, None)
         self.assertFalse(c.is_pristine(os.path.join(wt, "a.sh")))
 
+    def test_rule_context_carries_checkpoint_dir(self):
+        cp = os.path.join(self.tmp, "state", "handoffs", "k")
+        project = Project(self.wt, os.path.join(self.wt, ".git"))
+        self.assertEqual(launch.rule_context(project, PROFILE, self.head, checkpoint_dir=cp).checkpoint_dir, cp)
+        self.assertIsNone(launch.rule_context(project, PROFILE, self.head).checkpoint_dir)
+
+    def test_rule_context_carries_lead_env_and_panel_wait(self):
+        env = {"BW_PANEL": os.path.join(self.tmp, "state", "handoffs", "k", "panel")}
+        w = os.path.join(self.tmp, "state", "inbox-view", "k", "panels", "bw-panel-wait")
+        c = launch.rule_context(Project(self.wt, os.path.join(self.wt, ".git")), PROFILE, self.head,
+                                lead_env=env, panel_wait=w)
+        self.assertEqual((c.lead_env, c.panel_wait), (env, w))
+
 
 class GitTimeoutTests(unittest.TestCase):
     def test_a_hung_git_call_returns_a_failure_instead_of_blocking(self):

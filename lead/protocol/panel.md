@@ -14,7 +14,6 @@ $deep
 - At each task boundary, read $view_root/<panel id>/status.json. When "state" is "ready" or "failed", follow $view_root/<panel id>/next.md.
 - When you have nothing else to do, run exactly the next line, with no other words. It returns in two minutes or less. Exit status 3 means still working: run it again.
 `python3 $wait_sh`
-- Never set, export, or unset a variable whose name starts with BW_.
 - Verify every finding against the code yourself. A seat's confidence is not evidence.
 - Relay one disputed claim at a time with an ask request, to a seat that did not raise the finding. Never paste a seat's output to another seat.
 - Log every panel with a log request, also a short or failed one. A panel that is not logged does not count.

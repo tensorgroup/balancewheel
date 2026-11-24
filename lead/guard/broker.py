@@ -282,6 +282,7 @@ def main(argv=None):
     sv.add_argument("--mode", required=True, choices=("shadow", "acting"))
     sv.add_argument("--token-env", required=True)
     sv.add_argument("--reply-garbage", action="store_true")
+    sv.add_argument("--checkpoint-dir", default=None)
     a = ap.parse_args(argv)
     token = os.environ.get(a.token_env)
     if not token:
@@ -292,7 +293,7 @@ def main(argv=None):
     ctx = RuleContext(worktree=wt, git_dir=os.path.join(wt, ".git"), common_dir=os.path.join(wt, ".git"),
                       home=os.path.expanduser("~"), protected_branches=["main", "master"],
                       deploy_commands=[], push_dest=lambda remote, refspec: None,
-                      is_pristine=launch.pristine_checker(wt, head))
+                      is_pristine=launch.pristine_checker(wt, head), checkpoint_dir=a.checkpoint_dir)
     session = {"session_id": "standalone", "project": wt, "profile": "standalone", "lead": "standalone",
                "runtime": a.runtime, "runtime_version": "standalone"}
     b = Broker(a.state_dir, a.guard_dir, token, a.mode, session, ctx, reply_garbage=a.reply_garbage)

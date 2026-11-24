@@ -9,6 +9,9 @@ worst segment wins (block > ask > gray > allow). `cd <literal>` moves the cwd fo
 only where it provably ran; otherwise the cwd is unknown and path-dependent allows turn gray.
 ctx.push_dest(remote, refspec) -> branch name or None, and ctx.is_pristine(path) -> bool, are
 called lazily; push_dest may return `origin/main` or `main`.
+ctx.checkpoint_dir (the lead's own handoffs/<key>/) is writable by rule, except the bw-owned files;
+ctx.lead_env holds the BW_* values bw gave the lead, the only variables the rules expand; and
+ctx.panel_wait is the realpath of the panel wait helper, which `python3 <it>` alone may run.
 """
 import glob
 import itertools
@@ -16,10 +19,12 @@ import os
 import re
 from collections import namedtuple
 
-from lead.guard.lexer import Word, lex
+from lead.guard.lexer import Refs, Word, lex
 from lead.sandbox import CANVAS_CONTROL_DIRS, SECRET_READS
 
-RuleContext = namedtuple("RuleContext", "worktree git_dir common_dir home protected_branches deploy_commands push_dest is_pristine")
+RuleContext = namedtuple("RuleContext", "worktree git_dir common_dir home protected_branches deploy_commands push_dest "
+                                        "is_pristine checkpoint_dir lead_env panel_wait", defaults=(None, None, None))
+BW_OWNED = ("guard-unreachable", "cap-signal")  # bw writes these in the checkpoint dir; the lead never does
 Decision = namedtuple("Decision", "decision source rule reason")
 
 
@@ -53,6 +58,7 @@ def _under(p, d, ci=False):
 _FIRMLINK = "/System/Volumes/Data"
 _DOTGIT = re.compile(r"(^|/)\.git(/|$)", re.I)
 _GIT_CTRL = re.compile(r"(^|/)\.git/(hooks(/|$)|config(\.worktree)?$)", re.I)
+_SPLITS = re.compile(r"[\s*?\[]")  # an unquoted value with these is split or globbed by the shell
 
 
 def _canon(p):
@@ -132,6 +138,33 @@ class _Env:
         self.hooks = set().union(*[both(g, "hooks") for g in dirs])
         self.cfg = {x.lower() for g in dirs for n in ("config", "config.worktree") for x in both(g, n)}
         self.dotgit_file = not os.path.isdir(self.dotgit)
+        self.cp = _rp(ctx.checkpoint_dir) if ctx.checkpoint_dir else None
+        self.lead_env = {k: v for k, v in (ctx.lead_env or {}).items() if isinstance(v, str) and v}
+
+    def in_checkpoint(self, real):
+        """True when `real` is strictly under the checkpoint dir and is not a bw-owned file there."""
+        if not self.cp or real == self.cp or not _under(real, self.cp):
+            return False
+        if any(_under(real, os.path.join(self.cp, n), True) for n in BW_OWNED):
+            return False
+        return not _DOTGIT.search(real[len(self.cp):])
+
+    def writable(self, real, strict=True):
+        return self.inside(real, strict) or self.in_checkpoint(real)
+
+    def expand(self, word):
+        """The word with its $NAME/${NAME} references to ctx.lead_env replaced, or the word as it was
+        when any part stays unexpanded. An unquoted value that the shell would split or glob stays."""
+        refs = word.unexpanded
+        if not isinstance(refs, Refs) or not self.lead_env:
+            return word
+        text = word.text
+        for start, end, name, dq in sorted(refs, reverse=True):
+            val = self.lead_env.get(name)
+            if val is None or (not dq and _SPLITS.search(val)):
+                return word
+            text = text[:start] + val + text[end:]
+        return Word(text, word.quoted, False)
 
     def hit(self, ps, dirs):
         return any(_under(p, d, True) for p in ps for d in dirs)
@@ -167,6 +200,13 @@ class _Seg:
     def __init__(self, before):
         self.words, self.redirs, self.before, self.after = [], [], before, None
         self.heredoc = self.bad = False
+
+    def expanded(self, env):
+        s = _Seg(self.before)
+        s.after, s.heredoc, s.bad = self.after, self.heredoc, self.bad
+        s.words = [env.expand(w) for w in self.words]
+        s.redirs = [(op, env.expand(w)) for op, w in self.redirs]
+        return s
 
 
 _WRITE_OPS = {">", ">>", "2>", "&>", ">&"}
@@ -330,10 +370,35 @@ def _in_order(want, args):
     return all(any(a == x for a in it) for x in want)
 
 
+# The names bw sets for the lead session. Expansion of lead_env is sound only while the lead cannot
+# change them, so changing one is a rule ask the judge cannot lift. Other BW_* names stay gray.
+_BW_NAME = r"BW_(?:CHECKPOINT|ASKS|INBOX|SESSION|STATE_DIR|PANEL[A-Za-z0-9_]*|GUARD_[A-Za-z0-9_]*)"
+_BW_SET = re.compile(rf"(?<![A-Za-z0-9_$]){_BW_NAME}(?:\+=|=|\[)")  # X=, X+=, X[..]=
+_BW_DEFAULT = re.compile(rf"\$\{{{_BW_NAME}:?=")  # ${X=..} and ${X:=..} assign when X is unset
+_BW_EXACT = re.compile(_BW_NAME)
+_VAR_CMDS = {"export", "unset", "declare", "typeset", "readonly", "local", "read", "getopts", "mapfile",
+             "readarray", "for", "select", "let", "env", "eval", "builtin", "command"}
+
+
+def _bw_env(w):
+    """True if the segment may assign, export, unset, or declare a name bw sets for the lead. An
+    assignment starts its word (after `{`, `then`, `time`, ... too); a bare name, a nameref target,
+    or an assignment inside an operand counts next to a builtin that changes variables."""
+    if any(_BW_SET.match(x.text) or (x.unexpanded and _BW_DEFAULT.search(x.text)) for x in w):
+        return True
+    names = {os.path.basename(x.text) for x in w}
+    if names & _VAR_CMDS or ("printf" in names and "-v" in names):
+        return any(_BW_SET.search(x.text) or _BW_EXACT.fullmatch(c)
+                   for x in w for c in (x.text, x.text.partition("=")[2]))
+    return False
+
+
 def _s_ask(seg, env, cwd):
     w = seg.words
     if not w:
         return None
+    if _bw_env(w):
+        return ask("ask:bw-env", "changes a variable bw sets for the lead")
     name, t = w[0].text, [x.text for x in w[1:]]
     lit = not any(x.unexpanded for x in w)
     for dc in env.ctx.deploy_commands:
@@ -548,12 +613,31 @@ def _h_write(name):
                 paths.append(x)
         if not paths:
             return gry("gray:no-path", f"{name} names no path")
-        if all(env.inside(_real(p, cwd), strict=name in ("rm", "mv")) for p in paths):
+        # rm stays worktree-only; mkdir, touch, cp, and mv may also write into the checkpoint dir
+        ok = env.inside if name == "rm" else env.writable
+        if all(ok(_real(p, cwd), strict=name in ("rm", "mv")) for p in paths):
             return None
         if name == "rm" and rec:
             return ask("ask:rm-outside", "recursive rm outside the worktree or into a git dir")
         return gry("gray:outside-write", f"{name} reaches outside the worktree or into a git dir")
     return h
+
+
+def _h_tee(t, args, env, cwd):
+    paths, end = [], False
+    for x in t:
+        if not end and x == "--":
+            end = True
+        elif not end and x.startswith("-") and len(x) > 1:
+            if x not in ("-a", "--append"):
+                return _opt(f"tee {x} is outside the grammar")
+        else:
+            paths.append(x)
+    if not paths:
+        return gry("gray:no-path", "tee names no path")
+    if all(env.writable(_real(p, cwd)) for p in paths):
+        return None
+    return gry("gray:outside-write", "tee reaches outside the worktree or into a git dir")
 
 
 def _runner(*subs, deny=()):
@@ -597,7 +681,7 @@ def _h_pytest(t, args, env, cwd):
 _HANDLERS = {n: _h_read(n) for n in ("ls", "cat", "head", "tail", "wc", "grep", "file", "stat", "diff", "rg", "find", "tree")}
 _HANDLERS.update({n: (lambda *a: None) for n in ("pwd", "echo", "printf", "true", "which", "type", "cd")})
 _HANDLERS.update({n: _h_write(n) for n in _WL})
-_HANDLERS.update({"git": _h_git, "npm": _h_npm, "make": _h_make, "pytest": _h_pytest, "bash": _h_runner, "sh": _h_runner,
+_HANDLERS.update({"git": _h_git, "npm": _h_npm, "tee": _h_tee, "make": _h_make, "pytest": _h_pytest, "bash": _h_runner, "sh": _h_runner,
                   "node": _h_runner, "cargo": _runner("test", "build", "check", "clippy", "fmt", deny=("config",)),
                   "go": _runner("test", "build", "vet", deny=("exec", "toolexec", "o", "overlay", "vettool", "modfile", "pkgdir"))})
 
@@ -624,11 +708,11 @@ def _s_grammar(seg, env, cwd):
         return gry("gray:interpreter", f"{base} runs inline code")
     if "/" in name:
         return _script(name, env, cwd, "gray:path-command")
-    g = _glob(seg, env, cwd, name in _WL)
+    g = _glob(seg, env, cwd, name in _WL or name == "tee")
     if g:
         return g
     for x in _file_targets(seg):
-        if not env.inside(_real(x.text, cwd)):
+        if not env.writable(_real(x.text, cwd)):
             return gry("gray:outside-write", f"redirection into {x.text}: outside the worktree or into a git dir")
     h = _h_python if re.fullmatch(r"python[0-9.]*", name) else _HANDLERS.get(name)
     if h is None:
@@ -636,9 +720,19 @@ def _s_grammar(seg, env, cwd):
     return h(t, w[1:], env, cwd)
 
 
+def _s_wait(seg, env, cwd):
+    """`python3 <panel wait helper>` and nothing else: bw wrote that file where no lead can write."""
+    w = seg.words
+    if (env.ctx.panel_wait and len(w) == 2 and w[0].text == "python3" and not seg.redirs and not seg.bad
+            and seg.before is None and seg.after is None and not any(x.unexpanded for x in w)
+            and not w[1].text.startswith("-") and _real(w[1].text, cwd) == _rp(env.ctx.panel_wait)):
+        return allow("allow:panel-wait", "runs the panel wait helper bw installed")
+    return None
+
+
 def _segment(seg, env, cwd):
-    return _s_block(seg, env, cwd) or _s_ask(seg, env, cwd) or _s_grammar(seg, env, cwd) or \
-        allow("allow:shell", "in the allow grammar")
+    return _s_block(seg, env, cwd) or _s_ask(seg, env, cwd) or _s_wait(seg, env, cwd) or \
+        _s_grammar(seg, env, cwd) or allow("allow:shell", "in the allow grammar")
 
 
 def _cd(seg, env, cwd):
@@ -658,6 +752,7 @@ def _shell(call, env):
     except ValueError as e:
         return gry("gray:unparseable", f"cannot parse the command ({e})")
     segs, sub = _split(toks)
+    segs = [s.expanded(env) for s in segs]  # before every path test: lead_env names only
     if not segs:
         return gry("gray:subshell" if sub else "gray:empty", "nothing the guard can judge")
     cwd, known, tainted, decs = _rp(call.cwd or env.ctx.worktree), True, False, []
@@ -684,7 +779,9 @@ def _shell(call, env):
     if sub:
         decs.append(gry("gray:subshell", "subshells are not parsed"))
     worst = max(decs, key=_rank)
-    return allow("allow:shell", "every segment is in the allow grammar") if _rank(worst) == 0 else worst
+    if _rank(worst) or worst.rule == "allow:panel-wait":
+        return worst
+    return allow("allow:shell", "every segment is in the allow grammar")
 
 
 _SEND = ("send", "post", "comment", "message", "publish")
@@ -710,7 +807,7 @@ def _other(call, env):
                 return blk("block:git-hooks-config", f"{p} is a git hook or config file")
             if kind == "read" and env.ancestor(ps):
                 worst = gry("gray:secret-ancestor", f"{p} contains credential paths a recursive read would reach")
-            if kind == "write" and not env.inside(_rp(p)) and _rank(worst) < 1:
+            if kind == "write" and not env.writable(_rp(p)) and _rank(worst) < 1:
                 worst = gry("gray:outside-write", f"{p} is outside the worktree or inside a git dir")
         return worst
     if call.tool == "oversized":

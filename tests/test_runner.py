@@ -1314,6 +1314,28 @@ class PanelRunner(RunnerCase):
         self.assertEqual(wait_path, expected)
         self.assertEqual(sorted(lead_env), ["BW_ASKS", "BW_CHECKPOINT", "BW_INBOX", "BW_PANEL"])
         self.assertEqual(lead_env["BW_PANEL"], os.path.join(str(link), "handoffs", self.key, "panel"))
+        # test_wait_command_matches_guard_path (Plan 8 G1): a guarded pi lead, the real rule_context
+        # call and the real Broker; the broker's rule context names the same wait path and BW_* values.
+        config["leads"]["lb"].update(autonomy="guard", autonomy_source="config")
+        ctx = runner.Context(config, str(link), project, runner.Lock(str(link), project.worktree_key),
+                             {"pi": runner.ADAPTERS["pi"]}, "sandbox-exec", io.StringIO())
+
+        class Stop(Exception):
+            pass
+
+        def bind(b):
+            seen["broker"] = b
+            raise Stop()
+
+        with mock.patch.object(runner.containment, "_first_line", lambda argv: "pi 0.0.0"), \
+                mock.patch.object(runner.brk.Broker, "bind", bind), self.assertRaises(Stop):
+            runner.Session(ctx, "lb", None)
+        os.close(ctx.lock.fd)
+        rules_ctx = seen["broker"].ctx
+        self.assertEqual(rules_ctx.panel_wait, expected)
+        self.assertEqual(sorted(rules_ctx.lead_env), ["BW_ASKS", "BW_CHECKPOINT", "BW_INBOX", "BW_PANEL"])
+        self.assertEqual(rules_ctx.lead_env["BW_PANEL"], lead_env["BW_PANEL"])
+        self.assertEqual(rules_ctx.checkpoint_dir, os.path.join(str(link), "handoffs", self.key))
 
     def test_request_dir_symlink_is_a_notice_not_a_crash(self):
         elsewhere = self.state.parent / "elsewhere"

@@ -196,6 +196,11 @@ CFG = {"profiles": {
 
 
 class PanelProtocol(unittest.TestCase):
+    def test_every_lead_is_told_never_to_set_a_bw_variable(self):   # Plan 8 G1: the guard expands them
+        line = "Never set, export, or unset a variable whose name starts with BW_."
+        self.assertIn(line, protocol_text())
+        self.assertEqual(protocol_text(CFG, "high", "/a", "/b", "/b/w").count(line), 1)
+
     def test_protocol_lists_exactly_the_profile_checkpoints(self):
         text = protocol_text(CFG, "high", "/s/handoffs/k/panel", "/s/inbox-view/k/panels")
         self.assertIn("- design: astra, opus, gem (required: astra; at least 2)", text)

@@ -44,8 +44,10 @@ def pristine_checker(worktree, head):
     return is_pristine
 
 
-def rule_context(project, profile, head=None):
-    """`head` is the commit the session started on (the standalone broker passes None: HEAD now)."""
+def rule_context(project, profile, head=None, checkpoint_dir=None, lead_env=None, panel_wait=None):
+    """`head` is the commit the session started on (the standalone broker passes None: HEAD now).
+    `checkpoint_dir`, `lead_env` (the BW_* values bw gave the lead), and `panel_wait` (the realpath
+    of the panel wait helper) go to the rules as they are."""
     wt = project.worktree
     head = head or head_of(wt)
 
@@ -58,7 +60,8 @@ def rule_context(project, profile, head=None):
 
     return RuleContext(worktree=wt, git_dir=sandbox._git_dir(wt), common_dir=project.common_dir,
                        home=os.path.expanduser("~"), protected_branches=list(profile["protected_branches"]),
-                       deploy_commands=list(profile["deploy_commands"]), push_dest=push_dest, is_pristine=pristine_checker(wt, head))
+                       deploy_commands=list(profile["deploy_commands"]), push_dest=push_dest, is_pristine=pristine_checker(wt, head),
+                       checkpoint_dir=checkpoint_dir, lead_env=lead_env, panel_wait=panel_wait)
 
 
 def read_markers(path):

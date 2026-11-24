@@ -1,5 +1,6 @@
 import glob
 import os
+import shlex
 import shutil
 import tempfile
 import unittest
@@ -461,6 +462,203 @@ class GuardRulesTest(unittest.TestCase):
         d = self.other("mcp", tool="list_issues", server="s")
         self.assertEqual((d.decision, d.source, d.rule), ("ask", "gray", "gray:mcp"))
         self.assertEqual(self.other("bogus").source, "gray")
+
+
+def shell(cmd, cwd=None):
+    return Call("pi", "bash", "shell", cmd, (), None, None, cwd, None)
+
+
+def write_call(path):
+    return Call("pi", "write", "write", None, (path,), None, None, None, None)
+
+
+class CheckpointDirTests(unittest.TestCase):
+    """Writes into the lead's own checkpoint dir (handoffs/<key>/) are allowed by rule (Plan 8 G1)."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.home = os.path.join(self.tmp, "home")
+        os.makedirs(os.path.join(self.home, ".ssh"))
+        self.wt = os.path.join(self.tmp, "wt")
+        os.makedirs(os.path.join(self.wt, ".git", "hooks"))
+        self.cp = os.path.join(self.tmp, "state", "handoffs", "k")
+        for d in ("asks", "panel"):
+            os.makedirs(os.path.join(self.cp, d))
+        os.makedirs(os.path.join(self.tmp, "elsewhere"))
+        os.symlink(os.path.join(self.home, ".ssh"), os.path.join(self.cp, "link"))
+        os.symlink(os.path.join(self.tmp, "elsewhere"), os.path.join(self.cp, "out"))
+        self.cp_with_space = os.path.join(self.tmp, "s d", "handoffs", "k")
+        os.makedirs(os.path.join(self.cp_with_space, "panel"))
+        panels = os.path.join(self.tmp, "state", "inbox-view", "k", "panels")
+        os.makedirs(panels)
+        self.wait = os.path.join(panels, "bw-panel-wait")
+        with open(self.wait, "w") as f:
+            f.write("# synthetic helper\n")
+
+    def ctx(self, **kw):
+        base = dict(worktree=self.wt, git_dir=os.path.join(self.wt, ".git"), common_dir=os.path.join(self.wt, ".git"),
+                    home=self.home, protected_branches=["main"], deploy_commands=[],
+                    push_dest=lambda remote, refspec: None, is_pristine=lambda p: False, checkpoint_dir=self.cp)
+        base.update(kw)
+        return RuleContext(**base)
+
+    def test_rule_context_fields_default_to_none(self):
+        c = RuleContext(self.wt, None, None, self.home, [], [], None, None)
+        self.assertEqual((c.checkpoint_dir, c.lead_env, c.panel_wait), (None, None, None))
+
+    def test_write_tool_into_asks_is_allowed(self):
+        d = decide(write_call(os.path.join(self.cp, "asks", ".tmp-a1")), self.ctx())
+        self.assertEqual((d.decision, d.source), ("allow", "rule"))
+
+    def test_rename_of_a_panel_request_is_allowed(self):
+        d = decide(shell(f"mv {self.cp}/panel/.tmp-x {self.cp}/panel/x.request"), self.ctx())
+        self.assertEqual(d.decision, "allow")
+
+    def test_redirect_into_checkpoint_md_is_allowed(self):
+        self.assertEqual(decide(shell(f"echo hi > {self.cp}/checkpoint.md"), self.ctx()).decision, "allow")
+
+    def test_mkdir_p_panel_is_allowed(self):
+        self.assertEqual(decide(shell(f"mkdir -p {self.cp}/panel"), self.ctx()).decision, "allow")
+
+    def test_touch_and_cp_into_the_checkpoint_dir_are_allowed(self):
+        self.assertEqual(decide(shell(f"touch {self.cp}/asks/a"), self.ctx()).decision, "allow")
+        self.assertEqual(decide(shell(f"cp {self.cp}/asks/a {self.cp}/asks/b"), self.ctx()).decision, "allow")
+
+    def test_rm_in_checkpoint_dir_stays_gray(self):
+        d = decide(shell(f"rm {self.cp}/asks/a1"), self.ctx())
+        self.assertEqual((d.decision, d.source), ("ask", "gray"))
+
+    def test_other_writers_stay_worktree_only(self):
+        for cmd in (f"chmod 600 {self.cp}/asks/a", f"ln -s /x {self.cp}/asks/a", f"truncate -s0 {self.cp}/asks/a"):
+            self.assertNotEqual(decide(shell(cmd), self.ctx()).decision, "allow", cmd)
+
+    def test_symlink_to_secret_blocks(self):
+        d = decide(write_call(os.path.join(self.cp, "link", "x")), self.ctx())
+        self.assertEqual(d.rule, "block:secret-path")
+
+    def test_symlink_out_of_checkpoint_dir_is_gray(self):
+        self.assertEqual(decide(write_call(os.path.join(self.cp, "out", "x")), self.ctx()).rule, "gray:outside-write")
+
+    def test_the_dir_itself_and_a_prefix_sibling_are_not_inside(self):
+        for p in (self.cp, self.cp + "-other/x"):
+            self.assertNotEqual(decide(write_call(p), self.ctx()).decision, "allow")
+
+    def test_lead_env_variable_expands_into_the_checkpoint_dir(self):
+        env = {"BW_PANEL": os.path.join(self.cp, "panel"), "BW_CHECKPOINT": os.path.join(self.cp, "checkpoint.md")}
+        for cmd in ("echo x > $BW_PANEL/a.request", "echo x > ${BW_PANEL}/a.request", "echo x >> $BW_CHECKPOINT",
+                    'echo x > "$BW_PANEL"/a.request', 'echo x > "$BW_PANEL/a.request"'):
+            self.assertEqual(decide(shell(cmd), self.ctx(lead_env=env)).decision, "allow", cmd)
+
+    def test_an_escaped_or_single_quoted_dollar_is_not_expanded(self):
+        env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+        for cmd in ("echo x > \\$BW_PANEL/a", "echo x > '$BW_PANEL'/a\\ b", "echo x > \"\\$BW_PANEL/a\"",
+                    "echo x > ${BW_PANEL:-/tmp}/a", "echo x > `true`$BW_PANEL/a"):
+            self.assertNotEqual(decide(shell(cmd, cwd="/tmp"), self.ctx(lead_env=env)).decision, "allow", cmd)
+
+    def test_a_value_that_would_split_is_expanded_only_inside_double_quotes(self):
+        env = {"BW_PANEL": os.path.join(self.cp_with_space, "panel")}
+        ctx = self.ctx(lead_env=env, checkpoint_dir=self.cp_with_space)
+        self.assertEqual(decide(shell("echo x > $BW_PANEL/a"), ctx).rule, "gray:unexpanded")
+        self.assertEqual(decide(shell('echo x > "$BW_PANEL/a"'), ctx).decision, "allow")
+
+    def test_other_variables_stay_gray(self):
+        env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+        for cmd in ("echo x > $HOME/a", "echo x > $BW_PANEL$X/a", "echo x > $BW_ASKS/a"):   # BW_ASKS not in env
+            self.assertEqual(decide(shell(cmd), self.ctx(lead_env=env)).rule, "gray:unexpanded", cmd)
+        self.assertEqual(decide(shell("echo x > $BW_PANEL/a"), self.ctx(lead_env=None)).rule, "gray:unexpanded")
+
+    def test_changing_a_lead_env_variable_is_a_rule_ask(self):
+        env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+        for cmd in ("export BW_PANEL=/tmp/x", "BW_PANEL=/tmp/x; echo > $BW_PANEL/a", "unset BW_PANEL",
+                    "declare -x BW_ASKS=/tmp", "typeset BW_INBOX=/tmp", "readonly BW_CHECKPOINT=/tmp",
+                    "env BW_PANEL=/tmp/x true", "read BW_PANEL", "printf -v BW_PANEL x",
+                    "for BW_PANEL in a; do true; done", "declare -n r=BW_PANEL", "BW_PANEL+=x true",
+                    "echo ${BW_PANEL:=x}", "eval BW_PANEL=/tmp", "{ BW_PANEL=x; }",
+                    "if true; then unset BW_PANEL; fi", "time BW_PANEL=x true", 'export "BW_PANEL=/tmp/x"',
+                    "BW_PANEL=\"/tmp/x\" true", "X=1 export BW_PANEL"):
+            d = decide(shell(cmd), self.ctx(lead_env=env))
+            self.assertEqual((d.decision, d.source, d.rule), ("ask", "rule", "ask:bw-env"), cmd)
+
+    def test_setting_a_name_bw_sets_for_the_lead_is_a_rule_ask(self):
+        env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+        for cmd in ("export BW_PANEL_VIEW=/tmp/x", "unset BW_STATE_DIR", "BW_SESSION=x true", "export BW_GUARD_TOKEN=x"):
+            d = decide(shell(cmd), self.ctx(lead_env=env))
+            self.assertEqual((d.decision, d.source, d.rule), ("ask", "rule", "ask:bw-env"), cmd)
+
+    def test_setting_another_bw_name_is_not_a_rule_ask(self):
+        env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+        for cmd in ("BW_OTHER=1 true", "export BW_OTHER=1", "BW_ASKS_X=1 true"):   # gray: the judge decides
+            d = decide(shell(cmd), self.ctx(lead_env=env))
+            self.assertNotEqual(d.rule, "ask:bw-env", cmd)
+            self.assertNotEqual(d.decision, "allow", cmd)
+
+    def test_reading_a_bw_variable_is_not_a_rule_ask(self):
+        env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+        for cmd in ("echo $BW_PANEL", "grep BW_PANEL README", "echo $BW_PANEL=x", "printf '%s' BW_PANEL",
+                    "git commit -m 'tests set BW_STATE_DIR=x now'"):
+            self.assertNotEqual(decide(shell(cmd), self.ctx(lead_env=env)).rule, "ask:bw-env", cmd)
+
+    def test_inbox_write_expands_then_stays_outside(self):
+        env = {"BW_INBOX": os.path.join(os.path.dirname(self.cp), "inbox-view", "k", "answers.md")}
+        self.assertEqual(decide(shell("echo x > $BW_INBOX/a"), self.ctx(lead_env=env)).rule, "gray:outside-write")
+
+    def test_panel_view_is_not_expanded(self):
+        env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+        self.assertEqual(decide(shell("cat $BW_PANEL_VIEW/p1a2b3c4/status.json"), self.ctx(lead_env=env)).rule,
+                         "gray:unexpanded")
+
+    def test_expanded_value_is_judged_by_its_realpath(self):
+        link = os.path.join(self.tmp, "state-link")
+        os.symlink(os.path.join(self.tmp, "state"), link)
+        env = {"BW_PANEL": os.path.join(link, "handoffs", "k", "panel")}
+        self.assertEqual(decide(shell("echo x > $BW_PANEL/a.request"), self.ctx(lead_env=env)).decision, "allow")
+        env = {"BW_PANEL": os.path.join(self.cp, "link")}   # a value through a planted link to a secret
+        self.assertEqual(decide(shell("echo x > $BW_PANEL/a"), self.ctx(lead_env=env)).rule, "block:secret-path")
+
+    def test_panel_request_rename_is_allowed(self):
+        d = decide(shell(f"mv {self.cp}/panel/.tmp-log-p1a2b3c4-1 {self.cp}/panel/log-p1a2b3c4-1.request"), self.ctx())
+        self.assertEqual(d.decision, "allow")
+
+    def test_quoted_panel_commands_from_plan_6(self):
+        cp = self.cp_with_space
+        q = shlex.quote(os.path.join(cp, "panel"))
+        d = decide(shell(f"mv {q}/.tmp-x {q}/x.request"), self.ctx(checkpoint_dir=cp))
+        self.assertEqual(d.decision, "allow")
+        w = os.path.join(self.tmp, "s d", "inbox-view", "k", "panels", "bw-panel-wait")
+        d = decide(shell(f"python3 {shlex.quote(w)}"), self.ctx(checkpoint_dir=cp, panel_wait=os.path.realpath(w)))
+        self.assertEqual((d.decision, d.source), ("allow", "rule"))
+
+    def test_panel_wait_helper_allowed(self):
+        w = os.path.realpath(self.wait)
+        self.assertEqual(decide(shell(f"python3 {w}"), self.ctx(panel_wait=w)).decision, "allow")
+        self.assertFalse(os.path.islink(self.wait))
+
+    def test_panel_wait_with_extra_args_is_gray(self):
+        w = os.path.realpath(self.wait)
+        for cmd in (f"python3 {w} x", f"python3 {w} --max 5", f"python3 {w} | cat", f"python3 {w} > /tmp/o",
+                    f"python3 {w}; true", f"python3 {w} &", f"/usr/bin/python3 {w}"):
+            self.assertNotEqual(decide(shell(cmd), self.ctx(panel_wait=w)).decision, "allow", cmd)
+        self.assertNotEqual(decide(shell(f"python3 {w}"), self.ctx(panel_wait=None)).decision, "allow")
+
+    def test_bw_owned_files_are_not_allowed(self):
+        for name in ("guard-unreachable", "cap-signal", "CAP-SIGNAL"):
+            self.assertNotEqual(decide(write_call(os.path.join(self.cp, name)), self.ctx()).decision, "allow", name)
+            self.assertNotEqual(decide(shell(f"echo x > {self.cp}/{name}"), self.ctx()).decision, "allow", name)
+
+    def test_tee_into_asks_is_allowed_and_outside_is_gray(self):
+        self.assertEqual(decide(shell(f"echo q | tee {self.cp}/asks/.tmp-a2"), self.ctx()).decision, "allow")
+        self.assertEqual(decide(shell(f"echo q | tee -a {self.cp}/asks/a3"), self.ctx()).decision, "allow")
+        self.assertNotEqual(decide(shell("echo q | tee /tmp/elsewhere"), self.ctx()).decision, "allow")
+        self.assertNotEqual(decide(shell(f"echo q | tee --output-error=warn {self.cp}/asks/a4"), self.ctx()).decision,
+                            "allow")
+
+    def test_tee_inside_the_worktree_is_allowed(self):
+        self.assertEqual(decide(shell("echo q | tee out.txt", cwd=self.wt), self.ctx()).decision, "allow")
+
+    def test_without_checkpoint_dir_today_s_decision(self):
+        d = decide(write_call(os.path.join(self.cp, "asks", "a")), self.ctx(checkpoint_dir=None))
+        self.assertEqual(d.rule, "gray:outside-write")
 
 
 if __name__ == "__main__":
