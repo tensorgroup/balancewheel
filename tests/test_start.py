@@ -476,9 +476,20 @@ class StartCase(unittest.TestCase):
         self.assertIs(ens.call_args.kwargs["run"], run)
         self.assertIn("bw start: guard eval pi: pass — fake", out)
 
-    def test_start_offers_the_interactive_check_when_missing(self):
+    def test_no_interactive_offer_without_a_judge_model(self):  # the check alone cannot lead to promotion
         self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
         self.config["guard"] = {"mode": {"p": "auto"}}
+        stdin, out = Tty("y\n"), Tty()
+        with mock.patch.object(start.evaluate, "ensure", return_value=("pass", "guard eval pi: pass")), \
+                mock.patch.object(start.interactive, "run_check") as chk:
+            start.start(self.config, self.state, str(self.repo), run=FakeRun(), out=out, bw_path=self.bw,
+                        env=self.env, now=NOW, update=False, stdin=stdin)
+        chk.assert_not_called()
+        self.assertNotIn("interactive check", out.getvalue())
+
+    def test_start_offers_the_interactive_check_when_missing(self):
+        self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
+        self.config["guard"] = {"mode": {"p": "auto"}, "model": "test/judge", "key_env": "BW_TEST_UNSET_JUDGE_KEY"}
         stdin, out = Tty("y\n"), Tty()
         with mock.patch.object(start.evaluate, "ensure", return_value=("pass", "guard eval pi: pass")), \
                 mock.patch.object(start.interactive, "run_check", return_value=(True, "bw: recorded")) as chk:
@@ -510,7 +521,7 @@ class StartCase(unittest.TestCase):
 
     def test_no_interactive_offer_without_a_tty(self):
         self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
-        self.config["guard"] = {"mode": {"p": "auto"}}
+        self.config["guard"] = {"mode": {"p": "auto"}, "model": "test/judge", "key_env": "BW_TEST_UNSET_JUDGE_KEY"}
         with mock.patch.object(start.evaluate, "ensure", return_value=("pass", "guard eval pi: pass")), \
                 mock.patch.object(start.interactive, "run_check") as chk:
             code, out = self.start(FakeRun(), update=False, stdin=Tty("y\n", tty=False))
@@ -519,7 +530,7 @@ class StartCase(unittest.TestCase):
 
     def test_a_recorded_check_is_not_offered_again(self):
         self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
-        self.config["guard"] = {"mode": {"p": "acting"}}
+        self.config["guard"] = {"mode": {"p": "acting"}, "model": "test/judge", "key_env": "BW_TEST_UNSET_JUDGE_KEY"}
         key = start.interactive.check_key("pi", ADAPTERS["pi"])
         containment.record_pass(self.state, "pi", key, "/e", store=start.interactive.STORE)
         stdin, out = Tty("y\n"), Tty()

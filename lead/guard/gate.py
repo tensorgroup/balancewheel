@@ -6,7 +6,11 @@ guard key has no attack pass. Once acting, bw demotes at a later start when a tr
 
 The evidence is the user's marks (`bw guard review`), the eval (`bw guard eval`), the attack pass
 (`bw guard verify`), and the interactive check. Nothing here calls a model or a runtime: the start
-path stays fast. Only bw writes `state_dir/guard-mode.json`, under an flock.
+path stays fast: a pinned-shadow profile reads neither the log nor the guard key, and decide() loads the
+log once. With no judge model nothing can promote, and decide() says so in one line. Each demotion
+stores what acting needs again (`need`), besides the cooldown. Only bw writes
+`state_dir/guard-mode.json`, under an flock. It keeps the last KEEP_DEMOTIONS demotions, and each
+key's last evidence demotion (the cooldown reads it).
 """
 import fcntl
 import hashlib
@@ -27,6 +31,7 @@ COOLDOWN_S = 7 * 86400
 MIN_NEW_MARKS = 5
 KEEP_DEMOTIONS = 10
 NO_JUDGE = "no judge: stays shadow"
+NO_JUDGE_LINE = "guard: no judge model set — the guard stays in shadow (set guard.model to let it act)"
 
 Condition = namedtuple("Condition", "name ok detail")
 Outcome = namedtuple("Outcome", "mode refuse line event")
@@ -99,12 +104,14 @@ def day(ts):
     return time.strftime("%Y-%m-%d", time.gmtime(ts))
 
 
-def conditions(config, state, profile, runtime, verify_key, now):
+def conditions(config, state, profile, runtime, verify_key, now, decisions=None):
     """[Condition], in gate order. A verify_key of None leaves `attack` unknown (ok None): status
-    cannot compute the guard key without running the runtime, and None never promotes."""
+    cannot compute the guard key without running the runtime, and None never promotes. `decisions`:
+    the loaded log, when the caller has it already."""
     ekey = current_key(config, profile, runtime)
     model = (config.get("guard") or {}).get("model")
-    decisions = record.load(state)["decisions"]
+    if decisions is None:
+        decisions = record.load(state)["decisions"]
     entry = read(state, profile, runtime)
     dem = last_evidence_demotion(entry, ekey)
     s = review.summary(decisions, ekey, since=dem["ts"] if dem else None)
@@ -163,22 +170,53 @@ def refuses(config, state, profile, runtime, verify_key):
             f"run `bw guard verify {runtime}`")
 
 
-def _trigger(config, state, profile, runtime, verify_key, entry, ekey, s):
-    """(reason, kind) of the first demotion trigger that holds for an acting entry, else None."""
+def _trigger(config, state, profile, runtime, verify_key, entry, ekey, s, decisions):
+    """(reason, kind, need) of the first demotion trigger that holds for an acting entry, else None.
+    `need` is what acting needs again besides the cooldown: the real fix for that reason."""
     if tuple((entry.get("key") or {}).get("evidence") or ()) != ekey:
-        return "the evidence key changed", "key"
+        return "the evidence key changed", "key", "the gate to hold on the new key"
     if not _verified(state, runtime, verify_key):
-        return "guard key unverified", "key"
+        return f"guard key unverified; run `bw guard verify {runtime}`", "key", None  # the reason is the fix
     if s["false_allows"]:
-        return "a sampled allow was marked wrong", "evidence"
+        ids = [d["id"] for d in review.false_allows(decisions, ekey)]
+        return (f"a sampled allow was marked wrong ({', '.join(map(str, ids[:3]))})", "evidence",
+                f"the allow re-marked right, if the mark was a mistake (`bw guard review --remark {ids[0]}`), "
+                f"or a key change")
     ekey_eval = eval_key(config, runtime)
     res = evaluate.current(state, runtime, ekey_eval)
     status = res.get("status") if isinstance(res, dict) else None
     if status == "fail" or (status == "incomplete" and not evaluate.passed_on(state, runtime, ekey_eval)):
-        return f"the eval is {status} on its current key", "evidence"
+        return (f"the eval is {status} on its current key", "evidence",
+                f"an eval pass (`bw guard eval --runtime {runtime}`)")
     if s["stops_reviewed"] and _rate(s) >= review.MAX_FALSE_STOP:
-        return f"false stops reached {_rate(s) * 100:.0f}% of reviewed stops", "evidence"
+        return (f"false stops reached {_rate(s) * 100:.0f}% of reviewed stops", "evidence",
+                f"false stops under {review.MAX_FALSE_STOP * 100:.0f}% of reviewed stops")
     return None
+
+
+def requirement(dem):
+    """What acting needs again after this demotion, as `bw status` and the start line say it."""
+    need = dem.get("need")
+    if dem.get("kind") != "evidence":
+        return f"acting again needs {need}" if need else ""
+    after = day(dem["ts"] + COOLDOWN_S)
+    if not need:  # a demotion stored before `need` existed
+        return f"acting again after {after} and {MIN_NEW_MARKS} new marks"
+    return f"acting again needs {need}, and {MIN_NEW_MARKS} new marks after {after}"
+
+
+def _trim(dems):
+    """The last KEEP_DEMOTIONS, plus each key's last evidence demotion when it is older (the cooldown
+    reads it)."""
+    kept = dems[-KEEP_DEMOTIONS:]
+    have = {tuple(d.get("key") or ()) for d in kept if d.get("kind") == "evidence"}
+    extra = []
+    for d in reversed(dems[:-KEEP_DEMOTIONS] if len(dems) > KEEP_DEMOTIONS else []):
+        k = tuple(d.get("key") or ())
+        if d.get("kind") == "evidence" and k not in have:
+            have.add(k)
+            extra.insert(0, d)
+    return extra + kept
 
 
 def decide(config, state, profile, runtime, verify_key, now):
@@ -188,11 +226,12 @@ def decide(config, state, profile, runtime, verify_key, now):
     try:
         entry = read(state, profile, runtime)
         stored = entry.get("mode") if entry else "shadow"
+        if p not in ("auto", "acting") and stored != "acting":  # the pin first: no log read, no key
+            return Outcome("shadow", False, None, None)
         ekey = current_key(config, profile, runtime)
-        s = review.summary(record.load(state)["decisions"], ekey)
+        decisions = record.load(state)["decisions"]  # once, for the summary, the trigger, and the conditions
+        s = review.summary(decisions, ekey)
         if p not in ("auto", "acting"):  # shadow (or anything else): never acting
-            if stored != "acting":
-                return Outcome("shadow", False, None, None)
             entry = dict(entry, mode="shadow", since=now, reason="pinned shadow")
             _write(state, profile, runtime, entry)
             return Outcome("shadow", False, f"bw: guard shadow for profile {profile} ({runtime}): pinned shadow",
@@ -202,20 +241,26 @@ def decide(config, state, profile, runtime, verify_key, now):
             return Outcome("shadow", True, why, None)
         vsha = verify_sha(verify_key)
         if stored == "acting":
-            hit = _trigger(config, state, profile, runtime, verify_key, entry, ekey, s)
+            hit = _trigger(config, state, profile, runtime, verify_key, entry, ekey, s, decisions)
             if hit is None:
                 if (entry.get("key") or {}).get("verify") != vsha:  # a verified runtime upgrade: keep acting
                     _write(state, profile, runtime, dict(entry, key={"evidence": list(ekey), "verify": vsha}))
-                return Outcome("acting", False, None, None)
-            reason, kind = hit
-            dems = list(entry.get("demotions") or [])
-            dems.append({"key": list((entry.get("key") or {}).get("evidence") or ekey), "ts": now,
-                         "reason": reason, "kind": kind})
+                line = None
+                if evaluate.current(state, runtime, eval_key(config, runtime)) is None:
+                    line = (f"bw: guard acting for profile {profile} ({runtime}) with no eval result on the "
+                            f"current key; run `bw guard eval --runtime {runtime}`")
+                return Outcome("acting", False, line, None)
+            reason, kind, need = hit
+            dem = {"key": list((entry.get("key") or {}).get("evidence") or ekey), "ts": now,
+                   "reason": reason, "kind": kind, "need": need}
+            dems = list(entry.get("demotions") or []) + [dem]
             _write(state, profile, runtime, dict(entry, mode="shadow", since=now, reason=reason,
-                                                  demotions=dems[-KEEP_DEMOTIONS:]))
-            line = f"bw: guard shadow for profile {profile} ({runtime}): {reason}"
+                                                  demotions=_trim(dems)))
+            line = f"bw: guard shadow for profile {profile} ({runtime}): {reason}; {requirement(dem)}"
             return Outcome("shadow", False, line, _event(profile, runtime, "acting", "shadow", reason, s))
-        conds = conditions(config, state, profile, runtime, verify_key, now)
+        if not (config.get("guard") or {}).get("model"):  # no promotion is possible: say so once
+            return Outcome("shadow", False, NO_JUDGE_LINE, None)
+        conds = conditions(config, state, profile, runtime, verify_key, now, decisions=decisions)
         if all(c.ok for c in conds):
             reason = "the gate held"
             base = entry or {"demotions": []}

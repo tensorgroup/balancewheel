@@ -1,4 +1,5 @@
 import inspect, io, json, os, random, subprocess, sys, tempfile, unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, ROOT)
@@ -211,7 +212,8 @@ class ReviewTests(unittest.TestCase):
 
     def test_status_says_no_judge_when_model_unset(self):
         seed(self.state, [dec("s1")])
-        self.assertIn("  no judge: gray calls ask; the guard stays shadow", review.status_lines(CFG, self.state, NOW))
+        self.assertIn("  no judge: gray calls are recorded as asks, nothing is stopped; the guard stays shadow "
+                      "(set guard.model to let it act)", review.status_lines(CFG, self.state, NOW))
         with_model = dict(CFG, guard={"mode": {"p": "auto"}, "model": "test/judge"})
         self.assertFalse(any("no judge" in l for l in review.status_lines(with_model, self.state, NOW)))
 
@@ -233,6 +235,53 @@ class ReviewTests(unittest.TestCase):
             json.dump({"p": {"pi": entry}}, f)
         self.assertIn("  guard shadow for profile p (pi) since 2026-11-30: a sampled allow was marked wrong; "
                       "acting again after 2026-12-07 and 5 new marks", review.status_lines(CFG, self.state, NOW))
+
+    def test_status_after_a_demotion_prints_the_real_requirement_per_reason(self):
+        from lead.guard import gate
+        since = 1_796_040_000.0  # 2026-11-30 12:00 UTC
+        cases = (
+            ("a sampled allow was marked wrong (j0)", "evidence",
+             "the allow re-marked right, if the mark was a mistake (`bw guard review --remark j0`), or a key change",
+             "; acting again needs the allow re-marked right, if the mark was a mistake (`bw guard review --remark j0`), "
+             "or a key change, and 5 new marks after 2026-12-07"),
+            ("the eval is fail on its current key", "evidence", "an eval pass (`bw guard eval --runtime pi`)",
+             "; acting again needs an eval pass (`bw guard eval --runtime pi`), and 5 new marks after 2026-12-07"),
+            ("false stops reached 12% of reviewed stops", "evidence", "false stops under 10% of reviewed stops",
+             "; acting again needs false stops under 10% of reviewed stops, and 5 new marks after 2026-12-07"),
+            ("guard key unverified; run `bw guard verify pi`", "key", None, ""),  # the reason names the fix
+            ("the evidence key changed", "key", "the gate to hold on the new key",
+             "; acting again needs the gate to hold on the new key"))
+        for reason, kind, need, tail in cases:
+            with self.subTest(reason):
+                dem = {"key": [], "ts": since, "reason": reason, "kind": kind, "need": need}
+                entry = {"mode": "shadow", "since": since, "reason": reason, "key": {"evidence": [], "verify": ""},
+                         "demotions": [dem]}
+                with open(gate.path(self.state), "w") as f:
+                    json.dump({"p": {"pi": entry}}, f)
+                self.assertIn(f"  guard shadow for profile p (pi) since 2026-11-30: {reason}{tail}",
+                              review.status_lines(CFG, self.state, NOW))
+
+    def test_remark_corrects_a_wrong_mark(self):
+        seed(self.state, [dec("a1", "allow", source="judge")], [{"decision_id": "a1", "verdict": "wrong", "sampled": True}])
+        self.assertEqual(review.summary(self.loaded(), KEY)["false_allows"], 1)
+        out = io.StringIO()
+        self.assertEqual(review.remark(self.state, "a1", stdin=io.StringIO("r\n"), out=out), 0)
+        self.assertIn("its mark is wrong", out.getvalue())
+        s = review.summary(self.loaded(), KEY)
+        self.assertEqual((s["false_allows"], s["sampled_allows"], s["reviewed"]), (0, 1, 1))
+        self.assertEqual(record.load(self.state)["marks"][-1],
+                         {**record.load(self.state)["marks"][-1], "verdict": "right", "sampled": True, "remark": True})
+
+    def test_remark_quit_writes_nothing_and_unknown_or_unmarked_ids_fail(self):
+        seed(self.state, [dec("a1", "allow"), dec("s1")], [{"decision_id": "a1", "verdict": "wrong", "sampled": True}])
+        self.assertEqual(review.remark(self.state, "a1", stdin=io.StringIO("q\n"), out=io.StringIO()), 0)
+        self.assertEqual(len(record.load(self.state)["marks"]), 1)
+        with mock.patch("sys.stderr", io.StringIO()) as err:
+            self.assertEqual(review.remark(self.state, "nope", stdin=io.StringIO("r\n"), out=io.StringIO()), 2)
+            self.assertEqual(review.remark(self.state, "s1", stdin=io.StringIO("r\n"), out=io.StringIO()), 2)
+        self.assertIn("no guard decision nope", err.getvalue())
+        self.assertIn("has no mark yet", err.getvalue())
+        self.assertEqual(len(record.load(self.state)["marks"]), 1)
 
     def test_gray_share_counts_every_non_rule_source(self):  # judge, judge-failed, judge-skipped, legacy gray
         seed(self.state, [dec("j", "allow", source="judge"), dec("f", source="judge-failed"),
@@ -286,12 +335,18 @@ class CliTests(unittest.TestCase):
     def test_status_guard_lines_only_with_decisions(self):
         first = self.bw("status").stdout  # the example is auto with no judge: only the note, no evidence line
         self.assertNotIn("decisions ·", first)
-        self.assertIn("no judge: gray calls ask", first)
+        self.assertIn("no judge: gray calls are recorded as asks", first)
         seed(self.state, [dec("s1"), dec("t1", self_test=True)])
         out = self.bw("status").stdout
         self.assertIn("guard:", out)
         self.assertIn("acting needs", out)
         self.assertIn("1 decisions", out)
+
+    def test_cli_remark(self):
+        seed(self.state, [dec("s1")], [{"decision_id": "s1", "verdict": "wrong", "sampled": False}])
+        r = self.bw("guard", "review", "--remark", "s1", inp="r\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(record.load(self.state)["decisions"][0]["mark"]["verdict"], "right")
 
     def test_cli_review_pipe(self):
         seed(self.state, [dec("s1")])

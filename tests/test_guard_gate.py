@@ -313,6 +313,83 @@ class Demotion(GateCase):
         self.assertEqual(len(self.stored()["demotions"]), 10)
 
 
+class FixWave(GateCase):
+    def test_a_false_allow_demotion_names_the_remark_and_a_remark_reopens_the_gate(self):
+        import io
+        self.seed()
+        self.promote()
+        o = gate.decide(*sampled_allow_wrong(self), "p", "pi", VKEY, NOW)
+        self.assertIn("a sampled allow was marked wrong (j0)", o.line)
+        self.assertIn("`bw guard review --remark j0`", o.line)
+        self.assertIn("or a key change", o.line)
+        self.assertIn("bw guard review --remark j0", self.stored()["demotions"][-1]["need"])
+        later = NOW + 7 * DAY + 1
+        self.mark([f"s{n}" for n in range(5)], ts=NOW + 100)
+        self.assertEqual(gate.decide(CFG_AUTO, self.state, "p", "pi", VKEY, later).mode, "shadow")  # j0 still wrong
+        self.assertEqual(review.remark(self.state, "j0", stdin=io.StringIO("r\n"), out=io.StringIO()), 0)
+        o = gate.decide(CFG_AUTO, self.state, "p", "pi", VKEY, later)
+        self.assertEqual((o.mode, o.event["to"]), ("acting", "acting"))
+
+    def test_each_demotion_reason_names_its_fix(self):
+        for trigger, words in ((verify_key_unverified, "run `bw guard verify pi`"),
+                               (eval_fails, "an eval pass (`bw guard eval --runtime pi`)"),
+                               (cumulative_false_stops_10pct, "false stops under 10% of reviewed stops")):
+            with self.subTest(trigger.__name__):
+                self.state = self.fresh_dir()
+                self.seed()
+                self.promote()
+                o = gate.decide(*trigger(self), "p", "pi", VKEY, NOW)
+                self.assertIn(words, o.line)
+
+    def test_no_judge_model_prints_one_plain_line(self):
+        config, state = self.fresh(cfg(model=None))
+        self.assertEqual(gate.decide(config, state, "p", "pi", VKEY, NOW),
+                         gate.Outcome("shadow", False, gate.NO_JUDGE_LINE, None))
+        self.assertEqual(gate.NO_JUDGE_LINE,
+                         "guard: no judge model set — the guard stays in shadow (set guard.model to let it act)")
+        config, state = self.fresh(cfg(mode="shadow", model=None))
+        self.assertIsNone(gate.decide(config, state, "p", "pi", VKEY, NOW).line)
+
+    def test_acting_with_no_current_eval_result_says_so(self):
+        self.seed()
+        self.promote()
+        os.remove(evaluate.path(self.state))
+        o = gate.decide(CFG_AUTO, self.state, "p", "pi", VKEY, NOW + 10)
+        self.assertEqual((o.mode, o.event), ("acting", None))
+        self.assertIn("no eval result on the current key; run `bw guard eval --runtime pi`", o.line)
+
+    def test_decide_reads_the_log_once_and_not_at_all_for_a_shadow_pin(self):
+        from unittest import mock
+        self.seed()
+        real, calls = record.load, []
+
+        def load(*a):
+            calls.append(a)
+            return real(*a)
+        with mock.patch.object(record, "load", load):
+            gate.decide(CFG_AUTO, self.state, "p", "pi", VKEY, NOW)
+            self.assertEqual(len(calls), 1)
+            calls.clear()
+            gate.decide(CFG_AUTO, self.state, "p", "pi", VKEY, NOW + 1)  # acting now: the trigger path
+            self.assertEqual(len(calls), 1)
+            calls.clear()
+            config, state = self.fresh(CFG_SHADOW)
+            calls.clear()
+            gate.decide(config, state, "p", "pi", None, NOW)
+            self.assertEqual(calls, [])
+
+    def test_the_last_evidence_demotion_per_key_outlives_the_cap(self):
+        ev = {"key": ["k1"], "ts": 1, "reason": "x", "kind": "evidence"}
+        keys = [{"key": ["k1"], "ts": 10 + n, "reason": "y", "kind": "key"} for n in range(12)]
+        other = {"key": ["k2"], "ts": 0, "reason": "x", "kind": "evidence"}
+        got = gate._trim([other, ev] + keys)
+        self.assertEqual(got, [other, ev] + keys[-gate.KEEP_DEMOTIONS:])
+        self.assertEqual(gate._trim(keys[:5]), keys[:5])
+        newer = dict(ev, ts=50)
+        self.assertEqual(gate._trim([ev] + keys + [newer]), keys[-9:] + [newer])  # a newer one replaces it
+        self.assertEqual(gate.last_evidence_demotion({"demotions": gate._trim([ev] + keys)}, ("k1",)), ev)
+
+
 class Summary(GateCase):
     def test_summary_counts_judge_sampled_allows_and_marks_since(self):
         self.seed()

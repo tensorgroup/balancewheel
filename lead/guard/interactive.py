@@ -1,9 +1,12 @@
 """interactive.py — `bw guard verify <runtime> --interactive`: the user sees a real approval work.
 
 Acting mode is trusted only after the user has answered two real approval prompts in the lead's own
-client: "No" to the first command, "Yes" to the second. bw proves what ran with evidence the lead
-cannot erase: the in-process acting broker's own decision log, and a witness socket that a fake `gh`
-calls when it runs. The witness dir and the run's state dir are in no write grant.
+client: "No" to the first command, "Yes" to the second. bw records what it saw: the in-process
+acting broker's own decision log, and a witness socket that a fake `gh` calls when it runs. The
+witness dir and the run's state dir are in no write grant, so the lead cannot erase a line. The
+witness proves that it saw the approved nonce and did not see the declined one. It is not
+unforgeable: a lead can also send a line to the socket. The broker's ask log for both commands and
+the user's own confirmation bound that.
 
 The check always builds the lead's argv and grants from a guarded copy of the lead, so the client
 is present even when the configured lead is `bypass`. A pass is recorded under the check key (the
@@ -302,7 +305,10 @@ def run_check(config, state, runtime, lead_name, tty_in, tty_out, run_tty=subpro
 
 def missing(config, state, profile=None):
     """[(runtime, lead name)] for each runtime a guarded lead of an auto or acting profile uses and
-    whose check is not recorded on the current key."""
+    whose check is not recorded on the current key. None with no judge model: the check alone cannot
+    lead to promotion, so it is not offered."""
+    if not (config.get("guard") or {}).get("model"):
+        return []
     profiles = config.get("profiles") or {}
     modes = (config.get("guard") or {}).get("mode") or {}
     out, seen = [], set()

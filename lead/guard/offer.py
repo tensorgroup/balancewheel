@@ -1,7 +1,8 @@
 """offer.py — `bw start`'s short guard review: a few unmarked decisions, asked for at most once a day.
 
 The offer runs on a terminal only, before the lead opens, and Enter skips it. It builds the evidence
-that the gate counts: a quarter sampled allows before promotion, and at least two stops after it.
+that the gate counts: two sampled allows (at least half judge allows) before promotion, and at least
+two stops after it. With no judge model there is no offer: no mark can lead to promotion.
 Only bw writes `state_dir/guard-offer.json` (`{profile: {"ts"}}`), under an flock.
 """
 import fcntl
@@ -40,14 +41,15 @@ def record_offer(state, profile, now):
         os.close(fd)
 
 
-def due(config, state, profile, runtime, summary, mode, pending, now):
+def due(config, state, profile, summary, mode, pending, now):
     """How many decisions to offer now: 0 for none."""
-    if pending <= 0 or gate.pin(config, profile) == "shadow":
+    if pending <= 0 or gate.pin(config, profile) == "shadow" or not (config.get("guard") or {}).get("model"):
         return 0
     last = last_offer(state, profile)
     if mode == "acting":
         n, gap = AFTER, WEEK_S
-    elif summary["reviewed"] < review.MIN_REVIEWED or summary["sampled_allows"] < review.MIN_SAMPLED:
+    elif (summary["reviewed"] < review.MIN_REVIEWED or summary["sampled_allows"] < review.MIN_SAMPLED
+          or summary["judge_sampled_allows"] < gate.MIN_JUDGE_ALLOWS):
         n, gap = BEFORE, DAY_S
     else:
         return 0
@@ -75,8 +77,8 @@ def maybe_offer(config, state, profile, stdin, out, now, rng=None):
     entry = gate.read(state, profile, runtime)
     mode = entry.get("mode") if entry else "shadow"
     acting = mode == "acting"
-    pending = len(review.offer_pick(decisions, key, BEFORE, acting, rng))
-    n = due(config, state, profile, runtime, review.summary(decisions, key), mode, pending, now)
+    pending = len(review.offer_pick(decisions, key, AFTER if acting else BEFORE, acting, rng))
+    n = due(config, state, profile, review.summary(decisions, key), mode, pending, now)
     if not n:
         return
     items = review.offer_pick(decisions, key, n, acting, rng)

@@ -22,8 +22,8 @@ FAKE_OUT/orca-calls.jsonl) and reports Orca's version as 9.9.9-test; without it 
 --prompt-file gives every fake adapter prompt_mode "file" (bw writes the first prompt for the user to paste).
 --count-refresh appends one line to FAKE_OUT/refresh-calls.jsonl per probes.refresh call (which still runs).
 --panel-notice-raises makes every inbox notice of kind `panel` raise OSError.
---gate-refuses REASON makes gate.refuses return REASON for every guarded lead (as for a pinned-acting
-profile on an unverified guard key).
+--gate-refuses REASON pins every profile `acting` and makes gate.refuses return REASON for every guarded
+lead (as for a pinned-acting profile on an unverified guard key).
 The panel worker always runs with no first-verification wait and no verify spawn (no seat version
 command, no attack), polling fast; `bw seat` is whatever BW_PANEL_SEAT_CMD names (the tests' fake seat).
 """
@@ -111,6 +111,7 @@ if "--no-client" in args:
 if "--gate-refuses" in args:
     _reason = args[args.index("--gate-refuses") + 1]
     runner.gate.refuses = lambda config, state, profile, runtime, verify_key: _reason
+    runner.gate.pin = lambda config, profile: "acting"  # only a pinned-acting profile is ever refused
 if "--fail-in-poll" in args:
     def _poll(self, ctx):
         raise RuntimeError("injected failure in the poll loop")

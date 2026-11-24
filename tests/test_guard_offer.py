@@ -32,15 +32,14 @@ class OfferCase(unittest.TestCase):
         self.config = cfg()
         self.key = gate.current_key(self.config, "p", "pi")
 
-    def seed(self, stops=3, allows=3, marked=0, key=None):
+    def seed(self, stops=3, allows=3, marked=0, key=None, judge=0):
         fields = dict(zip(record.EVIDENCE_KEY, key or self.key))
-        n = 0
-        for kind, count in (("ask", stops), ("allow", allows)):
+        for kind, count, source in (("ask", stops, "rule"), ("allow", allows, "rule"), ("allow", judge, "judge")):
             for i in range(count):
-                n += 1
-                record.append(self.state, {"type": "decision", "id": f"{kind}{i}", **fields, "decision": kind,
-                                           "source": "rule", "rule_decision": kind, "self_test": False,
-                                           "mode": "shadow", "call": f"cmd {kind}{i}"})
+                did = f"{kind}{i}" if source == "rule" else f"judge{i}"
+                record.append(self.state, {"type": "decision", "id": did, **fields, "decision": kind,
+                                           "source": source, "rule_decision": "ask" if source == "judge" else kind,
+                                           "self_test": False, "mode": "shadow", "call": f"cmd {did}"})
         for i in range(marked):
             record.append(self.state, {"type": "mark", "decision_id": f"ask{i}", "verdict": "right",
                                        "sampled": False, "ts": NOW})
@@ -77,29 +76,54 @@ class OfferCase(unittest.TestCase):
         self.assertIn("review", self.maybe("\n", now=NOW + DAY))
 
     def test_not_offered_when_counts_met_and_not_acting(self):
-        s = {"reviewed": 50, "sampled_allows": 20}
+        s = {"reviewed": 50, "sampled_allows": 20, "judge_sampled_allows": 5}
         self.seed()
-        self.assertEqual(offer.due(self.config, self.state, "p", "pi", s, "shadow", 5, NOW), 0)
-        s = {"reviewed": 49, "sampled_allows": 20}
-        self.assertEqual(offer.due(self.config, self.state, "p", "pi", s, "shadow", 5, NOW), 5)
-        s = {"reviewed": 50, "sampled_allows": 19}
-        self.assertEqual(offer.due(self.config, self.state, "p", "pi", s, "shadow", 5, NOW), 5)
+        self.assertEqual(offer.due(self.config, self.state, "p", s, "shadow", 5, NOW), 0)
+        for short in ({"reviewed": 49}, {"sampled_allows": 19}, {"judge_sampled_allows": 4}):
+            with self.subTest(short):
+                self.assertEqual(offer.due(self.config, self.state, "p", dict(s, **short), "shadow", 5, NOW), 5)
+
+    def test_no_offer_without_a_judge_model(self):  # no mark can lead to promotion
+        self.seed()
+        config = cfg()
+        del config["guard"]["model"]
+        s = {"reviewed": 0, "sampled_allows": 0, "judge_sampled_allows": 0}
+        self.assertEqual(offer.due(config, self.state, "p", s, "shadow", 5, NOW), 0)
+        self.assertEqual(self.maybe("y\n", config=config), "")
+        self.assertIsNone(offer.last_offer(self.state, "p"))
+
+    def test_judge_allows_come_first_in_an_offer(self):
+        self.seed(stops=6, allows=6, judge=6)
+        for acting, n in ((False, 5), (True, 3)):
+            got = review.offer_pick(record.load(self.state)["decisions"], self.key, n, acting, random.Random(1))
+            allows = [d for d in got if d.get("sampled")]
+            self.assertGreaterEqual(sum(1 for d in allows if d["source"] == "judge") * 2, len(allows))
+        got = review.offer_pick(record.load(self.state)["decisions"], self.key, 5, False, random.Random(1))
+        self.assertEqual(sorted(d["source"] for d in got if d.get("sampled")), ["judge", "rule"])
+
+    def test_the_gate_counts_are_reachable_in_about_ten_offers(self):
+        self.seed(stops=40, allows=30, judge=30)
+        for day in range(10):
+            self.maybe("y\n" + "r\n" * 5, now=NOW + day * DAY)
+        s = review.summary(record.load(self.state)["decisions"], self.key)
+        self.assertEqual((s["reviewed"], s["sampled_allows"]), (50, 20))
+        self.assertGreaterEqual(s["judge_sampled_allows"], gate.MIN_JUDGE_ALLOWS)
 
     def test_three_a_week_after_promotion_with_at_least_two_stops(self):
-        s = {"reviewed": 90, "sampled_allows": 40}
-        self.assertEqual(offer.due(self.config, self.state, "p", "pi", s, "acting", 5, NOW), 3)
+        s = {"reviewed": 90, "sampled_allows": 40, "judge_sampled_allows": 10}
+        self.assertEqual(offer.due(self.config, self.state, "p", s, "acting", 5, NOW), 3)
         offer.record_offer(self.state, "p", NOW)
-        self.assertEqual(offer.due(self.config, self.state, "p", "pi", s, "acting", 5, NOW + 7 * DAY - 1), 0)
-        self.assertEqual(offer.due(self.config, self.state, "p", "pi", s, "acting", 5, NOW + 7 * DAY), 3)
+        self.assertEqual(offer.due(self.config, self.state, "p", s, "acting", 5, NOW + 7 * DAY - 1), 0)
+        self.assertEqual(offer.due(self.config, self.state, "p", s, "acting", 5, NOW + 7 * DAY), 3)
         self.seed(stops=6, allows=6)
         got = review.offer_pick(record.load(self.state)["decisions"], self.key, 3, True, random.Random(1))
         self.assertEqual(sorted(bool(d.get("sampled")) for d in got), [False, False, True])
 
-    def test_before_promotion_a_quarter_are_allows(self):
+    def test_before_promotion_two_are_allows(self):
         self.seed(stops=6, allows=6)
         got = review.offer_pick(record.load(self.state)["decisions"], self.key, 5, False, random.Random(1))
         self.assertEqual(len(got), 5)
-        self.assertEqual(sum(1 for d in got if d.get("sampled")), 1)
+        self.assertEqual(sum(1 for d in got if d.get("sampled")), 2)
 
     def test_a_short_pool_is_filled_from_the_other_side(self):
         self.seed(stops=1, allows=6)
@@ -112,8 +136,8 @@ class OfferCase(unittest.TestCase):
         out = self.maybe("y\nr\nw\ns\nr\nr\n")
         self.assertIn("[r]ight", out)
         marks = self.marks()
-        self.assertEqual(len(marks), 4)  # one of the five was skipped
-        self.assertEqual(sum(1 for d in marks if d["mark"]["sampled"]), 1)
+        self.assertEqual(len(marks), 4)  # one of the five (the third stop) was skipped
+        self.assertEqual(sum(1 for d in marks if d["mark"]["sampled"]), 2)
         self.assertEqual(offer.last_offer(self.state, "p"), NOW)
 
     def test_no_offer_when_nothing_is_unmarked(self):

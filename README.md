@@ -351,6 +351,7 @@ outside a git worktree it shows `bw status`.
     bw cap <plan>            # record that a plan is capped (for leads without a statusline)
     bw sandbox verify <rt>   # attack-test a bw-contained runtime (pi, kimi) and record a pass
     bw guard review          # audit the guard's stops and sampled allows, one evidence key at a time
+    bw guard review --remark <id>  # mark a decision again, to correct a wrong mark
     bw guard verify <rt>     # attack-test the guard on a runtime (pi) and record a pass
     bw guard install agy     # add the guard's entry to agy's hooks file (uninstall: bw guard uninstall agy)
     bw panel <checkpoint> [target]  # convene a review panel (your lead does this for you; see below)
@@ -441,12 +442,17 @@ once for each bw-contained lead runtime.
     allows, under 10% false stops, no false allow); a judge model; a passing `bw guard eval`;
     a guard attack pass; the one-time interactive check; and the cooldown after a demotion.
     **The guard promotes itself only after you set a judge model (`guard.model`) and the evidence
-    holds.** With no judge it stays shadow, and `bw status` says so. In acting, the rules
+    holds.** With no judge it stays shadow: lead start prints one line, `bw status` says so,
+    and `bw start` offers neither the interactive check nor the daily review. In acting, the rules
     decide first. A rule block blocks. A rule ask asks. The judge sees only gray calls and can
     answer only `allow` or `ask`; if it fails or times out, the rules' own decision stands, so
     acting is never weaker than shadow. bw steps back to shadow by itself when a sampled allow is
     marked wrong, the evidence key changes, the guard key is unverified, the eval fails, or false
-    stops reach 10%. After a demotion on evidence, acting needs 7 days and 5 new marks. A
+    stops reach 10%. The demotion line and `bw status` name what acting needs again for that
+    reason: for a wrong sampled allow, the allow re-marked right (`bw guard review --remark <id>`,
+    when the mark was a mistake) or a key change; for the eval, an eval pass; for false stops,
+    under 10% of reviewed stops; for an unverified key, `bw guard verify <runtime>`. After a
+    demotion on evidence, acting also needs 5 new marks after 7 days. A
     profile pinned `acting` on an unverified key exits 7. `bw improve` suggests `auto` for a
     profile pinned `shadow` when every other condition holds.
   - **After upgrading.** pi and Kimi leads need `bw sandbox verify` again (the adapter hash

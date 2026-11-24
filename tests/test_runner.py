@@ -598,6 +598,7 @@ class GuardRunner(RunnerCase):
 
     def test_gate_runs_before_the_broker_is_built(self):  # G-n
         ctx = self.in_process()
+        ctx.config["guard"]["mode"]["p"] = "auto"
         calls = []
 
         def decide(config, state, profile, runtime, verify_key, now):
@@ -620,7 +621,10 @@ class GuardRunner(RunnerCase):
         def decide(*a):
             outcomes.append(real(*a))
             return outcomes[-1]
-        broker = self.build_until_bind(ctx, decide)
+        keys = []
+        with mock.patch.object(runner, "_guard_key", lambda c, rt: keys.append(rt) or {"runtime": rt}):
+            broker = self.build_until_bind(ctx, decide)
+        self.assertEqual(keys, [])  # a pinned-shadow profile never computes the guard key
         self.assertEqual(outcomes, [runner.gate.Outcome("shadow", False, None, None)])
         self.assertEqual(broker.mode, "shadow")
         self.assertFalse(os.path.exists(runner.gate.path(str(self.state))))
@@ -639,9 +643,17 @@ class GuardRunner(RunnerCase):
         broker = self.build_until_bind(ctx, runner.gate.decide)
         self.assertEqual(broker.mode, "shadow")
         said = [l for l in ctx.out.getvalue().splitlines() if "guard" in l]
+        self.assertEqual(said, [runner.gate.NO_JUDGE_LINE])  # one line: with no judge it cannot act
+        self.assertFalse(os.path.exists(runner.gate.path(str(self.state))))
+
+    def test_default_auto_profile_with_a_judge_names_the_verify(self):
+        self.schema3({"model": "test/judge", "key_env": "BW_TEST_UNSET_JUDGE_KEY"})  # never called: bind stops
+        ctx = self.in_process()
+        broker = self.build_until_bind(ctx, runner.gate.decide)
+        self.assertEqual(broker.mode, "shadow")
+        said = [l for l in ctx.out.getvalue().splitlines() if "guard" in l]
         self.assertEqual(len(said), 1, said)  # one line: the key has no attack pass yet
         self.assertIn("bw guard verify pi", said[0])
-        self.assertFalse(os.path.exists(runner.gate.path(str(self.state))))
 
     def test_explicit_shadow_never_promotes(self):  # G-p
         self.schema3({"mode": {"p": "shadow"}})

@@ -286,7 +286,9 @@ class Session:
             launch.clear_markers(self.markers_path)
         rt = self.lead["runtime"]
         profile = ctx.project.profile
-        key = _guard_key(ctx, rt)  # before the broker: the gate's mode is the broker's (G-n)
+        # before the broker: the gate's mode is the broker's (G-n). A pinned-shadow profile never acts,
+        # so it does not pay for the guard key (the runtime's version call)
+        key = _guard_key(ctx, rt) if gate.pin(ctx.config, profile) != "shadow" else None
         mode, gate_said = self._guard_mode(ctx, profile, rt, key)
         version = containment._first_line(self.adapter.version_argv)
         session = {"session_id": self.id, "project": ctx.project.worktree_key, "profile": profile,
@@ -313,7 +315,7 @@ class Session:
         if err:
             raise GuardUnavailable(f"{err}; refusing to start {self.lead_name}")
         self.broker.pause()
-        if not gate_said and not containment.is_verified(ctx.state, rt, key, store=gate.VERIFY_STORE):
+        if key is not None and not gate_said and not containment.is_verified(ctx.state, rt, key, store=gate.VERIFY_STORE):
             ctx.say(f"bw: the {rt} guard is not verified on this version; run `bw guard verify {rt}`")
         if rt == "agy":
             others = guard_install.other_pretooluse_entries(guard_install.hooks_path())
@@ -669,7 +671,10 @@ def _guard_ready(ctx, lead_name):
     n = len(os.fsencode(sock))
     if n > brk.MAX_PATH:
         return f"guard socket path is {n} bytes, over the {brk.MAX_PATH}-byte limit: {sock}"
-    # a pinned-acting profile on an unverified guard key: refused here, so a cap switch stays put (G-q)
+    # a pinned-acting profile on an unverified guard key: refused here, so a cap switch stays put (G-q).
+    # Only a pinned-acting profile can be refused, so only it computes the guard key.
+    if gate.pin(ctx.config, ctx.project.profile) != "acting":
+        return None
     return gate.refuses(ctx.config, ctx.state, ctx.project.profile, lead["runtime"], _guard_key(ctx, lead["runtime"]))
 
 

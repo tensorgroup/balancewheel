@@ -42,6 +42,7 @@
                                                   answer two real approval prompts (No, then Yes) at a terminal
   bw guard review [--profile P] [--recent 20] [--sample 5] [--list]
                                                   audit stops and sampled allows, one evidence key at a time
+  bw guard review --remark <decision-id>          mark a marked decision again (correct a wrong mark)
   bw guard eval [--runtime pi] [--json]           replay a synthetic set of calls through the rules and the judge;
                                                   exit 0 pass, 1 fail, 75 incomplete
 """
@@ -367,6 +368,8 @@ def cmd_guard_verify(a, config, state):
 def cmd_guard(a, config, state):
     if a.sub == "verify":
         return cmd_guard_verify(a, config, state)
+    if a.sub == "review" and a.remark:
+        return guard_review.remark(state, a.remark)
     if a.sub == "review":
         return guard_review.run(state, profile=a.profile, recent=a.recent, sample=a.sample, list_only=a.list)
     if a.sub == "eval":
@@ -431,7 +434,7 @@ def main(argv=None):
     gv.add_argument("--interactive", action="store_true")
     rv = gds.add_parser("review"); rv.add_argument("--profile", default=None)
     rv.add_argument("--recent", type=_count, default=20); rv.add_argument("--sample", type=_count, default=5)
-    rv.add_argument("--list", action="store_true")
+    rv.add_argument("--list", action="store_true"); rv.add_argument("--remark", default=None, metavar="DECISION_ID")
     ev = gds.add_parser("eval"); ev.add_argument("--runtime", choices=["pi", "agy"], default="pi")
     ev.add_argument("--json", action="store_true")
     tr = sub.add_parser("triage"); trs = tr.add_subparsers(dest="sub", required=True)

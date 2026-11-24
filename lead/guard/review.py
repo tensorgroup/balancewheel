@@ -1,5 +1,6 @@
 """review.py — audit of the guard's decisions: stops and sampled allows, per evidence key.
 
+`--remark <id>` marks a marked decision again: the latest mark counts, so a wrong mark can be corrected.
 Evidence is only ever counted within one evidence key (profile, runtime, rules version, policy digest,
 judge model, prompt hash); marks made under another key count nowhere. Review reads the final
 decision: a judge allow is sampled as an allow. Self-test decisions are
@@ -46,35 +47,44 @@ def of_key(decisions, key):
     return [d for d in real(decisions) if record.evidence_key(d) == key]
 
 
-def pick(decisions, key, recent, sample, rng):
+OFFER_ALLOWS = 2  # sampled allows in each offer before promotion: 20 sampled allows in about 10 offers
+
+
+def _pools(decisions, key):
+    """(stops, judge allows, other allows) among the unmarked decisions under `key`."""
     mine = [d for d in of_key(decisions, key) if "mark" not in d]
-    stops = [d for d in mine if d.get("decision") != "allow"]
-    judged = [d for d in mine if d.get("decision") == "allow" and d.get("source") == "judge"]
-    others = [d for d in mine if d.get("decision") == "allow" and d.get("source") != "judge"]
-    # stratified: at least half the sample is judge allows when there are some, so the gate's
-    # judge-allow condition can be met; the rest are the other allows, then judge allows again
-    n_judge = min(len(judged), max((sample + 1) // 2, sample - len(others)))
-    n_other = min(len(others), sample - n_judge)
+    return ([d for d in mine if d.get("decision") != "allow"],
+            [d for d in mine if d.get("decision") == "allow" and d.get("source") == "judge"],
+            [d for d in mine if d.get("decision") == "allow" and d.get("source") != "judge"])
+
+
+def _sample_allows(judged, others, k, rng):
+    """`k` allows, stratified: at least half are judge allows while there are some, so the gate's
+    judge-allow condition can be met; the rest are the other allows, then judge allows again."""
+    n_judge = min(len(judged), max((k + 1) // 2, k - len(others)))
+    n_other = min(len(others), k - n_judge)
+    return [dict(d, sampled=True) for d in rng.sample(judged, n_judge) + rng.sample(others, n_other)]
+
+
+def pick(decisions, key, recent, sample, rng):
+    stops, judged, others = _pools(decisions, key)
     out = [dict(d) for d in (stops[-recent:] if recent > 0 else [])]
-    out += [dict(d, sampled=True) for d in rng.sample(judged, n_judge) + rng.sample(others, n_other)]
-    return out
+    return out + _sample_allows(judged, others, sample, rng)
 
 
 def offer_pick(decisions, key, n, acting, rng):
-    """`n` unmarked decisions for `bw start`'s short review. Before promotion a quarter are sampled
-    allows (at least one) and the rest are the most recent stops. After promotion at least two are
-    stops (the guard now acts, so what it blocked matters most) and the rest are sampled allows. A
-    pool too short on one side is filled from the other."""
-    mine = [d for d in of_key(decisions, key) if "mark" not in d]
-    stops = [d for d in mine if d.get("decision") != "allow"]
-    allows = [d for d in mine if d.get("decision") == "allow"]
-    want_stops = min(n, 2) if acting else n - max(1, int(n * 0.25))
-    take_stops = min(len(stops), want_stops)
-    take_allows = min(len(allows), n - take_stops)
-    take_stops = min(len(stops), n - take_allows)  # a short allow pool is filled with more stops
+    """`n` unmarked decisions for `bw start`'s short review. Before promotion OFFER_ALLOWS are sampled
+    allows and the rest are the most recent stops. After promotion at least two are stops (the guard
+    now acts, so what it blocked matters most) and the rest are sampled allows. The allows are
+    stratified as pick() does them. A pool too short on one side is filled from the other."""
+    stops, judged, others = _pools(decisions, key)
+    n_allows = len(judged) + len(others)
+    want_allows = n - min(n, 2) if acting else min(n, OFFER_ALLOWS)
+    take_allows = min(n_allows, want_allows)
+    take_stops = min(len(stops), n - take_allows)
+    take_allows = min(n_allows, n - take_stops)  # a short stop pool is filled with more allows
     out = [dict(d) for d in (stops[-take_stops:] if take_stops else [])]
-    out += [dict(d, sampled=True) for d in rng.sample(allows, take_allows)]
-    return out
+    return out + _sample_allows(judged, others, take_allows, rng)
 
 
 def _split(items):
@@ -94,6 +104,12 @@ def epoch(ts):
         return calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
     except (TypeError, ValueError):
         return 0.0
+
+
+def false_allows(decisions, key):
+    """The sampled allows under `key` whose latest mark is `wrong`."""
+    return [d for d in of_key(decisions, key) if "mark" in d and d["mark"].get("sampled")
+            and d.get("decision") == "allow" and d["mark"].get("verdict") == "wrong"]
 
 
 def summary(decisions, key, since=None):
@@ -172,6 +188,46 @@ def print_summary(decisions, key, out):
     print(promotion_line(s), file=out)
 
 
+def _ask(stdin, out):
+    """One verdict letter from the user; EOF is `q`, and an unknown answer asks again."""
+    while True:
+        print("[r]ight [w]rong [s]kip [q]uit> ", end="", file=out, flush=True)
+        line = stdin.readline()
+        if line == "":  # EOF behaves like q; a blank line is just a line
+            return "q"
+        ans = VERDICTS.get(line.strip().lower())
+        if ans:
+            return ans
+        print("", file=out)
+
+
+def remark(state_dir, decision_id, stdin=None, out=None):
+    """`bw guard review --remark <id>`: mark an already marked decision again, to correct a wrong mark.
+    The new mark replaces the old one (load() folds the latest), keeps its `sampled` flag, and counts
+    as a new mark. The gate reads it at the next lead start."""
+    stdin, out = stdin or sys.stdin, out or sys.stdout
+    d = next((d for d in real(record.load(state_dir)["decisions"]) if d.get("id") == decision_id), None)
+    if d is None:
+        print(safe(f"bw: no guard decision {decision_id}"), file=sys.stderr)
+        return 2
+    if "mark" not in d:
+        print(safe(f"bw: decision {decision_id} has no mark yet; run `bw guard review`"), file=sys.stderr)
+        return 2
+    key = record.evidence_key(d)
+    print(safe(f"re-marking a decision under {key_label(key)}; its mark is {d['mark'].get('verdict')}"), file=out)
+    sampled = bool(d["mark"].get("sampled"))
+    show(dict(d, sampled=sampled), out, 1, 1)
+    ans = _ask(stdin, out)
+    print("", file=out)
+    if ans in ("r", "w"):
+        record.append(state_dir, {"type": "mark", "decision_id": d["id"], "verdict": "right" if ans == "r" else "wrong",
+                                  "sampled": sampled, "remark": True})
+    else:
+        print("not re-marked", file=out)
+    print_summary(record.load(state_dir)["decisions"], key, out)
+    return 0
+
+
 def run(state_dir, profile=None, recent=20, sample=5, list_only=False, stdin=None, out=None, rng=None,
         items=None, key=None):
     """`items` (with `key`) reviews exactly those decisions under that evidence key: the start offer."""
@@ -194,16 +250,7 @@ def run(state_dir, profile=None, recent=20, sample=5, list_only=False, stdin=Non
         show(d, out, i, len(items))
         if list_only:
             continue
-        while True:
-            print("[r]ight [w]rong [s]kip [q]uit> ", end="", file=out, flush=True)
-            line = stdin.readline()
-            if line == "":  # EOF behaves like q; a blank line is just a line
-                ans = "q"
-                break
-            ans = VERDICTS.get(line.strip().lower())
-            if ans:
-                break
-            print("", file=out)
+        ans = _ask(stdin, out)
         print("", file=out)
         if ans == "q":
             break
@@ -229,7 +276,7 @@ def status_lines(config, state_dir, now):
         s = summary(decisions, key)
         conds = None
         if key[0] in profiles and tuple(key) == gate.current_key(config, key[0], key[1]):
-            conds = gate.conditions(config, state_dir, key[0], key[1], None, now)
+            conds = gate.conditions(config, state_dir, key[0], key[1], None, now, decisions=decisions)
         lines.append(safe(f"  {key[1]} (profile {key[0]}) · {ds[-1].get('mode')} · {s['decisions']} decisions · "
                           f"gray {s['gray_share'] * 100:.0f}% · {promotion_line(s, conds)}"))
     modes = read_json(gate.path(state_dir), {})
@@ -239,13 +286,14 @@ def status_lines(config, state_dir, now):
                 continue
             head = f"  guard {entry['mode']} for profile {pname} ({rt}) since {gate.day(entry.get('since') or 0)}"
             dem = (entry.get("demotions") or [None])[-1]
-            if entry["mode"] == "shadow" and dem and dem.get("kind") == "evidence" and dem.get("ts") == entry.get("since"):
-                head += (f": {dem.get('reason')}; acting again after {gate.day(dem['ts'] + gate.COOLDOWN_S)} "
-                         f"and {gate.MIN_NEW_MARKS} new marks")
+            if entry["mode"] == "shadow" and dem and dem.get("ts") == entry.get("since"):
+                need = gate.requirement(dem)
+                head += f": {dem.get('reason')}" + (f"; {need}" if need else "")
             elif entry.get("reason"):
                 head += f": {entry['reason']}"
             lines.append(safe(head))
     pinned = any(m in ("auto", "acting") for m in ((config.get("guard") or {}).get("mode") or {}).values())
     if (lines or pinned) and not (config.get("guard") or {}).get("model"):
-        lines.append("  no judge: gray calls ask; the guard stays shadow")
+        lines.append("  no judge: gray calls are recorded as asks, nothing is stopped; the guard stays shadow "
+                     "(set guard.model to let it act)")
     return lines

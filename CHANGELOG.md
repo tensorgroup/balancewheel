@@ -17,41 +17,57 @@ not against the prose.
 
 - **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.
 - **The guard review offer (`lead/guard/offer.py`).** On a terminal, before the lead opens, `bw start` offers a
-  short review of unmarked guard decisions: 5 once a day while the profile is under the gate's counts (a quarter
-  are sampled allows), 3 once a week after promotion (at least 2 are stops). Enter skips. It never runs with
-  `--no-verify`, never for a profile pinned `shadow`, and never when no decision is unmarked. The review names
-  the gate's evidence key. New state file: `guard-offer.json`.
+  short review of unmarked guard decisions: 5 once a day while the profile is under the gate's counts (2 are
+  sampled allows, at least half of them judge allows while there are some; the counts include 5 judge allows),
+  3 once a week after promotion (at least 2 are stops). The gate's counts are reachable in about 10 offers.
+  Enter skips. It never runs with `--no-verify`, never for a profile pinned `shadow`, never with no judge model
+  (no mark can then lead to promotion), and never when no decision is unmarked. The review names the gate's
+  evidence key. New state file: `guard-offer.json`.
 - **The guard gate (`lead/guard/gate.py`).** At lead start, bw decides the guard's mode before it builds the
   broker. A profile pinned `auto` or `acting` goes to acting when all gate conditions hold: at least 50 reviewed
   decisions, at least 20 sampled allows (at least 5 of them judge allows when `guard.model` is set), under 10% false
   stops, no false allow, a judge model, an eval pass, an attack pass on the guard key, the interactive check, and
   the cooldown. bw steps back to shadow by itself on a wrong sampled allow, a changed evidence key, an unverified
-  guard key, a failed eval, or false stops at 10% or more. After an evidence demotion, acting needs 7 days and 5
-  new marks. A pinned `acting` profile on an unverified guard key exits 7, and a cap switch onto it stays on the
-  current lead. A profile pinned `shadow` resets a stored `acting`.
+  guard key, a failed eval, or false stops at 10% or more. The demotion line and `bw status` say what acting needs
+  again for that reason: for a wrong sampled allow, the allow re-marked right (`bw guard review --remark <id>`) or
+  a key change; for the eval, an eval pass; for false stops, under 10% of reviewed stops; for an unverified key,
+  `bw guard verify <runtime>`. After an evidence demotion, acting also needs 5 new marks after 7 days. A pinned
+  `acting` profile on an unverified guard key exits 7, and a cap switch onto it stays on the current lead. A
+  profile pinned `shadow` resets a stored `acting`, and it reads neither the log nor the guard key at lead start.
+  With no judge model, lead start prints one line: "guard: no judge model set — the guard stays in shadow (set
+  guard.model to let it act)". An acting guard with no eval result on the current key gets a notice at lead start.
 - **`guard.mode` takes `shadow`, `auto`, or `acting`.** The default for a profile you do not name is now `auto`,
   **in schema 3 files only**; a schema-2 file keeps `shadow`. **An explicit `"shadow"` already in your config stays
   a pin and never promotes.** Change it to `auto` to let the gate decide. `bw improve` suggests that change when
   every other gate condition holds. A profile reaches acting only when all six conditions hold, and none holds
   without a judge, so set `guard.model` first. With no judge model the guard stays shadow. At lead start bw
   prints one line: the key needs `bw guard verify <runtime>`, the gate promoted, or the gate demoted. The example
-  config sets `guard.model` to `null` (no judge, gray calls ask) and `guard.mode.product` to `auto`.
+  config sets `guard.model` to `null` (no judge, so the guard stays shadow) and `guard.mode.product` to `auto`.
 - **`guard.on_judge_failure` is deprecated.** The config still accepts it. It changes nothing: a judge failure
   gives the rules' own decision.
 - **After this version, each guarded lead re-verifies once.** Run `bw sandbox verify <runtime>` and
   `bw guard verify <runtime>`. At a terminal, run `bw guard verify <runtime> --interactive` once. The guard key
-  and the evidence key changed. Lead containment did not change.
+  and the evidence key changed. Lead containment also changed in this release (see the containment entries
+  below), so each lead runtime needs one new `bw sandbox verify` pass after the deploy.
 - **`state_dir/guard-mode.json`**: `{profile: {runtime: {mode, key: {evidence, verify}, since, reason,
-  demotions}}}`, written only by bw under an flock. It keeps the last 10 demotions.
+  demotions}}}`, written only by bw under an flock. It keeps the last 10 demotions, and each evidence key's last
+  evidence demotion (the cooldown reads it). A demotion holds `need`: what acting needs again.
 - **The `guard_mode` metrics event**: `{profile, runtime, from, to, reason, evidence: {reviewed, sampled_allows,
   false_stop_pct, false_allows}}`. `store.load()` returns these events as `guard_modes`.
 - **`bw guard review`** samples judge allows first: at least half of each sample, when there are some.
   A mark row's `ts` is kept on the folded mark. `bw status` shows the gate's conditions per evidence key, the last
-  demotion's reason and what acting needs again, and "no judge: gray calls ask" when no judge model is set.
+  demotion's reason and what acting needs again, and a "no judge" note when no judge model is set (gray calls are
+  recorded as asks, nothing is stopped, the guard stays shadow).
+- **`bw guard review --remark <decision-id>`** marks a marked decision again, to correct a wrong mark. The latest
+  mark counts; it keeps the `sampled` flag. The mark row carries `"remark": true`. The gate reads it at the next
+  lead start.
 - **`bw guard verify <runtime> --interactive`.** The user answers two real approval prompts in pi, No and then Yes. bw
-  proves what ran from the check's own broker log and a witness socket the lead cannot write. The pass goes to
+  records what ran from the check's own broker log and a witness socket. The witness saw the approved
+  command's nonce and not the declined one. That is not unforgeable (a lead can also write to the socket); the
+  broker's ask log for both commands and your own confirmation bound it. The pass goes to
   `state_dir/guard-interactive.json`, keyed on the guard version, the client file, and the hook files (no runtime
-  version). `bw start` offers the check on a terminal when an `auto` or `acting` profile has a guarded lead without it.
+  version). `bw start` offers the check on a terminal when an `auto` or `acting` profile has a guarded lead without
+  it, and a judge model is set.
   agy is refused until its spike passes.
 - **Quota source `cli`** and **`rotation.cli_fresh_min`** (default 120), schema 3 only.
 - **`canvas`**: `terminal` or `orca`.
