@@ -158,6 +158,9 @@ not against the prose.
   `is_bloated`, the one panel-bloat test that the watch and the panel merge share.
 - **`panel/record.py`** builds the `panel` record from bw's findings and the lead's verdicts. bw computes
   the counts. The lead never sets them. Lead text is escaped and cut to a bound.
+- **`panel/roster.py`**: panel rosters. Reserved seats run on deep panels only. The panel owns
+  stand-ins: one run per seat id, one hop, and a stand-in never satisfies a required seat. At most one
+  agy-runtime seat runs per panel.
 - **`bw improve`** (`lead/improve.py`, `bin/bw`): suggestions from how the user works, each with its
   evidence, a minimum sample, and no effect until the user acts. `bw improve note "…"` adds a note,
   `bw improve done <key>` marks one dealt with (`improve.json` in the state dir, added to `setup/paths.txt`). An
