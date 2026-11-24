@@ -698,7 +698,7 @@ work by *where the rule lives*.
 | | Balancewheel | OpenEscapement |
 |---|---|---|
 | **Governs** | how *your* agent collaborates: moderator rules, seats, drivers, the scoreboard | what an *organization* requires in a repo: policy, paved paths, skills, MCP servers |
-| **Writes to** | your home directory only: the configuration in `setup/paths.txt`, plus its state directory and backups | the repo: a managed block in `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`, `GOVERNANCE.md`, `.claude/skills/`, `.mcp.json`, and its own `.escapement/` |
+| **Writes to** | your home directory: the configuration in `setup/paths.txt`, plus its state directory and backups; and, only when you run `bw pack export --to <dir>`, the marked catalog block and the `version:` line of esc's `model-seats` `pack.yaml` | the repo: a managed block in `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`, `GOVERNANCE.md`, `.claude/skills/`, `.mcp.json`, and its own `.escapement/` |
 | **Installed** | once per machine | once per repo (`esc init`, `esc sync`), from a signed pack the org maintains |
 | **Changes by** | a moderator instruction edit that cites the scoreboard | a pack version bump, reviewed as a diff in a PR |
 
@@ -726,7 +726,9 @@ never edits a repo's instruction files.
   condition that would reverse it, and a `model-seats` pack that is this repo's seat
   policy in pack form: seats named by role, the models behind them a dated config
   detail. `bw pack export` regenerates its catalog block from the log; you add the
-  markers once.
+  markers once. After an export, do three steps in the esc repo. Paste the changelog bullet
+  that bw wrote to `state_dir/packs/model-seats-<version>.md` into esc's `CHANGELOG.md`.
+  Re-sign the pack with esc. Commit `pack.yaml` and `CHANGELOG.md` together.
 
 **Install balancewheel first, then esc per repo.** That is the recommended order, not a
 dependency: neither tool reads the other's state. Balancewheel is the working

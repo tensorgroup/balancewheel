@@ -50,7 +50,9 @@ them that way (privacy firewall). Commits use a lowercase summary with a `feat:`
 Sibling project: [OpenEscapement](https://github.com/tensorgroup/openescapement)
 (esc). Division of labor: balancewheel is the collaboration pattern that *generates and
 justifies* seat policy; esc *ships* policy into a repo as a signed rule pack. The two
-live at different levels and write the same file in one place only: `bw pack export --to <dir>` rewrites the marked catalog block and the `version:` line of esc's `model-seats` `pack.yaml`, only when the user runs it. Otherwise balancewheel's setup writes only
+live at different levels. They write the same file in one place only: `bw pack export --to <dir>`
+rewrites the marked catalog block and the `version:` line of esc's `model-seats` `pack.yaml`,
+and only when the user runs it. Otherwise balancewheel's setup writes only
 under the user's home directory (`setup/paths.txt`, plus its state dir and backups); esc
 writes agent-readable files only in a repo and keeps just a pack cache and portal data
 under the home directory. esc ships `examples/packs/model-seats`, this repo's seat policy in

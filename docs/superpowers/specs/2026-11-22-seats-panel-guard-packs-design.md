@@ -861,8 +861,9 @@ All must hold:
 The panel dropped a "would-be stops per working hour" condition: it was undefined and could be moved by
 raw rows. The marked false-stop rate is the measure (moderator's call, panel 2026-11-22).
 
-**Expected time to promotion.** With the review offer below (5 decisions a day, a quarter of them
-sampled allows), 50 reviewed and 20 sampled allows take about three to four weeks of daily use. A user
+**Expected time to promotion.** With the review offer below (5 decisions a day, 2 of them sampled
+allows), 50 reviewed and 20 sampled allows take about 10 offers: about two weeks of daily use. (Updated
+2026-11-24: the code samples 2 of 5, not a quarter.) A user
 who runs `bw guard review` once at length can reach it in one sitting. The gate is checked at lead start
 only; a lead never changes mode mid-session.
 
