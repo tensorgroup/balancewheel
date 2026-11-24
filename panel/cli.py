@@ -28,6 +28,20 @@ NO_LEAD = "a panel job is running and no bw lead runs here to start the next one
 MAX_STDIN = 1024 * 1024
 
 
+HELP = ("-h", "--help")
+USAGE = __doc__.split("\n\n")[1].strip("\n") + "\n"
+
+
+def wants_help(argv) -> bool:
+    """`-h` or `--help` in the options, before any `--` (a claim or a target after `--` stays text)."""
+    for a in argv:
+        if a == "--":
+            return False
+        if a in HELP:
+            return True
+    return False
+
+
 class _Usage(Exception):
     pass
 
@@ -229,6 +243,9 @@ def main(argv, config, state, out=None, err=None, jobs=None, stdin=None) -> int:
     out = sys.stdout if out is None else out
     err = sys.stderr if err is None else err
     argv = list(argv)
+    if wants_help(argv):
+        out.write(USAGE)
+        return 0
     top, ask, one, status = _parsers()
     try:
         sub = argv[0] if argv and argv[0] in SUBCOMMANDS else None

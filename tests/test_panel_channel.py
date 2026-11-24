@@ -42,8 +42,8 @@ class Ingest(ChannelCase):
     def test_valid_panel_request(self):
         self.publish("r1", {"v": 1, "type": "panel", "checkpoint": "design", "target": "t"})
         (req,), problems = channel.ingest(self.S, "k")
-        self.assertEqual((req[0], req[1]["stakes"], req[1]["paths"], req[1]["deep"], problems),
-                         ("r1", "normal", [], False, []))
+        self.assertEqual((req[0], req[1]["stakes"], req[1]["paths"], problems), ("r1", "normal", [], []))
+        self.assertNotIn("deep", req[1])
         self.assertFalse(any(self.rd.iterdir()))
 
     def test_tmp_ignored(self):
@@ -130,6 +130,22 @@ class Ingest(ChannelCase):
         path2 = channel.respond(self.S, "k", rid, {"ok": False}, reused=True)
         self.assertTrue(path2.endswith("r1.reused-2.json"))
         self.assertFalse(any(self.rd.iterdir()))
+
+    def test_a_used_id_is_refused_before_any_other_check(self):  # panel g12
+        channel.respond(self.S, "k", "r1", {"ok": True, "panel": "p1111111"}, nonce="old")
+        channel.respond(self.S, "k", "r2", {"ok": True, "panel": "p2222222"}, nonce="old")
+        outside = self.root / "outside.json"
+        outside.write_bytes(b"{}")
+        os.link(outside, self.rd / "r1.request")  # a hard link: a malformed request
+        os.symlink(outside, self.rd / "r2.request")  # not a regular file
+        self.publish("r3", b"[" * 5000)  # a fresh id: its own error
+        got = dict(channel.ingest(self.S, "k")[0])
+        self.assertTrue(getattr(got["r1"], "reused", False))
+        self.assertTrue(getattr(got["r2"], "reused", False))
+        self.assertFalse(getattr(got["r3"], "reused", False))
+        self.assertEqual(str(got["r3"]), "request is not UTF-8 JSON")
+        self.assertEqual(self.read("r1")["nonce"], "old")  # the old responses stay
+        self.assertEqual(self.read("r2")["nonce"], "old")
 
     def test_bad_request_keeps_its_nonce(self):
         self.publish("r2", {"v": 1, "type": "panel", "nonce": "n1"})
@@ -227,18 +243,36 @@ class Parse(unittest.TestCase):
 
     def test_panel_fields(self):
         ok = {"v": 1, "type": "panel", "checkpoint": "design", "target": "t"}
-        req = channel.parse(enc({**ok, "focus": "f", "stakes": "high", "paths": ["a/b.py"], "deep": True}))
-        self.assertEqual((req["focus"], req["stakes"], req["paths"], req["deep"]), ("f", "high", ["a/b.py"], True))
+        req = channel.parse(enc({**ok, "focus": "f", "stakes": "high", "paths": ["a/b.py"]}))
+        self.assertEqual((req["focus"], req["stakes"], req["paths"]), ("f", "high", ["a/b.py"]))
         for bad in ({"target": ""}, {"target": "x" * 301}, {"checkpoint": 3}, {"focus": "x" * 501},
                     {"stakes": "low"}, {"paths": "a"}, {"paths": ["a"] * 21}, {"paths": ["/abs"]},
                     {"paths": ["../up"]}, {"paths": ["a/../../b"]}, {"paths": [3]}, {"paths": [""]},
                     {"deep": "yes"}):
             self.assertRaises(ValueError, channel.parse, enc({**ok, **bad}))
 
+    def test_a_lead_cannot_set_the_deep_tier(self):  # panel g04: only `bw panel --deep` sets it
+        ok = {"v": 1, "type": "panel", "checkpoint": "design", "target": "t"}
+        for deep in (True, False, "yes"):
+            with self.assertRaises(ValueError) as cm:
+                channel.parse(enc({**ok, "deep": deep}))
+            self.assertEqual(str(cm.exception), channel.NO_DEEP)
+
+    def test_nul_in_a_claim_is_refused(self):  # panel g26
+        with self.assertRaises(ValueError) as cm:
+            channel.check_ask("astra", "a\x00b", "d1")
+        self.assertIn("NUL", str(cm.exception))
+
+    def test_deep_nesting_is_a_refusal(self):  # panel g13
+        with self.assertRaises(ValueError) as cm:
+            channel.parse(b"[" * 100000)
+        self.assertEqual(str(cm.exception), "request is not UTF-8 JSON")
+        self.assertIsNone(channel._nonce(b"[" * 100000))
+
     def test_panel_request_drops_unknown_keys(self):
         req = channel.parse(enc({"v": 1, "type": "panel", "checkpoint": "design", "target": "t", "nonce": "n",
                                  "transcript": "x", "roster": ["a"]}))
-        self.assertEqual(set(req), {"v", "type", "nonce", "checkpoint", "target", "focus", "stakes", "paths", "deep"})
+        self.assertEqual(set(req), {"v", "type", "nonce", "checkpoint", "target", "focus", "stakes", "paths"})
 
     def test_seat_and_checkpoint_capped(self):
         self.assertRaises(ValueError, channel.check_ask, "s" * 65, "c", "d1")

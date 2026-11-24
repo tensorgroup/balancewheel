@@ -2,6 +2,7 @@ import fcntl
 import io
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -427,8 +428,8 @@ class ServiceTest(unittest.TestCase):
         self.set_asks(pid, [{"id": f"d{i}-1-a-1", "seat": "a", "dispute": f"d{i}", "round": 1, "attempt": 1,
                              "state": "failed", "lead_session": "s1"} for i in range(20)])
         with self.assertRaisesRegex(ValueError, "20 asks"):
-            self.ask_on(pid, "a", dispute="d99")
-        self.ask_on(pid, "a", dispute="d99", session_id="s2")   # another session has its own count
+            self.ask_on(pid, "a", dispute="d1")
+        self.ask_on(pid, "a", dispute="d1", session_id="s2")   # another session has its own count
         with self.assertRaisesRegex(ValueError, "over 1500 characters"):
             self.ask_on(pid, "a", claim="x" * 1501)
         with self.assertRaisesRegex(ValueError, "dispute must be a dispute id"):
@@ -436,6 +437,26 @@ class ServiceTest(unittest.TestCase):
         state.update(self.S, K, pid, lambda p: p.update(state="logged"))
         with self.assertRaisesRegex(ValueError, f"panel {pid} is not ready"):
             self.ask_on(pid, "a", dispute="d50", session_id="s3")
+
+    def test_dispute_ids_are_the_panels_own(self):  # panel g03
+        pid = self.ready()
+        allowed = service.disputes(self.findings(pid))
+        self.assertIn("d1", allowed)
+        self.assertEqual(len(allowed), len(set(allowed)))
+        with self.assertRaisesRegex(ValueError, "^dispute d999 is not a dispute of this panel; use one of: d1"):
+            self.ask_on(pid, "a", dispute="d999")
+        self.assertEqual(service.disputes({"groups": [], "candidate_disputes": []}), ["d1"])
+        self.assertEqual(service.disputes({"groups": [{}, {}], "candidate_disputes": [{"id": "d2"}, {"id": "d7"}]}),
+                         ["d2", "d7", "d1"])
+
+    def test_queued_asks_count_toward_max_rounds(self):  # panel g02
+        pid = self.ready()
+        self.ask_on(pid, "a")
+        self.ask_on(pid, "o")  # two queued asks: the cap of 2 rounds is reached
+        with self.assertRaisesRegex(ValueError, "^dispute d1 has had 2 rounds; rule on it yourself$"):
+            self.ask_on(pid, "g")
+        state.update(self.S, K, pid, lambda p: p["asks"][0].update(state="failed"))
+        self.assertEqual(self.ask_on(pid, "g")["round"], 2)  # a failed ask frees its round
 
     def ask_on(self, pid, seat, dispute="d1", claim="X", session_id="s1"):
         return service.queue_ask(self.CFG, self.S, self.project,
@@ -830,6 +851,33 @@ class ServiceTest(unittest.TestCase):
         r = self.log(pid)
         self.assertEqual((r["follow_up"], r["watches"]), (False, []))
         self.assertNotIn("Re-verify", Path(state.view_dir(self.S, K, pid), "next.md").read_text())
+
+    def follow_log(self, pid):
+        """Log a panel the way a lead does: by the letter of its next.md (the file, the body, the mv)."""
+        text = Path(state.view_dir(self.S, K, pid), "next.md").read_text()
+        log = text.split("## Log", 1)[1]
+        path = re.search(r"Write only the JSON between the fence lines to (\S+)\. ", log).group(1)
+        body = json.loads(re.search(r"```json\n(.*?)\n```", log, re.S).group(1))
+        body.update(nonce=f"n-{pid}", verdicts=self.all_confirmed(pid), notes="")
+        os.close(channel.open_request_dir(self.S, K))  # bw lead makes it at session start
+        Path(path).write_text(json.dumps(body))
+        mv = re.search(r"Run this command: (mv .*)\n", log).group(1)
+        subprocess.run(mv, shell=True, check=True)
+        rid = os.path.basename(mv.split()[-1])[:-len(".request")]
+        self.drain(FakeJobs())
+        return rid, self.response(rid)
+
+    def test_two_panels_follow_next_md_literally(self):  # final review critical (panel g01)
+        a = self.ready()
+        rid_a, r = self.follow_log(a)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual((rid_a, r["nonce"]), (f"log-{a}-1", f"n-{a}"))
+        b = self.ready()
+        rid_b, r = self.follow_log(b)
+        self.assertNotEqual(rid_a, rid_b)
+        self.assertTrue(r["ok"], r)  # never refused as a reused id, and never panel a's old answer
+        self.assertEqual((r["panel"], r["nonce"]), (b, f"n-{b}"))
+        self.assertEqual(sorted(p["id"] for p in store.load(self.LOG)["panels"]), sorted([a, b]))
 
     def amend(self, pid, rid, patch, config=None):
         self.publish(rid, {"v": 1, "type": "amend", "panel": pid, "patch": patch})

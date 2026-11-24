@@ -9,6 +9,8 @@ $deep
 - The request is JSON: {"v": 1, "type": "panel", "nonce": "<another random word>", "checkpoint": "<checkpoint>", "target": "<what to review, one line>", "focus": "<risks to look at>", "stakes": "normal", "paths": ["<repo-relative files to start with>"]}
 - bw answers in $view_root/responses/<id>.json within a few seconds: {"ok": true, "panel": "<panel id>", "nonce": ...} or {"ok": false, "error": "..."}. If the nonce is not yours, that id was used before: send the request again with a new id. On an error, do what the error says, then send the request again with a new id.
 - Keep working while the panel runs. Do not act on the checkpoint's output (build the design, merge the branch) until the panel is logged.
+- Until status.json shows "ready" or "failed", do not open the panel's seat files, and do not change the files under review. Seats still read them.
+- For an ask, a log, or an amend, use the request id that next.md gives. It holds the panel id.
 - At each task boundary, read $view_root/<panel id>/status.json. When "state" is "ready" or "failed", follow $view_root/<panel id>/next.md.
 - When you have nothing else to do, run exactly the next line, with no other words. It returns in two minutes or less. Exit status 3 means still working: run it again.
 `python3 $wait_sh`

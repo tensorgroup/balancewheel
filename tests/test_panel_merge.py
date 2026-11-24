@@ -74,6 +74,11 @@ class Parse(unittest.TestCase):
         text = "```json\n" + "[" * 100000 + "\n```\n"
         self.assertIsNone(merge.parse(text))
 
+    def test_text_never_ends_in_half_an_escape(self):  # panel g24
+        self.assertEqual(merge._text("ab\x1b", 4), "ab")  # safe() gives ab\x1b; a cut at 4 is ab\x
+        self.assertEqual(merge._text("ab\x1b", 6), "ab\\x1b")
+        self.assertEqual(merge._text(5, 4), "")
+
 
 class Numbering(unittest.TestCase):
     def test_ids_and_unparsed(self):

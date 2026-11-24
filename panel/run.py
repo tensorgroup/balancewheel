@@ -225,6 +225,11 @@ class _Worker:
         self.live.clear()
 
 
+def _trace() -> str:
+    """`:\n<traceback>` inside an exception handler; "" outside one (`service.fail` calls in from none)."""
+    return ":\n" + traceback.format_exc() if sys.exc_info()[0] is not None else ""
+
+
 def _killpg(pgid, sig) -> None:
     try:
         os.killpg(pgid, sig)
@@ -281,8 +286,7 @@ def _finish(w, seats, failed=None) -> dict:
         if not failed:
             raise
         w.say("next.md failed:\n" + traceback.format_exc())
-        text = (f"# Panel {w.pid}\n\nThis panel failed: {safe(failed)}.\n"
-                f"Read the seat files in {os.path.join(w.view, 'seats')}.\n")
+        text = render.failed_next(w.pid, failed, pstate.request_dir(w.state, w.key), w.view)
     pstate.ensure_dir(w.state, w.work)
     _write_text(os.path.join(w.work, "findings.json"), json.dumps(doc))
     _write_text(os.path.join(w.view, "next.md"), text)
@@ -391,7 +395,7 @@ def _fail_round(w, seats, why) -> dict:
     """The failure path: stop the live seats, then `_finish(failed=why)`. When that raises too, a
     minimal write marks the panel failed. Best effort: this function never raises."""
     try:
-        w.say(f"round 1 failed ({why}):\n" + traceback.format_exc())
+        w.say(f"round 1 failed ({why})" + _trace())
     except BaseException:
         pass
     try:
@@ -427,7 +431,13 @@ def _mark_failed(w, seats, why) -> dict:
     except BaseException:
         absent_all(seats, [], why)
     try:
-        w.say("the failed panel could not be written in full:\n" + traceback.format_exc())
+        w.say("the failed panel could not be written in full:" + _trace())
+    except BaseException:
+        pass
+    try:  # every lead surface points at next.md: it must exist, and it must say how to log
+        pstate.ensure_dir(w.state, w.view)
+        _write_text(os.path.join(w.view, "next.md"),
+                    render.failed_next(w.pid, why, pstate.request_dir(w.state, w.key), w.view))
     except BaseException:
         pass
     try:

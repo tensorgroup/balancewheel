@@ -12,7 +12,7 @@ import string
 
 from lead import paths  # noqa: F401  (puts metrics/ on sys.path)
 from lead.guard.review import safe
-from panel import roster
+from panel import merge, roster
 from panel import state as pstate
 import config as cfgmod
 
@@ -41,8 +41,18 @@ def brief(checkpoint, target, focus, seat_brief: str) -> str:
     return "\n".join(parts)
 
 
+TARGET_CHARS = 300
+
+
+def request_id(kind, pid, n=1) -> str:
+    """The request id next.md gives for an ask, a log, or an amend. It holds the panel id, so ids of two
+    panels never collide in the worktree's one `responses/` dir."""
+    return f"{kind}-{safe(pid)}-{n}"
+
+
 def _panel_lines(doc, panel) -> str:
-    lines = [f"- Checkpoint: {safe(doc['checkpoint'])}. Tier: {safe(doc['tier'])}."]
+    lines = [f"- Checkpoint: {safe(doc['checkpoint'])}. Tier: {safe(doc['tier'])}.",
+             f"- Target: {merge.cut(str(doc.get('target') or ''), TARGET_CHARS)}"]
     if doc.get("short"):
         reasons = "; ".join(safe(r) for r in doc.get("short_reasons") or []) or "no reason given"
         lines.append(f"- Size: short. Reasons: {reasons}.")
@@ -103,11 +113,13 @@ def next_md(doc, panel, paths: dict, config) -> str:
     request_dir, view_dir = paths["request_dir"], paths["view_dir"]
     pid = safe(doc["panel_id"])
     rounds = (config.get("panel") or {}).get("max_rounds", DEFAULT_MAX_ROUNDS)
-    ask_file, ask_mv = _request_files(request_dir, "ask-1")
-    log_file, log_mv = _request_files(request_dir, "log-1")
+    ask_id, ask_next, log_id, log_next = (request_id("ask", pid), request_id("ask", pid, 2),
+                                          request_id("log", pid), request_id("log", pid, 2))
+    ask_file, ask_mv = _request_files(request_dir, ask_id)
+    log_file, log_mv = _request_files(request_dir, log_id)
     cands = doc.get("candidate_disputes") or []
     dispute = safe(cands[0]["id"]) if cands else "d1"
-    responses = os.path.join(os.path.dirname(view_dir), "responses")
+    responses = responses_dir(view_dir)
     ask = {"v": 1, "type": "ask", "panel": pid, "nonce": "<your own short id>",
            "seat": "<a seat that did not raise the finding>", "dispute": dispute,
            "claim": "<one claim, at most 1500 characters>"}
@@ -124,14 +136,36 @@ def next_md(doc, panel, paths: dict, config) -> str:
         failed=failed, panel_id=pid, panel_lines=_panel_lines(doc, panel), findings=_findings(doc, view_dir),
         ask_file=ask_file, ask_mv=ask_mv, ask_body=_body(ask), frame=ASK_FRAME.format(claim="<claim>"),
         max_rounds=rounds, round_word="round" if rounds == 1 else "rounds", view_dir=view_dir,
-        triage=triage, write_rules=_write_rules(responses), log_file=log_file, log_mv=log_mv, log_body=_body(log), ids=", ".join(_ids(doc)),
-        responses=responses)
+        triage=triage, write_rules=_write_rules(responses), log_file=log_file, log_mv=log_mv, log_body=_body(log),
+        ids=", ".join(_ids(doc)), responses=responses, ask_id=ask_id, ask_next=ask_next, log_id=log_id,
+        log_next=log_next)
 
 
-def follow_up(sample: list, request_dir: str, pid: str) -> str:
-    """The section appended after a `verification-skim` watch."""
-    path, mv = _request_files(request_dir, "amend-1")
+def responses_dir(view_dir) -> str:
+    """The worktree's `responses/` dir, next to the panel view dirs."""
+    return os.path.join(os.path.dirname(view_dir), "responses")
+
+
+def failed_next(pid, why, request_dir, view_dir) -> str:
+    """The short next.md of a panel whose full next.md could not be written: it still says how to log."""
+    rid = request_id("log", pid)
+    path, mv = _request_files(request_dir, rid)
+    body = {"v": 1, "type": "log", "panel": safe(pid), "nonce": "<your own short id>", "verdicts": {},
+            "notes": ""}
+    return (f"# Panel {safe(pid)}\n\nThis panel failed: {safe(why)}.\n"
+            f"Read the seat files in {os.path.join(view_dir, 'seats')}, if there are any.\n\n"
+            f"## Log\n1. Write only the JSON between the fence lines to {path}. "
+            f"{_write_rules(responses_dir(view_dir))}\n{_body(body)}\n2. Run this command: {mv}\n"
+            f"3. bw answers in `{responses_dir(view_dir)}/{rid}.json`. Check that the nonce is yours.\n")
+
+
+def follow_up(sample: list, request_dir: str, pid: str, responses: str) -> str:
+    """The section appended after a `verification-skim` watch. `responses` is the absolute responses dir."""
+    rid = request_id("amend", pid)
+    path, mv = _request_files(request_dir, rid)
     body = {"v": 1, "type": "amend", "panel": safe(pid), "nonce": "<your own short id>",
             "patch": {"verdicts": {safe(sample[0]) if sample else "f1": VERDICT_CHOICES}}}
     return string.Template(_template("next-follow-up.md")).substitute(
-        sample=", ".join(safe(s) for s in sample), file=path, mv=mv, body=_body(body), write_rules=_write_rules())
+        sample=", ".join(safe(s) for s in sample), file=path, mv=mv, body=_body(body),
+        write_rules=_write_rules(responses), responses=responses, amend_id=rid,
+        amend_next=request_id("amend", pid, 2))

@@ -24,7 +24,7 @@ import time
 from . import ccswitch, containment, proc, quota, sandbox
 from .guard.review import safe
 from .locks import DEFAULT_TOOL_RUNTIME, RuntimeLock, runtime_tools, tool_runtime
-from .paths import read_json, write_json_atomic
+from .paths import guarded as _guarded, read_json, write_json_atomic
 from .projects import worktree_key
 from .runtimes import ADAPTERS
 from seats import caps as seat_caps
@@ -32,10 +32,6 @@ from .updates import UNREADABLE, VERSION_TIMEOUT_S, installer_of, read_version
 
 HEALTH = ("verified", "pending", "capped", "unknown")
 UNAVAILABLE = "unavailable"
-
-
-def _guarded(lead):
-    return lead.get("autonomy_source", "legacy") != "legacy" and lead.get("autonomy") == "guard"
 
 
 def _dict(v):

@@ -45,7 +45,8 @@ NAME_CHARS = 80
 HARD_LINK = "request file has more than one hard link"
 SEAT_LIMIT = 64
 CHECKPOINT_LIMIT = 64
-PANEL_FIELDS = ("checkpoint", "target", "focus", "stakes", "paths", "deep")
+PANEL_FIELDS = ("checkpoint", "target", "focus", "stakes", "paths")
+NO_DEEP = "a lead cannot set the deep tier; leave out \"deep\" (only the user sets it, with bw panel --deep)"
 
 
 def check_ask(seat, claim, dispute) -> None:
@@ -56,6 +57,8 @@ def check_ask(seat, claim, dispute) -> None:
         raise ValueError("claim must be a non-empty string")
     if len(claim) > CLAIM_LIMIT:
         raise ValueError(f"claim is over {CLAIM_LIMIT} characters; relay one claim")
+    if "\0" in claim:  # the claim goes on a seat's argv, where a NUL byte cannot be
+        raise ValueError("claim must not hold a NUL character")
     if not isinstance(dispute, str) or not DISPUTE_ID.fullmatch(dispute):
         raise ValueError("dispute must be a dispute id such as d1")
 
@@ -81,8 +84,8 @@ def _panel_request(req: dict) -> None:
     ps = req.setdefault("paths", [])
     if not isinstance(ps, list) or len(ps) > PATHS_LIMIT or not all(_repo_relative(p) for p in ps):
         raise ValueError(f"paths must be a list of at most {PATHS_LIMIT} repo-relative paths")
-    if not isinstance(req.setdefault("deep", False), bool):
-        raise ValueError("deep must be true or false")
+    if "deep" in req:  # the deep tier reserves seats and lengthens the caps: the user's call (spec, --deep)
+        raise ValueError(NO_DEEP)
 
 
 class _DuplicateKey(ValueError):
@@ -119,7 +122,7 @@ def parse(data: bytes) -> dict:
         req = json.loads(_unfence(data.decode("utf-8")), object_pairs_hook=_no_duplicates)
     except _DuplicateKey as e:
         raise ValueError(str(e)) from None
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):  # deep nesting raises RecursionError
         raise ValueError("request is not UTF-8 JSON") from None
     if not isinstance(req, dict):
         raise ValueError("request must be a JSON object")
@@ -154,7 +157,7 @@ def _nonce(data: bytes) -> Optional[str]:
     """The request's nonce when it has a valid one, so a refusal can still echo it."""
     try:
         req = json.loads(_unfence(data.decode("utf-8")))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         return None
     n = req.get("nonce") if isinstance(req, dict) else None
     return n if isinstance(n, str) and len(n) <= NONCE_LIMIT else None
@@ -231,13 +234,15 @@ def ingest(state, key, limit=None) -> tuple:
                     os.unlink(name, dir_fd=dfd)
                     problems.append(f"a request with a bad name was deleted unread: {shown}")
                     continue
+                # A used id is refused first, whatever the file holds: no answer replaces a response.
+                used = os.path.lexists(os.path.join(responses, f"{stem}.json"))
                 if not stat.S_ISREG(st.st_mode):
                     os.unlink(name, dir_fd=dfd)
-                    out.append((stem, _error("not a regular file")))
+                    out.append((stem, _refusal(stem) if used else _error("not a regular file")))
                     continue
                 if st.st_nlink > 1:
                     os.unlink(name, dir_fd=dfd)
-                    out.append((stem, _error(HARD_LINK)))
+                    out.append((stem, _refusal(stem) if used else _error(HARD_LINK)))
                     continue
                 try:
                     data = inbox.read_at(dfd, name, READ_LIMIT, single_link=True)
@@ -245,9 +250,9 @@ def ingest(state, key, limit=None) -> tuple:
                     data = None  # swapped for a link or a FIFO after the stat
                 os.unlink(name, dir_fd=dfd)
                 if data is None:  # swapped after the stat: a link, a FIFO, or a hard link
-                    out.append((stem, _error("not a regular file or hard-linked")))
+                    out.append((stem, _refusal(stem) if used else _error("not a regular file or hard-linked")))
                     continue
-                if os.path.lexists(os.path.join(responses, f"{stem}.json")):
+                if used:
                     err = _refusal(stem)
                 elif len(data) >= READ_LIMIT:
                     err = ValueError("request is over 64 KiB")

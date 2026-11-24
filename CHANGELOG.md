@@ -72,6 +72,18 @@ not against the prose.
 
 ### Fixed
 
+- **Panel requests from a lead** (`panel/render.py`, `panel/channel.py`, `panel/service.py`). The request
+  ids that `next.md` gives hold the panel id (`ask-<panel id>-<n>`, `log-<panel id>-<n>`,
+  `amend-<panel id>-<n>`): with the old fixed ids, the second panel of a worktree reused `log-1`, and a
+  lead could read the first panel's answer as its own. A lead request may not set `"deep"` (only
+  `bw panel --deep` sets the deep tier). An ask must name a dispute of the panel: a candidate dispute,
+  or `d1` to `d<n>` for its n finding groups. Every ask on a dispute that has not failed counts toward
+  `panel.max_rounds`, a queued one too. A used request id is refused before any other check, so a bad
+  file never replaces an answer. Deeply nested JSON and a NUL in a claim get a refusal. `next.md` shows
+  the target, says that `added` holds findings taken by hand from a seat's file, and the re-verify
+  step names the absolute response path. A panel that fails before its full `next.md` is written still
+  gets a short `next.md` that says how to log it. `bw panel -h` prints the usage and exits 0.
+  `bw-panel-wait --max` refuses a value that is not a finite number of seconds.
 - **The kimi seat runs** (`seats/adapters.py`). It runs `kimi -p` with no `--auto`: Kimi Code 2.3.2
   refuses `-p` together with `--auto`, `--yolo`, or `--plan`, before any model turn. `bw seat verify`
   no longer calls a CLI error a refusal by the model: when every seat run of the attack failed with a

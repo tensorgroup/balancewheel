@@ -16,7 +16,7 @@ $findings
 2. Do not relay an objection to wording or certainty. Log it as a dispute scored against the challenger.
 3. Relay one claim only. Never relay a transcript or a seat file.
 4. Ask a seat that did not raise the finding.
-5. Write only the JSON between the fence lines to $ask_file. $write_rules For a later ask, change ask-1 to ask-2 in both places. bw puts your claim in this frame: "$frame"
+5. Write only the JSON between the fence lines to $ask_file. $write_rules For a later ask, change $ask_id to $ask_next in both places. bw puts your claim in this frame: "$frame"
 $ask_body
 6. Run this command: $ask_mv
 7. Each dispute gets at most $max_rounds $round_word of asks. After that, you rule.
@@ -26,14 +26,14 @@ $ask_body
 11. Do not log while an ask is open. bw refuses it.
 $triage
 ## Log
-1. Write only the JSON between the fence lines to $log_file. $write_rules To send a second log, use log-2.
+1. Write only the JSON between the fence lines to $log_file. $write_rules To send a second log, use $log_next.
 $log_body
 2. Run this command: $log_mv
 3. Every one of these findings needs a verdict: $ids
 4. The optional keys are:
    - `groups`: `{"f3": "g1"}` moves a finding to a group.
    - `severity`: `{"f3": "minor"}` sets a new severity.
-   - `added`: findings you found yourself. Each is `{"seat", "title", "severity", "verdict", "where", "group"}`.
+   - `added`: findings that a seat gave in its own file but that are not in the list above (you took them from the file by hand). Each is `{"seat", "title", "severity", "verdict", "where", "group"}`. `seat` must be a seat that returned.
    - `disputes`: each is `{"summary", "challenger", "winner", "reason", "proposals": {"<seat>": "<text>"}}`.
    - `notes`: one string.
 5. bw answers in `$responses/<id>.json` (the id is the request file name without `.request`) with the first line of your summary. Check that the nonce is yours.

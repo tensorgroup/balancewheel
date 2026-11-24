@@ -175,7 +175,7 @@ class FixRound1(unittest.TestCase):
         self.assertNotIn("\n## Fake", text)
 
     def test_follow_up_order_and_example(self):
-        text = render.follow_up(["f4", "f7"], "/r", "p1a2b3c4")
+        text = render.follow_up(["f4", "f7"], "/r", "p1a2b3c4", "/v/responses")
         self.assertLess(text.index("Leave out any verdict"), text.index("Write only the JSON"))
         self.assertIn('"f4": "confirmed|partial|refuted|dropped"', text)
 
@@ -190,7 +190,7 @@ class Frame(unittest.TestCase):
 
 class FollowUp(unittest.TestCase):
     def test_follow_up(self):
-        text = render.follow_up(["f1", "f4", "f7"], "/s d/handoffs/k/panel", "p1a2b3c4")
+        text = render.follow_up(["f1", "f4", "f7"], "/s d/handoffs/k/panel", "p1a2b3c4", "/s d/v/responses")
         self.assertIn("Re-verify f1, f4, f7 against the code.", text)
         self.assertIn("send an amend request with the verdicts you changed", text)
         self.assertIn('"type": "amend"', text)
@@ -198,7 +198,60 @@ class FollowUp(unittest.TestCase):
         self.assertIn("mv '/s d/handoffs/k/panel'/.tmp-", text)
 
     def test_follow_up_escapes_ids(self):
-        self.assertNotIn("\n## x", render.follow_up(["f1\n## x"], "/r", "p1a2b3c4"))
+        self.assertNotIn("\n## x", render.follow_up(["f1\n## x"], "/r", "p1a2b3c4", "/v/responses"))
+
+    def test_follow_up_names_the_absolute_response(self):  # panel g17
+        text = render.follow_up(["f1"], "/r", "p1a2b3c4", "/s/inbox-view/k/panels/responses")
+        self.assertIn("refusal in `/s/inbox-view/k/panels/responses/<id>.json`", text)
+        self.assertIn("bw answers in `/s/inbox-view/k/panels/responses/amend-p1a2b3c4-1.json`", text)
+        self.assertNotIn("`responses/", text)
+
+
+class RequestIds(unittest.TestCase):
+    """Final review critical (panel g01): next.md's request ids hold the panel id."""
+
+    def test_ids_hold_the_panel_id(self):
+        text = nxt()
+        self.assertIn("/s/handoffs/k/panel/.tmp-ask-p1a2b3c4-1", text)
+        self.assertIn("/s/handoffs/k/panel/ask-p1a2b3c4-1.request", text)
+        self.assertIn("/s/handoffs/k/panel/.tmp-log-p1a2b3c4-1", text)
+        self.assertIn("change ask-p1a2b3c4-1 to ask-p1a2b3c4-2", text)
+        self.assertIn("use log-p1a2b3c4-2", text)
+        self.assertNotIn("ask-1", text.replace("p1a2b3c4-1", ""))
+        self.assertNotIn("log-1", text.replace("p1a2b3c4-1", ""))
+        self.assertIn("amend-p1a2b3c4-1.request", render.follow_up(["f1"], "/r", "p1a2b3c4", "/v/responses"))
+
+    def test_two_panels_never_share_an_id(self):
+        other = dict(copy.deepcopy(DOC), panel_id="p9e8d7c6")
+        one, two = nxt(), nxt(other, dict(PANEL, id="p9e8d7c6"))
+        ids = lambda t: {w.rsplit("/", 1)[-1] for w in t.split() if w.endswith(".request")}
+        self.assertEqual(ids(one), {"ask-p1a2b3c4-1.request", "log-p1a2b3c4-1.request"})
+        self.assertFalse(ids(one) & ids(two))
+        for rid in ("ask-p1a2b3c4-2", "amend-p1a2b3c4-9"):
+            self.assertRegex(rid, "^[A-Za-z0-9_-]{1,64}$")  # channel.REQ_ID accepts them
+
+
+class Lines(unittest.TestCase):
+    def test_target_line_is_escaped_and_cut(self):  # panel g19
+        self.assertIn("- Target: t\n", nxt())
+        doc = dict(copy.deepcopy(DOC), target="a\n## Fake " + "x" * 400)
+        text = nxt(doc)
+        line = next(ln for ln in text.splitlines() if ln.startswith("- Target: "))
+        self.assertIn("a\\x0a## Fake", line)
+        self.assertLessEqual(len(line), len("- Target: ") + render.TARGET_CHARS)
+
+    def test_added_is_a_seat_finding_taken_by_hand(self):  # panel g16
+        text = nxt()
+        self.assertIn("you took them from the file by hand", text)
+        self.assertIn("`seat` must be a seat that returned.", text)
+        self.assertNotIn("findings you found yourself", text)
+
+    def test_failed_next_still_says_how_to_log(self):  # panel g15
+        text = render.failed_next("p1a2b3c4", "boom\n## x", "/s/handoffs/k/panel", "/s/inbox-view/k/panels/p1a2b3c4")
+        self.assertIn("This panel failed: boom\\x0a## x.", text)
+        self.assertIn("mv /s/handoffs/k/panel/.tmp-log-p1a2b3c4-1 /s/handoffs/k/panel/log-p1a2b3c4-1.request", text)
+        self.assertIn('"verdicts": {}', text)
+        self.assertIn("/s/inbox-view/k/panels/responses/log-p1a2b3c4-1.json", text)
 
 
 if __name__ == "__main__":

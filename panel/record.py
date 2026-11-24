@@ -20,13 +20,8 @@ PROPOSAL_CHARS = 1500
 NOTES_CHARS = 2000
 
 
-_HALF_ESCAPE = re.compile(r"(?<!\\)((?:\\\\)*)\\(?:x[0-9a-f]?|u[0-9a-f]{0,3})?$")
 NOTE_CHARS = 200
-
-
-def _cut(value, limit):
-    """safe() text cut to `limit`, without a trailing half escape (an odd backslash run, or `\\x1`)."""
-    return _HALF_ESCAPE.sub(r"\1", safe(value)[:limit])
+_cut = merge.cut
 
 
 def _unscored(doc):

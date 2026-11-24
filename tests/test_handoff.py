@@ -211,6 +211,12 @@ class PanelProtocol(unittest.TestCase):
         self.assertIn("\n`python3 /s/inbox-view/k/panels/bw-panel-wait`\n", text)
         self.assertIn("/s/inbox-view/k/panels/responses/<id>.json", text)
 
+    def test_protocol_ids_from_next_md_and_hands_off_until_ready(self):  # final review critical; panel g21
+        text = protocol_text(CFG, "high", "/s/handoffs/k/panel", "/s/inbox-view/k/panels")
+        self.assertIn("use the request id that next.md gives. It holds the panel id.", text)
+        self.assertIn("do not open the panel's seat files, and do not change the files under review", text)
+        self.assertNotIn('"deep"', text)  # a lead never sets the deep tier
+
     def test_wait_path_defaults_to_the_view_root(self):
         text = protocol_text(CFG, "high", "/s/handoffs/k/panel", "/s/inbox-view/k/panels")
         self.assertIn("\n`python3 /s/inbox-view/k/panels/bw-panel-wait`\n", text)

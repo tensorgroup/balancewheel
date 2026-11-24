@@ -47,8 +47,16 @@ def _blocks(text):
     return out, discarded
 
 
+_HALF_ESCAPE = re.compile(r"(?<!\\)((?:\\\\)*)\\(?:x[0-9a-f]?|u[0-9a-f]{0,3})?$")
+
+
+def cut(value, limit):
+    """safe() text cut to `limit`, without a trailing half escape (an odd backslash run, or `\\x1`)."""
+    return _HALF_ESCAPE.sub(r"\1", safe(value)[:limit])
+
+
 def _text(value, limit):
-    return safe(value if isinstance(value, str) else "")[:limit]
+    return cut(value if isinstance(value, str) else "", limit)
 
 
 def _entry(raw):

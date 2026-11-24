@@ -245,3 +245,9 @@ class RegistryCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OneGuardedCheck(unittest.TestCase):
+    def test_registry_uses_the_shared_check(self):  # deferred fix-now: no private copy
+        from lead import paths
+        self.assertIs(registry._guarded, paths.guarded)

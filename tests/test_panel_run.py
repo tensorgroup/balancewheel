@@ -366,6 +366,17 @@ class PanelRunTest(unittest.TestCase):
         self.assertEqual((p["state"], p["error"], doc["failed"]), ("failed", "RuntimeError", "RuntimeError"))
         self.assertFalse(state.has_job(self.S, K))
         self.assertEqual(len(store.load(self.LOG)["panel_runs"]), 1)
+        nxt = (self.view() / "next.md").read_text()  # panel g15: the lead's surfaces point here
+        self.assertIn("This panel failed: RuntimeError.", nxt)
+        self.assertIn(f"log-{self.pid}-1.request", nxt)
+
+    def test_no_traceback_line_outside_an_exception(self):  # panel g25
+        w = run._Worker(self.CFG, self.S, K, self.pid, time.time)
+        run._fail_round(w, {}, "panel worker stopped")
+        log = Path(state.work_dir(self.S, K, self.pid), "log.txt").read_text()
+        self.assertIn("round 1 failed (panel worker stopped)\n", log)
+        self.assertNotIn("NoneType: None", log)
+        self.assertEqual(state.load(self.S, K, self.pid)["state"], "failed")
 
     def test_fallback_never_raises(self):
         real = run._write_text

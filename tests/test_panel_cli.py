@@ -157,6 +157,15 @@ class CliTest(unittest.TestCase):
         self.assertIn("Design panel", out2)
         self.assertEqual(self.panel(pid)["state"], "logged")
 
+    def test_help_exits_0(self):  # live run 2026-11-23: `bw panel -h` was a usage error
+        for argv in (["-h"], ["--help"], ["review", "-h"], ["ask", "--help"], ["log", "-h"]):
+            code, out, err = self.cli(argv)
+            self.assertEqual((code, err), (0, ""), argv)
+            self.assertIn("bw panel <checkpoint> [target]", out)
+            self.assertIn("bw panel status [<panel-id>]", out)
+        self.assertEqual(state.panels(self.S, self.K), [])
+        self.assertFalse(cli.wants_help(["ask", "p1234567", "astra", "--", "-h"]))  # a claim after -- is text
+
     def test_code_review_alias(self):
         code, out, _ = self.cli(["code-review", "t"])
         self.assertEqual(code, 0)
@@ -385,6 +394,13 @@ class WaitTest(unittest.TestCase):
         code, _, err = self.wait("p1111111")
         self.assertEqual(code, 2)
         self.assertIn("usage", err)
+
+    def test_max_must_be_a_finite_number(self):  # deferred fix-now: --max nan looped
+        self.put("p1111111", "running")
+        for bad in ("nan", "inf", "-1", "x"):
+            code, _, err = self.wait("--max", bad)
+            self.assertEqual(code, 2, bad)
+            self.assertIn("--max takes a number of seconds", err)
 
 
 if __name__ == "__main__":

@@ -145,10 +145,26 @@ def open_panel(config, state, project, req, lead=None, session_id=None, now=None
         "lead": (lead or {}).get("name"), "seats": {}}, check=check)
 
 
-def _new_ask(p, seat, claim, dispute, session_id, max_rounds, now) -> dict:
+def disputes(doc) -> list:
+    """The dispute ids a panel accepts: its candidate disputes, and d1 to d<n> for its n finding groups
+    (a lead may dispute a finding that no seat contested). So the rounds of a panel stay bounded."""
+    ids = [c.get("id") for c in doc.get("candidate_disputes") or [] if isinstance(c, dict)]
+    ids += [f"d{n}" for n in range(1, max(1, len(doc.get("groups") or [])) + 1)]
+    return [i for n, i in enumerate(ids) if isinstance(i, str) and i not in ids[:n]]
+
+
+def rounds_used(asks, dispute) -> int:
+    """The rounds a dispute has used: every ask on it that has not failed (a queued one counts)."""
+    return sum(1 for a in asks if isinstance(a, dict) and a.get("dispute") == dispute and a.get("state") != "failed")
+
+
+def _new_ask(p, seat, claim, dispute, session_id, max_rounds, now, allowed=None) -> dict:
     pid = p["id"]
     if p.get("state") != "ready":
         raise ValueError(f"panel {pid} is not ready (it is {p.get('state')}); send an ask to a ready panel")
+    if allowed is not None and dispute not in allowed:
+        raise ValueError(f"dispute {safe(str(dispute))[:16]} is not a dispute of this panel; use one of: "
+                         + ", ".join(safe(a)[:16] for a in allowed[:20]))
     shown = safe(seat)[:40]
     entry = (p.get("seats") or {}).get(seat)
     if not isinstance(entry, dict):
@@ -158,12 +174,12 @@ def _new_ask(p, seat, claim, dispute, session_id, max_rounds, now) -> dict:
     if not entry.get("session_id"):
         raise ValueError(f"seat {shown} has no round-1 session to resume; rule on it yourself")
     asks = [a for a in p.get("asks") or [] if isinstance(a, dict)]
-    done = sum(1 for a in asks if a.get("dispute") == dispute and a.get("state") == "done")
-    if done >= max_rounds:
-        raise ValueError(f"dispute {dispute} has had {done} rounds; rule on it yourself")
+    used = rounds_used(asks, dispute)
+    if used >= max_rounds:
+        raise ValueError(f"dispute {dispute} has had {used} rounds; rule on it yourself")
     if sum(1 for a in asks if a.get("lead_session") == session_id) >= pstate.MAX_ASKS:
         raise ValueError(f"this session has sent {pstate.MAX_ASKS} asks on panel {pid}; rule on the rest yourself")
-    rnd = done + 1
+    rnd = used + 1
     attempt = 1 + sum(1 for a in asks if (a.get("dispute"), a.get("round"), a.get("seat")) == (dispute, rnd, seat))
     ask_id = f"{dispute}-{rnd}-{seat}-{attempt}"
     if not run.ASK_ID.fullmatch(ask_id):
@@ -177,11 +193,12 @@ def queue_ask(config, state, project, req, session_id=None, now=None) -> dict:
     channel.check_ask(seat, claim, dispute)
     now = time.time() if now is None else now
     pid = req.get("panel")
-    own(state, project, pid)
+    panel = own(state, project, pid)
+    allowed = disputes(_doc(state, project.worktree_key, panel)) if panel.get("state") == "ready" else None
     made = {}
 
     def fn(p):
-        made.update(_new_ask(p, seat, claim, dispute, session_id, config["panel"]["max_rounds"], now))
+        made.update(_new_ask(p, seat, claim, dispute, session_id, config["panel"]["max_rounds"], now, allowed))
         p["asks"] = list(p.get("asks") or []) + [dict(made)]
     pstate.update(state, project.worktree_key, pid, fn)
     return made
@@ -238,7 +255,8 @@ def _response(state, key, pid, rec, doc, new, sink, ignored, out) -> dict:
     if follow:
         path = os.path.join(pstate.view_dir(state, key, pid), "next.md")
         body = (run._read_text(path) or "").rstrip("\n")
-        section = render.follow_up(_sample(rec["findings_detail"]), pstate.request_dir(state, key), pid)
+        section = render.follow_up(_sample(rec["findings_detail"]), pstate.request_dir(state, key), pid,
+                                   render.responses_dir(pstate.view_dir(state, key, pid)))
         run._write_text(path, (body + "\n\n" if body else "") + section)
     return {"ok": True, "panel": pid, "summary": record.summary_line(rec, doc),
             "watches": [line for line in text.splitlines() if line], "ignored": ignored, "follow_up": follow}
