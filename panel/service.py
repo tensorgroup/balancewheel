@@ -14,6 +14,7 @@ import io
 import json
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -37,6 +38,7 @@ MAX_REQUESTS = 20
 MAX_OPEN_LINES = 10
 MAX_SPAWNS = 3
 NOT_OURS = "stale pid not ours"
+PANEL_ARG = re.compile(r"(?<![0-9A-Za-z])p[0-9a-f]{7}(?![0-9A-Za-z])")
 FOLLOW_UP_SAMPLE = 3
 AMEND_KEYS = ("verdicts", "groups", "severity", "added", "notes")
 WORKER = [sys.executable, "-m", "panel.run"]  # the worker argv prefix; tests replace it
@@ -208,15 +210,12 @@ def _doc(state, key, panel) -> dict:
             doc = json.loads(text)
         except ValueError:
             doc = None
-        if isinstance(doc, dict):
-            return doc
+        if isinstance(doc, dict) and (doc.get("seats") or not doc.get("failed")):
+            return doc  # a failed doc with no seats (written before its seats started) is rebuilt below
     if panel.get("state") != "failed":
         raise ValueError(f"panel {panel['id']} has no findings; bw cannot log it")
     why = panel.get("error") or "unknown"
-    seats = json.loads(json.dumps(panel.get("seats") or {}))
-    for entry in seats.values():
-        if entry.get("status") not in ("ok", "absent"):
-            entry.update(status="absent", reason=f"panel failed: {why}")
+    seats = run.absent_all(json.loads(json.dumps(panel.get("seats") or {})), panel.get("roster"), why)
     absent = {s: e.get("reason") for s, e in seats.items() if e.get("status") == "absent"}
     return run._bare_doc(panel, seats, absent, True, [], why)
 
@@ -335,8 +334,9 @@ def _command(pid) -> str:
 
 
 def _is_worker(cmd, panel_id, owner) -> bool:
-    if owner == "foreground":
-        return "bw panel" in cmd
+    if owner == "foreground":  # `bw panel …`; when its argv names a panel, it must be this one
+        ids = PANEL_ARG.findall(cmd)
+        return "bw panel" in cmd and (not ids or panel_id in ids)
     return "panel.run" in cmd and panel_id in cmd
 
 
@@ -369,23 +369,40 @@ def _trusted(job, panel_id, jobs) -> tuple:
 
 
 def _signal(state, key, pid, job, jobs, sig) -> None:
-    """Signal the job's tree, never a pid that now runs something else (pid reuse)."""
+    """SIGTERM the job's tree, never a pid that now runs something else (pid reuse). Each pid is
+    confirmed once, here; the groups confirmed are stored as `kill_groups` for the SIGKILL step, which
+    trusts them (a leader that ended on SIGTERM can leave members in its group)."""
     trusted, skipped = _trusted(job, pid, jobs)
     stop_tree(trusted, sig)
-    if not skipped:
-        return
+    groups = _groups(trusted)
     notes = [f"{g}: {NOT_OURS}" for g in skipped]
+    if notes:
+        _say(state, key, pid, notes)
+
+    def fn(p):
+        j = p.get("job")
+        if isinstance(j, dict):
+            j["kill_groups"] = groups
+            if notes:
+                j["skipped"] = sorted(set(j.get("skipped") or []) | set(notes))
+    pstate.update(state, key, pid, fn)
+
+
+def _kill(state, key, pid, job, jobs) -> None:
+    """SIGKILL the groups confirmed at SIGTERM time. A job stopped by a bw that died before it stored
+    them is confirmed now instead."""
+    if isinstance(job.get("kill_groups"), list):
+        stop_tree({"pid": None, "seat_pgids": job["kill_groups"]}, signal.SIGKILL)
+    else:
+        _signal(state, key, pid, job, jobs, signal.SIGKILL)
+
+
+def _say(state, key, pid, notes) -> None:
     try:
         with open(os.path.join(pstate.work_dir(state, key, pid), "log.txt"), "a", encoding="utf-8") as f:
             f.write("".join(f"panel.service: not signalled {n}\n" for n in notes))
     except OSError:
         pass
-
-    def fn(p):
-        j = p.get("job")
-        if isinstance(j, dict):
-            j["skipped"] = sorted(set(j.get("skipped") or []) | set(notes))
-    pstate.update(state, key, pid, fn)
 
 
 def _stop(state, key, pid, job, why, now, jobs, **extra) -> None:
@@ -406,7 +423,7 @@ def _watch(config, state, key, panel, jobs, now) -> None:
     pid, job = panel["id"], panel["job"]
     if _num(job.get("kill_at")):
         if now >= job["kill_at"] + KILL_GRACE_S:
-            _signal(state, key, pid, job, jobs, signal.SIGKILL)
+            _kill(state, key, pid, job, jobs)
             jobs.reap()
             fail(config, state, key, pid, job.get("stop") or "panel worker stopped", now)
             pstate.release_job(state, key, pid)

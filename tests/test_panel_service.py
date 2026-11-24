@@ -538,6 +538,15 @@ class ServiceTest(unittest.TestCase):
         p = self.panel(pid)
         self.assertEqual((p["state"], p["error"], p["job"]), ("failed", "worker did not start", None))
         self.assertEqual([(k, key) for k, _, key in self.notices], [("panel", pid)])
+        why = "panel failed: worker did not start"
+        self.assertEqual(self.findings(pid)["absent"], {"a": why, "o": why, "g": why})
+        r = self.log(pid, verdicts={})   # the lead logs the all-absent panel
+        self.assertTrue(r["ok"], r)
+        self.assertIn("failed: worker did not start", r["summary"])
+        self.assertEqual(self.panel(pid)["state"], "logged")
+        (rec,) = store.load(self.LOG)["panels"]
+        self.assertEqual((rec["seats"], rec["absent"]), ({}, {"a": why, "o": why, "g": why}))
+        self.assertEqual(service.open_lines(self.S, K), [])
 
     def test_failed_spawn_releases_and_notices(self):
         pid = self.open()
@@ -669,10 +678,60 @@ class ServiceTest(unittest.TestCase):
         self.assertFalse(service._is_worker("python3 -m panel.run round1 --panel p7654321", "p1234567", "scheduler"))
         self.assertFalse(service._is_worker("sleep 30", "p1234567", "scheduler"))
         self.assertTrue(service._is_worker("python3 /x/bin/bw panel design t", "p1234567", "foreground"))
+        self.assertTrue(service._is_worker("python3 /x/bin/bw panel ask p1234567 o x", "p1234567", "foreground"))
+        self.assertFalse(service._is_worker("python3 /x/bin/bw panel ask p7654321 o x", "p1234567", "foreground"))
         self.assertTrue(service._is_seat("python3 /x/bin/bw seat a --no-fallback"))
         self.assertTrue(service._is_seat(f"{sys.executable} {FAKE} a --no-fallback"))
         self.assertFalse(service._is_seat("sleep 30"))
         self.assertEqual(service._command(999999999), "")
+
+    def test_sigkill_reaches_a_group_whose_leader_ended_on_sigterm(self):
+        """Each pid is confirmed once, at SIGTERM. The leader ends then; a member that ignores SIGTERM
+        stays in the group, and the SIGKILL step still reaches it."""
+        pid = self.open()
+        member_file = self.T / "member"
+        seat = self.T / "seat_group.py"
+        seat.write_text(
+            "import signal, subprocess, sys, time\n"
+            "m = subprocess.Popen([sys.executable, '-c', 'import signal, time; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)'])\n"
+            f"open({str(member_file)!r}, 'w').write(str(m.pid))\n"
+            "time.sleep(30)\n")
+        worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "panel.run", "round1", "--panel", pid],
+                                  start_new_session=True)
+        with mock.patch.dict(os.environ, {"BW_PANEL_SEAT_CMD": json.dumps([sys.executable, str(seat)])}):
+            leader = subprocess.Popen([sys.executable, str(seat), "a"], start_new_session=True)
+            for proc in (worker, leader):
+                self.addCleanup(proc.wait)
+                self.addCleanup(proc.kill)
+            self.assertTrue(wait_for(member_file.exists))
+            time.sleep(0.2)   # the member sets SIG_IGN
+            member = int(member_file.read_text())
+            self.addCleanup(lambda: _alive(member) and os.kill(member, signal.SIGKILL))
+            now = 5000.0
+            self.assertTrue(state.reserve_job(self.S, K, pid, {
+                "kind": "round1", "ask": None, "pid": worker.pid, "owner": "scheduler", "started": now - 200,
+                "deadline": 1e12, "beat": now - service.BEAT_STALE_S - 1, "seat_pgids": [leader.pid]}))
+            jobs = service.Jobs()
+            service.schedule(self.CFG, self.S, K, jobs, now=now)
+            self.assertTrue(wait_for(lambda: leader.poll() is not None and worker.poll() is not None))
+            self.assertTrue(_alive(member))
+            job = self.job(pid)
+            self.assertEqual((job.get("skipped"), sorted(job["kill_groups"])), (None, sorted([worker.pid, leader.pid])))
+            service.schedule(self.CFG, self.S, K, jobs, now=now + service.KILL_GRACE_S + 1)
+        self.assertTrue(wait_for(lambda: not _alive(member)))
+        self.assertEqual(self.panel(pid)["state"], "failed")
+        self.assertNotIn("not signalled", Path(state.work_dir(self.S, K, pid), "log.txt").read_text())
+
+    def test_failed_panels_do_not_block_new_panels(self):
+        pids = [self.open() for _ in range(3)]
+        for pid in pids:
+            service.fail(self.CFG, self.S, K, pid, "worker did not start")
+        fourth = self.open()
+        self.assertEqual(self.panel(fourth)["state"], "queued")
+        lines = service.open_lines(self.S, K)
+        self.assertEqual(len(lines), 4)
+        self.assertTrue(all("failed (worker did not start) — follow" in line for line in lines[:3]))
 
     def test_dead_worker_kills_seat_groups(self):
         with mock.patch.dict(os.environ, {"FAKE_SEAT_o": "sleep", "FAKE_SEAT_g": "sleep"}):
@@ -692,6 +751,8 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual((p["state"], p["error"], p["job"]), ("failed", "panel worker exited", None))
         self.assertEqual(self.findings(pid)["absent"], {"o": "panel failed: panel worker exited",
                                                         "g": "panel failed: panel worker exited"})
+        log = Path(state.work_dir(self.S, K, pid), "log.txt")
+        self.assertNotIn("not signalled", log.read_text() if log.exists() else "")   # no false note
 
     def test_stop_tree_skips_unsafe_groups(self):
         with mock.patch.object(os, "killpg") as killpg:

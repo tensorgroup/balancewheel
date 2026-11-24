@@ -188,7 +188,9 @@ not against the prose.
   fills every mechanical field and validates with `metrics/log.py`, `amend`, and at most 3 open panels and
   20 asks per panel per session.
   The watchdog signals a pid that this bw did not start only while that pid still runs a panel worker or
-  a seat. A panel whose worker failed to start 3 times fails with "worker did not start".
+  a seat. It confirms each pid once, at SIGTERM, and SIGKILLs only those groups. A panel whose worker
+  failed to start 3 times fails with "worker did not start". A panel that fails before its seats start
+  logs with every roster seat absent `panel failed: <why>`.
 - **`bw improve`** (`lead/improve.py`, `bin/bw`): suggestions from how the user works, each with its
   evidence, a minimum sample, and no effect until the user acts. `bw improve note "…"` adds a note,
   `bw improve done <key>` marks one dealt with (`improve.json` in the state dir, added to `setup/paths.txt`). An

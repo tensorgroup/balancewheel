@@ -250,13 +250,11 @@ def _spec(config, panel) -> dict:
 def _finish(w, seats, failed=None) -> dict:
     """Write findings.json and next.md, then the state (`ready`, or `failed` with `failed` set), then
     the panel_run event. Every seat without a final status is absent `panel failed: <failed>`."""
-    if failed:
-        for entry in seats.values():
-            if entry.get("status") not in ("ok", "absent"):
-                entry.update(status="absent", reason=f"panel failed: {failed}")
     panel = pstate.load(w.state, w.key, w.pid)
     if panel is None:
         raise ValueError(f"unknown panel: {w.pid}")
+    if failed:
+        absent_all(seats, panel.get("roster"), failed)
     panel["seats"] = seats
     short, why = roster.shortness(_spec(w.config, panel), seats)
     absent = {s: e.get("reason") for s, e in seats.items() if e.get("status") == "absent"}
@@ -409,11 +407,25 @@ def _fail_round(w, seats, why) -> dict:
         return _mark_failed(w, seats, why)
 
 
-def _mark_failed(w, seats, why) -> dict:
-    """Mark the panel failed with no findings.json write; each step is best effort."""
+def absent_all(seats, roster_names, why) -> dict:
+    """Every seat without a final status becomes absent `panel failed: <why>`. A panel that failed
+    before its seats started has none: then each roster seat is absent, so the record still logs."""
+    if not seats:
+        for name in roster_names or []:
+            if isinstance(name, str):
+                seats[name] = {"status": "pending", "on_roster": True}
     for entry in seats.values():
         if entry.get("status") not in ("ok", "absent"):
             entry.update(status="absent", reason=f"panel failed: {why}")
+    return seats
+
+
+def _mark_failed(w, seats, why) -> dict:
+    """Mark the panel failed with no findings.json write; each step is best effort."""
+    try:
+        absent_all(seats, (pstate.load(w.state, w.key, w.pid) or {}).get("roster"), why)
+    except BaseException:
+        absent_all(seats, [], why)
     try:
         w.say("the failed panel could not be written in full:\n" + traceback.format_exc())
     except BaseException:
