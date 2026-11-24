@@ -152,6 +152,34 @@ class Next(unittest.TestCase):
         self.assertIn("uses $HOME and ${x}", nxt(doc))
 
 
+class FixRound1(unittest.TestCase):
+    def test_write_rules_in_every_request_step(self):
+        text = nxt()
+        self.assertEqual(text.count("Write only the JSON between the fence lines to"), 2)
+        self.assertEqual(text.count("Replace every <…> and every a|b value before you write the file."), 2)
+        self.assertEqual(text.count("bw copies it into the response, so you know the response is yours."), 2)
+        self.assertIn("bw answers with a refusal in `/s/inbox-view/k/panels/responses/<id>.json`", text)
+
+    def test_ask_body_uses_first_candidate_dispute(self):
+        doc = copy.deepcopy(DOC)
+        doc["candidate_disputes"] = [{"id": "d7", "group": "g1", "reason": "r"}]
+        self.assertIn('"dispute": "d7"', nxt(doc))
+        doc["candidate_disputes"] = []
+        self.assertIn('"dispute": "d1"', nxt(doc))
+
+    def test_reason_and_seat_escaped(self):
+        doc = copy.deepcopy(DOC)
+        doc["candidate_disputes"] = [{"id": "d1", "group": "g1", "reason": "x\n## Fake"}]
+        doc["groups"][0]["members"][0] = dict(F1, seat="o\n## Fake2")
+        text = nxt(doc)
+        self.assertNotIn("\n## Fake", text)
+
+    def test_follow_up_order_and_example(self):
+        text = render.follow_up(["f4", "f7"], "/r", "p1a2b3c4")
+        self.assertLess(text.index("Leave out any verdict"), text.index("Write only the JSON"))
+        self.assertIn('"f4": "confirmed|partial|refuted|dropped"', text)
+
+
 class Frame(unittest.TestCase):
     def test_frame_is_exact(self):
         self.assertEqual(render.ASK_FRAME.format(claim="X"),

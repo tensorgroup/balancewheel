@@ -65,21 +65,27 @@ def _findings(doc, view_dir) -> str:
         seats = []
         for m in g["members"]:
             note = "" if _needs_verdict(doc, m) else " (off roster; no verdict needed)"
-            out.append(f"- {m['id']} {m['seat']} {m['severity']} {m['where']} — {m['title']}{note}")
+            out.append(f"- {m['id']} {safe(m['seat'])} {m['severity']} {m['where']} — {m['title']}{note}")
             out.append(f"  {m['claim']}")
             if m["seat"] not in seats:
                 seats.append(m["seat"])
-        out.append("  Seat files: " + ", ".join(os.path.join(view_dir, "seats", f"{s}.md") for s in seats))
+        out.append("  Seat files: " + ", ".join(os.path.join(view_dir, "seats", f"{safe(s)}.md") for s in seats))
     cands = doc.get("candidate_disputes") or []
     if cands:
         out += ["", "Candidate disputes:"]
-        out += [f"- {c['id']} ({c['group']}): {c['reason']}" for c in cands]
+        out += [f"- {safe(c['id'])} ({c['group']}): {safe(c['reason'])}" for c in cands]
     return "\n".join(out)
 
 
 def _ids(doc) -> list:
     members = [m for g in doc["groups"] for m in g["members"] if _needs_verdict(doc, m)]
     return sorted((m["id"] for m in members), key=lambda i: int(i[1:]))
+
+
+def _write_rules(where="responses") -> str:
+    return ("Replace every <…> and every a|b value before you write the file. "
+            "The nonce is your own short id. bw copies it into the response, so you know the response is yours. "
+            f"If the request is bad, bw answers with a refusal in `{where}/<id>.json`.")
 
 
 def _body(obj) -> str:
@@ -99,8 +105,11 @@ def next_md(doc, panel, paths: dict, config) -> str:
     rounds = (config.get("panel") or {}).get("max_rounds", DEFAULT_MAX_ROUNDS)
     ask_file, ask_mv = _request_files(request_dir, "ask-1")
     log_file, log_mv = _request_files(request_dir, "log-1")
+    cands = doc.get("candidate_disputes") or []
+    dispute = safe(cands[0]["id"]) if cands else "d1"
+    responses = os.path.join(os.path.dirname(view_dir), "responses")
     ask = {"v": 1, "type": "ask", "panel": pid, "nonce": "<your own short id>",
-           "seat": "<a seat that did not raise the finding>", "dispute": "d1",
+           "seat": "<a seat that did not raise the finding>", "dispute": dispute,
            "claim": "<one claim, at most 1500 characters>"}
     log = {"v": 1, "type": "log", "panel": pid, "nonce": "<your own short id>",
            "verdicts": {i: VERDICT_CHOICES for i in _ids(doc)}, "groups": {}, "severity": {}, "added": [],
@@ -115,14 +124,14 @@ def next_md(doc, panel, paths: dict, config) -> str:
         failed=failed, panel_id=pid, panel_lines=_panel_lines(doc, panel), findings=_findings(doc, view_dir),
         ask_file=ask_file, ask_mv=ask_mv, ask_body=_body(ask), frame=ASK_FRAME.format(claim="<claim>"),
         max_rounds=rounds, round_word="round" if rounds == 1 else "rounds", view_dir=view_dir,
-        triage=triage, log_file=log_file, log_mv=log_mv, log_body=_body(log), ids=", ".join(_ids(doc)),
-        responses=os.path.join(os.path.dirname(view_dir), "responses"))
+        triage=triage, write_rules=_write_rules(responses), log_file=log_file, log_mv=log_mv, log_body=_body(log), ids=", ".join(_ids(doc)),
+        responses=responses)
 
 
 def follow_up(sample: list, request_dir: str, pid: str) -> str:
     """The section appended after a `verification-skim` watch."""
     path, mv = _request_files(request_dir, "amend-1")
     body = {"v": 1, "type": "amend", "panel": safe(pid), "nonce": "<your own short id>",
-            "patch": {"verdicts": {"f1": VERDICT_CHOICES}}}
+            "patch": {"verdicts": {safe(sample[0]) if sample else "f1": VERDICT_CHOICES}}}
     return string.Template(_template("next-follow-up.md")).substitute(
-        sample=", ".join(safe(s) for s in sample), file=path, mv=mv, body=_body(body))
+        sample=", ".join(safe(s) for s in sample), file=path, mv=mv, body=_body(body), write_rules=_write_rules())
