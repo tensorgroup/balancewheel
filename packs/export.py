@@ -180,7 +180,7 @@ _END = re.compile(r"^[ \t]*" + re.escape(MARK_END) + r"[ \t]*\r?$", re.M)
 _CATALOG = re.compile(r"^catalog:", re.M)
 _NAME = re.compile(r"^name:[ \t]*(.*?)[ \t]*\r?$", re.M)
 _VERSION_LINE = re.compile(r"^version:", re.M)
-_VERSION = re.compile(r"^version:[ \t]*([\"']?)(\d+)\.(\d+)\.(\d+)\1[ \t]*\r?$", re.M)
+_VERSION = re.compile(r"^version:[ \t]*([\"']?)(\d+)\.(\d+)\.(\d+)\1(?:[ \t]+#.*)?[ \t]*\r?$", re.M)
 _ITEM = re.compile(r"^- name:[ \t]*(.*)$")
 _FIELD = re.compile(r"^(category|status|notes):[ \t]*(.*)$")
 
@@ -190,9 +190,10 @@ def pack_name(text):
     if not m:
         return None
     value = m.group(1)
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        value = value[1:-1]
-    return value
+    quoted = re.match(r"([\"'])(.*?)\1(?:[ \t]+#.*)?$", value)
+    if quoted:
+        return quoted.group(2)
+    return re.split(r"[ \t]+#", value, maxsplit=1)[0].strip()
 
 
 def find_block(text):
@@ -226,13 +227,21 @@ def _newline(text, block_start):
     return "\r\n" if text[max(block_start - 2, 0):block_start] == "\r\n" else "\n"
 
 
+def _quoted(value):
+    """A one-line YAML double-quoted scalar: raw UTF-8, with the YAML line breaks escaped."""
+    text = json.dumps(value, ensure_ascii=False)
+    for ch in ("\u2028", "\u2029", "\u0085"):
+        text = text.replace(ch, "\\u%04x" % ord(ch))
+    return text
+
+
 def render(entries, indent, newline):
     out = []
     for e in entries:
-        out.append(f"{indent}- name: {json.dumps(e['name'], ensure_ascii=True)}")
+        out.append(f"{indent}- name: {_quoted(e['name'])}")
         out.append(f"{indent}  category: model-seat")
         out.append(f"{indent}  status: {e['status']}")
-        out.append(f"{indent}  notes: {json.dumps(e['notes'], ensure_ascii=True)}")
+        out.append(f"{indent}  notes: {_quoted(e['notes'])}")
     return "".join(line + newline for line in out)
 
 
@@ -323,7 +332,7 @@ def bullet(old_version, new_version, old, new, today):
         parts.append(f"record lines refreshed for {refreshed} entries")
     head = (f"- `{PACK_NAME}` {new_version} ({today}, exported by `bw pack export` from the balancewheel log; "
             f"was {old_version}): ")
-    return head + "; ".join(parts)
+    return head + ("; ".join(parts) or "entries reordered")
 
 
 def _write_text_atomic(path, data, mode=0o644):

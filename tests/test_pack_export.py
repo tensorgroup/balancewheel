@@ -234,12 +234,44 @@ class PackTextTests(unittest.TestCase):
         self.assertEqual(export.parse_block(new[b1:e1]), [E1])
 
     def test_render_values_are_single_line_json(self):
-        hostile = 'Quote " hash # colon: ok\nnew line, café, sep   end'
+        hostile = 'Quote " hash # colon: ok\nnew line, caf\u00e9, sep \u2028 \u0085 end'
         block = export.render([dict(E1, notes=hostile)], "  ", "\n")
-        lines = block.splitlines()
+        lines = block.split("\n")[:-1]
         self.assertEqual(len(lines), 4)
-        self.assertTrue(all(l.isascii() for l in lines))
+        for ch in ("\u2028", "\u2029", "\u0085", "\r"):
+            self.assertNotIn(ch, block)
         self.assertEqual(json.loads(lines[3].split("notes: ", 1)[1]), hostile)
+
+    def test_astral_characters_are_raw_utf8_and_round_trip(self):
+        emoji = "\U0001F600"
+        e = {"name": f"Seat {emoji} (x)", "status": "preferred", "notes": f"Note {emoji} caf\u00e9"}
+        block = export.render([e], "  ", "\n")
+        self.assertNotIn("\\ud", block)
+        self.assertIn(emoji, block)
+        self.assertEqual(export.parse_block(block), [e])
+        once, *_ = export.rewrite(FX.read_text(), [e])
+        again, _, new_v, _ = export.rewrite(once, [e])
+        self.assertEqual((again, new_v), (once, None))
+        once.encode("utf-8")
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "pack.yaml"
+            f.write_text(once, encoding="utf-8")
+            self.assertEqual(f.read_bytes().decode("utf-8"), once)
+
+    def test_bullet_says_reordered_when_only_order_changed(self):
+        a, b = dict(E1, name="A"), dict(E1, name="B")
+        self.assertEqual(export.bump_kind([a, b], [b, a]), "patch")
+        self.assertTrue(export.bullet("0.1.0", "0.1.1", [a, b], [b, a], "2026-11-22").endswith("was 0.1.0): entries reordered"))
+
+    def test_trailing_comments_on_version_and_name_lines(self):
+        text = FX.read_text().replace("version: 0.1.0", "version: 0.1.0 # note").replace(
+            "name: model-seats", "name: model-seats # x")
+        self.assertEqual(export.pack_name(text), "model-seats")
+        new, old_v, new_v, _ = export.rewrite(text, [E1])
+        self.assertEqual((old_v, new_v), ("0.1.0", "0.2.0"))
+        self.assertIn("version: 0.2.0 # note", new)
+        quoted = FX.read_text().replace("name: model-seats", 'name: "model-seats" # x')
+        self.assertEqual(export.pack_name(quoted), "model-seats")
 
     def test_crlf_and_no_final_newline_preserved(self):
         text = FX.read_text().replace("\n", "\r\n").rstrip("\r\n")
