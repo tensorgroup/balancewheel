@@ -50,12 +50,13 @@ from .guard import broker as brk, install as guard_install, launch
 from .guard.launch import GuardUnavailable
 from .guard.review import safe
 from .locks import RuntimeLock
-from .paths import ROOT, locked_dir, read_json, write_json_atomic
+from .paths import ROOT, guarded as _guarded, locked_dir, read_json, write_json_atomic
 from .projects import refuse_inside, resolve_project
 from .runtimes import ADAPTERS
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "metrics"))
 import store  # noqa: E402
+from panel import channel as panel_channel, service as panelsvc, state as pstate  # noqa: E402
 
 REFUSED, LOCKED, UNVERIFIED, NO_LEADS, ALL_CAPPED, GUARD_UNAVAILABLE, START_FAILED = 2, 3, 4, 5, 6, 7, 8
 INGEST_EVERY_S = 1.0
@@ -558,11 +559,14 @@ def _panel_notice(ctx):
     return notice
 
 
-def _open_lines(state, key):
-    """The worktree's unfinished panels for a handoff; [] when they cannot be read."""
+def _open_lines(ctx):
+    """The worktree's unfinished panels for a handoff. When they cannot be read: one `panel`
+    notice and []; a handoff never fails on panel state."""
     try:
-        return panelsvc.open_lines(state, key)
-    except Exception:  # noqa: BLE001 — a handoff never fails on panel state
+        return panelsvc.open_lines(ctx.state, ctx.project.worktree_key)
+    except Exception as e:  # noqa: BLE001
+        _panel_notice(ctx)("panel", f"the open panels could not be read for the handoff ({type(e).__name__})",
+                           key="open-lines")
         return []
 
 
@@ -613,10 +617,6 @@ def judge_child(cfg, text):
         return {"verdict": "ask", "reason": "no verdict", "failed": True}
     return v if isinstance(v, dict) and v.get("verdict") in ("decide", "ask") else \
         {"verdict": "ask", "reason": "no verdict", "failed": True}
-
-
-def _guarded(lead):
-    return lead.get("autonomy_source", "legacy") != "legacy" and lead.get("autonomy") == "guard"
 
 
 def _guard_ready(ctx, lead_name):
@@ -787,7 +787,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         return GUARD_UNAVAILABLE
     session, handoff, warned, orca_failed = None, None, False, False
     # A fresh start learns of open and failed panels too, not only a lead that takes over (P6-12).
-    handoff = open_panels_section(_open_lines(state, project.worktree_key))
+    handoff = open_panels_section(_open_lines(ctx))
     current = d.lead
     while True:
         try:
@@ -889,7 +889,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                 if pinned and d.lead != pinned:
                     ctx.notice("pinned-capped", f"pinned lead {pinned} is capped; {d.lead} took over")
                 handoff = build_handoff(project.worktree, session.head, state, project.worktree_key,
-                                        ctx.open_item_texts(), open_panels=_open_lines(state, project.worktree_key))
+                                        ctx.open_item_texts(), open_panels=_open_lines(ctx))
                 ctx.say(f"bw: {current} is capped; handing off to {d.lead}")
                 current, switched = d.lead, True
                 break
@@ -930,8 +930,3 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                      "to": _spec(config, d.lead), "reason": "returned", "quota": _logged_quota(q)})
             ctx.say(f"bw: {d.lead} is available again — the next `bw lead` starts it")
         return 0
-
-
-# Last, not at the top: panel.service imports seats.verify, which imports lead.verify, which
-# imports _guarded from this module. Every name above is defined by the time that cycle runs.
-from panel import channel as panel_channel, service as panelsvc, state as pstate  # noqa: E402

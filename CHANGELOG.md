@@ -62,6 +62,10 @@ not against the prose.
   gets `BW_PANEL` (the request dir) and `BW_PANEL_VIEW` (its read-only view, with a copy of
   `bw-panel-wait`). The handoff lists open panels, also at a fresh `bw lead`. bw prints nothing about
   panels; a problem is one `panel` notice in the inbox.
+- **Lead sandbox: panel work dirs are read-denied.** `lead_grants` denies reads of `state_dir/panels/`
+  (every worktree's briefs and raw seat output). The lead still reads its own view, with its panels'
+  view dirs and the wait helper. This changes `lead/sandbox.py`, so every lead's containment key
+  changes once: run `bw sandbox verify <runtime>` again.
 
 ### Fixed
 

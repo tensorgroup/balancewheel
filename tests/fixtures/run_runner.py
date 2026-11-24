@@ -59,7 +59,9 @@ def fake(rt):
 
 
 adapters = {rt: fake(rt) for rt in ("claude-code", "codex", "agy", "pi", "kimi")}
-# "panel.run" stays on the worker's command line: the watchdog of a later `bw lead` checks for it.
+# The literal "panel.run" argv token below is what panel.service._is_worker matches on the worker's
+# command line (`ps`): without it, a later `bw lead`'s watchdog (via _trusted) does not trust this
+# worker's pid and never signals it. The token is a marker only; run.main gets sys.argv[3:].
 PANEL_WORKER = """
 import sys
 sys.path.insert(0, sys.argv[1])

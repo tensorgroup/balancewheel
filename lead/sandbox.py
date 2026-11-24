@@ -143,9 +143,10 @@ def lead_grants(project, runtime, state_dir):
     reads += [check_path(os.path.abspath(os.path.expanduser(p))) for p in runtime.read
               if os.path.islink(os.path.expanduser(p))]
     reads.append(check_path(own_view))
-    # Copies of third-party databases (cc-switch, Orca) bw reads, the inbox record, and the answers
-    # views: never readable by a lead, except its own view.
-    denied = [os.path.join(state, "sealed"), os.path.join(state, "inbox.jsonl"), views]
+    # Copies of third-party databases (cc-switch, Orca) bw reads, the inbox record, the answers
+    # views, and every panel work dir (briefs, raw seat output): never readable by a lead, except
+    # its own view (which holds its panels' view dirs and the wait helper).
+    denied = [os.path.join(state, "sealed"), os.path.join(state, "inbox.jsonl"), views, os.path.join(state, "panels")]
     return Grants(rules, reads, [check_path(p) for p in denied], [check_path(own_view)])
 
 

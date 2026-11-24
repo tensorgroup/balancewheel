@@ -17,10 +17,9 @@ import time
 from collections import namedtuple
 
 from . import containment, guard as guardpkg, proc, quota, sandbox
-from .runner import _guarded
 from .guard import verify as guard_judge
 from .locks import RuntimeLock
-from .paths import ROOT
+from .paths import ROOT, guarded as _guarded
 from .runtimes import ADAPTERS
 
 ATTACK_TIMEOUT = 900

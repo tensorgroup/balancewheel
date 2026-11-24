@@ -159,6 +159,19 @@ class Grants(unittest.TestCase):
             self.assertIn(deny_views, prof)
             self.assertGreater(prof.index(allow_own), prof.index(deny_views))  # the later rule wins
 
+    def test_panel_work_dirs_denied_and_the_own_view_still_read(self):
+        g = self.grants(self.wt)
+        key = resolve_project(str(self.wt), {"projects": {}, "default_profile": "d"}).worktree_key
+        panels, own = str(self.state / "panels"), str(self.state / "inbox-view" / key)
+        self.assertIn(panels, g.deny_read)
+        self.assertIn(own, g.read)
+        for prof in (sandbox.seatbelt_profile(g, str(self.root / "scratch")),
+                     "".join(sandbox.nono_profile(g, str(self.root / "scratch"))["unsafe_macos_seatbelt_rules"])):
+            self.assertIn(f'(deny file-read* (subpath "{panels}"))', prof)
+            self.assertIn(f'(allow file-read* (subpath "{own}"))', prof)
+        for _, _, path in g.rules:  # no write grant covers a work dir either
+            self.assertFalse(panels == path or panels.startswith(path.rstrip("/") + "/"), path)
+
     def test_nono_profile_shape(self):
         p = sandbox.nono_profile(self.grants(self.wt), str(self.root / "scratch"))
         self.assertEqual(p["extends"], "default")
@@ -375,6 +388,22 @@ class EscapesUnderSeatbelt(unittest.TestCase):
         for c in ("OTHER", "LEGACY", "RECORD"):
             self.assertNotIn(f"{c}-c4n4ry", r.stdout, c)
         self.assertNotIn("0123456789ab", r.stdout)  # other worktrees' keys are not even listed
+
+    def test_panel_work_dirs_unreadable_and_the_own_panel_view_readable(self):
+        key = self.own_key()
+        view = self.state / "inbox-view" / key / "panels" / "p1234567"; view.mkdir(parents=True)
+        (view / "status.json").write_text('{"state": "VIEW-c4n4ry"}\n')
+        for k in (key, "0123456789ab"):
+            work = self.state / "panels" / k / "p1234567"; work.mkdir(parents=True)
+            (work / "brief.md").write_text(f"WORK-{k}-c4n4ry\n")
+        probe = f'cat "{view}/status.json" "{self.state}/panels/{key}/p1234567/brief.md" ' \
+                f'"{self.state}/panels/0123456789ab/p1234567/brief.md"; ls "{self.state}/panels"'
+        outside = subprocess.run(["/bin/sh", "-c", probe], capture_output=True, text=True).stdout
+        self.assertIn("WORK-0123456789ab-c4n4ry", outside)  # the probe works outside
+        r = self.sh(self.wt, probe)
+        self.assertIn("VIEW-c4n4ry", r.stdout, r.stderr)
+        self.assertNotIn("WORK-", r.stdout)  # not even the lead's own worktree's work dir
+        self.assertNotIn("0123456789ab", r.stdout)
 
     PORT_PROBE = ('/usr/bin/python3 -c "import socket\n'
                   'try:\n socket.create_connection((\'127.0.0.1\', {port}), 2); print(\'CONNECTED\')\n'

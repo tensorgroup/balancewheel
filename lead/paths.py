@@ -52,3 +52,9 @@ def read_json(path, default=None):
             return json.load(f)
     except (OSError, ValueError):
         return default
+
+
+def guarded(lead):
+    """True for a lead that runs behind `bw guard`: autonomy "guard" set in the config (a legacy
+    lead never is). Here, a leaf module, so lead.runner and lead.verify import it without a cycle."""
+    return lead.get("autonomy_source", "legacy") != "legacy" and lead.get("autonomy") == "guard"

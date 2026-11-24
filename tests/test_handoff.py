@@ -208,17 +208,17 @@ class PanelProtocol(unittest.TestCase):
         text = protocol_text(CFG, "high", "/s/handoffs/k/panel", "/s/inbox-view/k/panels", "/s/inbox-view/k/panels/bw-panel-wait")
         self.assertIn("mv /s/handoffs/k/panel/.tmp-<id> /s/handoffs/k/panel/<id>.request", text)
         self.assertNotIn("$BW_PANEL", text)
-        self.assertIn("python3 /s/inbox-view/k/panels/bw-panel-wait — ", text)
+        self.assertIn("\n`python3 /s/inbox-view/k/panels/bw-panel-wait`\n", text)
         self.assertIn("/s/inbox-view/k/panels/responses/<id>.json", text)
 
     def test_wait_path_defaults_to_the_view_root(self):
         text = protocol_text(CFG, "high", "/s/handoffs/k/panel", "/s/inbox-view/k/panels")
-        self.assertIn("python3 /s/inbox-view/k/panels/bw-panel-wait — ", text)
+        self.assertIn("\n`python3 /s/inbox-view/k/panels/bw-panel-wait`\n", text)
 
     def test_shell_paths_quoted_for_a_space(self):
         text = protocol_text(CFG, "high", "/s d/handoffs/k/panel", "/s d/inbox-view/k/panels", "/s d/inbox-view/k/panels/bw-panel-wait")
         self.assertIn("mv '/s d/handoffs/k/panel'/.tmp-<id> '/s d/handoffs/k/panel'/<id>.request", text)
-        self.assertIn("python3 '/s d/inbox-view/k/panels/bw-panel-wait'", text)
+        self.assertIn("\n`python3 '/s d/inbox-view/k/panels/bw-panel-wait'`\n", text)
         self.assertIn("tool to /s d/handoffs/k/panel/.tmp-<id>", text)   # the file tool gets the plain path
 
     def test_protocol_names_exit_3_relative_paths_and_the_other_seat(self):

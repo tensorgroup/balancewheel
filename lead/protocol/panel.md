@@ -10,7 +10,8 @@ $deep
 - bw answers in $view_root/responses/<id>.json within a few seconds: {"ok": true, "panel": "<panel id>", "nonce": ...} or {"ok": false, "error": "..."}. If the nonce is not yours, that id was used before: send the request again with a new id. On an error, do what the error says, then send the request again with a new id.
 - Keep working while the panel runs. Do not act on the checkpoint's output (build the design, merge the branch) until the panel is logged.
 - At each task boundary, read $view_root/<panel id>/status.json. When "state" is "ready" or "failed", follow $view_root/<panel id>/next.md.
-- When you have nothing else to do, run exactly this, with no other words: python3 $wait_sh — it returns in two minutes or less. Exit status 3 means still working: run it again.
+- When you have nothing else to do, run exactly the next line, with no other words. It returns in two minutes or less. Exit status 3 means still working: run it again.
+`python3 $wait_sh`
 - Never set, export, or unset a variable whose name starts with BW_.
 - Verify every finding against the code yourself. A seat's confidence is not evidence.
 - Relay one disputed claim at a time with an ask request, to a seat that did not raise the finding. Never paste a seat's output to another seat.

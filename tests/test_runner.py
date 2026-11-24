@@ -1149,6 +1149,20 @@ class TryRuntimeLock(unittest.TestCase):
 FAKE_SEAT = HERE / "fixtures" / "panel" / "fake_seat.py"
 
 
+class OpenLines(unittest.TestCase):
+    def test_a_read_failure_is_one_panel_notice_and_no_lines(self):
+        from lead import inbox
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        ctx = mock.Mock(state=tmp.name, project=mock.Mock(worktree_key="k"))
+        with mock.patch.object(runner.panelsvc, "open_lines", side_effect=RuntimeError("boom")):
+            self.assertEqual(runner._open_lines(ctx), [])
+            self.assertEqual(runner._open_lines(ctx), [])  # still one open notice
+        (n,) = [i for i in inbox.open_items(tmp.name, "k") if i.get("kind") == "panel"]
+        self.assertEqual(n["key"], "open-lines")
+        self.assertIn("RuntimeError", n["text"])
+        ctx.say.assert_not_called()
+
+
 class PanelRunner(RunnerCase):
     """`bw lead` with a profile that convenes panels: the fake lead writes requests from the literal
     paths in its first prompt, and the fake seat stands in for `bw seat`."""
@@ -1257,7 +1271,7 @@ class PanelRunner(RunnerCase):
         unresolved = os.path.join(str(link), "inbox-view", self.key, "panels", "bw-panel-wait")
         expected = os.path.realpath(unresolved)
         self.assertNotEqual(expected, unresolved)
-        self.assertIn(f"python3 {expected} — ", self.prompt())
+        self.assertIn(f"\n`python3 {expected}`\n", self.prompt())
         # In process: wait_path and lead_env exist before _guard_start runs (Plan 8 passes them on).
         import io
         from lead.paths import load_config
