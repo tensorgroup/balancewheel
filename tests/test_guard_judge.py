@@ -83,6 +83,10 @@ class TestSecretShapes(unittest.TestCase):
         "slack xoxb": "echo xoxb-1234567890-abcdefghij",
         "slack xoxp": "echo xoxp-1234567890-abcdefghij",
         "high entropy": "echo q8Vt3ZkP0wLx7RmN2bYc9HdJ4sFg6QeA",
+        "sshpass": "sshpass -p hunter2 ssh host",
+        "sshpass attached": "sshpass -phunter2 ssh host",
+        "gitlab": "echo glpat-abcdefghij0123456789",
+        "jwt": "curl -H 'X-T: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig' u",
     }
 
     def test_each_secret_shape_is_not_sent(self):
@@ -101,7 +105,7 @@ class TestSecretShapes(unittest.TestCase):
 
 
 class TestPaths(unittest.TestCase):
-    HOME_NA = "/Users/josé"  # synthetic non-ASCII home
+    HOME_NA = "/Users/jos\u00e9"  # synthetic non-ASCII home
 
     def test_non_ascii_home_is_replaced_in_a_tool_call(self):
         p = self.HOME_NA + "/notes.txt"
@@ -114,6 +118,27 @@ class TestPaths(unittest.TestCase):
         text, _ = judge.prepare(shell_call("cat " + self.HOME_NA + "/a"), WT, self.HOME_NA)
         self.assertNotIn("jos", text)
         self.assertIn("~/a", text)
+
+    def test_nfd_call_text_is_replaced_for_an_nfc_home(self):
+        nfd = "/Users/jose\u0301"  # NFD: e + combining acute
+        text, _ = judge.prepare(shell_call("cat " + nfd + "/a"), WT, self.HOME_NA)
+        self.assertNotIn("jos", text)
+        self.assertIn("~/a", text)
+
+    def test_nfd_tool_call_is_replaced_for_an_nfc_home(self):
+        p = "/Users/jose\u0301/notes.txt"  # NFD
+        call = Call("pi", "read", "read", None, (p,), None, {"path": p}, WT, WT)
+        text, _ = judge.prepare(call, WT, self.HOME_NA)
+        self.assertNotIn("jos", text)
+        self.assertIn("~/notes.txt", text)
+
+    def test_a_home_with_a_trailing_slash_is_replaced(self):
+        text, _ = judge.prepare(shell_call("ls /Users/bob/x /Users/bob"), WT, "/Users/bob/")
+        self.assertEqual(json.loads(text)["call"], "ls ~/x ~")
+
+    def test_a_root_path_replaces_nothing(self):
+        text, _ = judge.prepare(shell_call("ls /etc"), "/", "/")
+        self.assertEqual(json.loads(text)["call"], "ls /etc")
 
     def test_home_is_replaced_only_at_a_path_boundary(self):
         text, _ = judge.prepare(shell_call("ls /Users/bobby /Users/bob /Users/bob/x"), WT, "/Users/bob")

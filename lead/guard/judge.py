@@ -41,7 +41,10 @@ _SECRET_SHAPES = [
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"),  # OpenAI, OpenRouter (sk-or-v1-), Anthropic (sk-ant-)
     re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}"),  # Slack
-]
+    re.compile(r"\bsshpass\b[^|;&\n]*\s-p\s*\S+"),  # sshpass -p PASSWORD
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"),  # GitLab
+    re.compile(r"\beyJ[\w-]+\.eyJ[\w-]+\."),  # JWT
+]  # a secret split, rebuilt, or base64-encoded in the command gets past these: best-effort only
 _TOKEN = re.compile(r"[A-Za-z0-9+=_-]{32,}")  # `/` splits tokens, so a path is never one
 _MIN_ENTROPY = 4.0  # bits per character; a lowercase hex sha tops out at 4.0 and has no capitals
 
@@ -64,10 +67,21 @@ def _has_secret(text):
 
 def _replace_path(text, path, token):
     """Put token in place of path, raw or JSON-escaped, only where a path ends: before `/`, the end,
-    or a character that cannot continue a name. /home/bob in /home/bobby stays."""
-    for form in {path, json.dumps(path)[1:-1]}:
+    or a character that cannot continue a name. /home/bob in /home/bobby stays. The text and the
+    path are compared in NFC, and the escaped forms of both NFC and NFD are tried, so a path in
+    either Unicode form is replaced. A trailing `/` on the path is dropped; `/` alone replaces nothing."""
+    path = path.rstrip("/")
+    if not path:
+        return text
+    text = unicodedata.normalize("NFC", text)
+    forms = set()
+    for p in (unicodedata.normalize("NFC", path), unicodedata.normalize("NFD", path)):
+        forms.update((p, json.dumps(p)[1:-1]))
+    for form in sorted(forms, key=len, reverse=True):
         text = re.sub(re.escape(form) + r"(?![\w.-])", lambda _m: token, text)
     return text
+
+
 # OpenRouter's unified switch (docs checked 2026-11-23): `enabled: false` turns reasoning off on every
 # model that allows it; `effort: "none"` is the OpenAI-style spelling of the same thing.
 REASONING_OFF = {"enabled": False}

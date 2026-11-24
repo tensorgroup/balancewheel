@@ -202,10 +202,12 @@ not against the prose.
   `checkpoint.md`, so every lead gets it. The rules changed, so the guard verification key and the
   evidence key both reset.
 - **The guard judge's request** (`lead/guard/judge.py`). Nothing calls it yet. `prepare` sends no
-  call that holds a secret. This covers redact's shapes, `curl -u user:pass`, `mysql -pPASS`, AWS
-  key ids, GitHub, `sk-`, and Slack tokens, and long high-entropy tokens. For such a call the judge
-  is skipped with "secret in call", and the rules' decision stands. `prepare` puts `{worktree}` and
-  `~` in place of the worktree and home paths, raw or JSON-escaped, only where a path ends. It
+  call that holds a secret. This covers redact's shapes, `curl -u user:pass`, `mysql -pPASS`,
+  `sshpass -p PASS`, AWS key ids, GitHub, GitLab, `sk-`, and Slack tokens, JWTs, and long
+  high-entropy tokens. For such a call the judge is skipped with "secret in call", and the rules'
+  decision stands. The check is best-effort: a split or encoded secret gets past it. `prepare` puts
+  `{worktree}` and `~` in place of the worktree and home paths, raw or JSON-escaped, in NFC or NFD,
+  only where a path ends. A trailing `/` on a path is dropped. It
   scrubs the text and refuses a user message over 4 KiB. A reply over 64 KiB is refused. The request goes only to OpenRouter's chat
   completions URL, with no redirects, `provider.zdr`, temperature 0, reasoning off
   (`reasoning: {"enabled": false}`), at most 200 output tokens, and a strict JSON schema: `decision`
