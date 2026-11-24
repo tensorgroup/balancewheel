@@ -419,6 +419,31 @@ class SeatAttack(unittest.TestCase):
         line = f"FAIL: probe-file:fresh:g1 probe-skipped:fresh:g3 — evidence in {run_dir}\n"
         self.assertEqual(verify.failure_message(line), "not recorded — the seat attack failed; see the evidence")
 
+    def test_cli_error_on_every_run_is_not_a_refusal(self):
+        # Live run 2026-11-23: the CLI refused its own argv, so no model ran and nothing refused.
+        run_dir = tempfile.mkdtemp(dir=self.tmp.name)
+        os.makedirs(os.path.join(run_dir, "state", "attack"))
+        line = f"FAIL: control-failed:fresh control-failed:resumed resume-not-exercised — evidence in {run_dir}\n"
+        cli = "error: error: Cannot combine --prompt with --auto."
+        rows = [{"type": "usage", "seat": "s", "mode": "new", "ok": False, "reason": cli, "ran": True},
+                {"type": "usage", "seat": "s", "mode": "new", "ok": False, "reason": cli, "ran": True},
+                {"type": "usage", "seat": "s", "mode": None, "ok": False, "reason": "hostile: x", "ran": False}]
+        metrics = Path(run_dir, "metrics.jsonl")
+        metrics.write_text("".join(json.dumps(r) + "\n" for r in rows) + "not json\n")
+        msg = verify.failure_message(line)
+        self.assertIn(verify.CLI_FAILED, msg)
+        self.assertIn("Cannot combine --prompt with --auto", msg)
+        self.assertNotIn("inconclusive", msg)
+        self.assertTrue(verify.inconclusive(msg))  # it proves nothing, so it never revokes a pass
+        # One seat run that worked: a model ran, so the old refusal message stands.
+        metrics.write_text("".join(json.dumps(r) + "\n" for r in rows + [dict(rows[0], ok=True, reason="ok")]))
+        self.assertIn("refusal by the model is inconclusive", verify.failure_message(line))
+        # A timeout is not a CLI error.
+        metrics.write_text("".join(json.dumps(r) + "\n" for r in [rows[0], dict(rows[1], reason="timeout")]))
+        self.assertIn("refusal by the model is inconclusive", verify.failure_message(line))
+        os.unlink(metrics)  # no metrics: the old message
+        self.assertIn("refusal by the model is inconclusive", verify.failure_message(line))
+
     def test_timeout_passed(self):  # controller ruling, fix round 1: the script's worst case
         fake = AttackRun("PASS — evidence in /ev\n")
         verify.verify_seat(self.config, self.state, "astra", run=fake)

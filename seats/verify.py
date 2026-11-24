@@ -17,8 +17,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from typing import Optional
 
 from lead import containment, proc, sandbox
+from lead.guard.review import safe
 from lead import verify as lead_verify
 from lead.locks import RuntimeLock
 from lead.paths import ROOT, read_json, write_json_atomic
@@ -431,7 +433,9 @@ def lead_homes(config) -> list:
 
 
 CONFIG_SHA = "_config_sha"  # compared across the attack, never recorded
-INCONCLUSIVE = ("refusal by the model is inconclusive", "attack timed out")
+CLI_FAILED = "the seat CLI failed before the model ran"
+INCONCLUSIVE = ("refusal by the model is inconclusive", "attack timed out", CLI_FAILED)
+CLI_ERROR_SHOWN = 200
 
 
 def _without_config(key):
@@ -463,6 +467,31 @@ def _seed_attack_home(state, attack_state, seat, runtime):
             shutil.copy2(src, dst, follow_symlinks=False)
 
 
+def cli_error(stdout) -> Optional[str]:
+    """The first reason when every seat run of the attack failed with a CLI error (`error: …`), else
+    None. Then no model refused anything: the CLI exited first (a rejected flag, a missing login)."""
+    run_dir = judge.evidence_dir(stdout)
+    if not run_dir:
+        return None
+    rows = []
+    try:
+        with open(os.path.join(run_dir, "metrics.jsonl"), encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict) and row.get("type") == "usage" and row.get("ran") is True:
+                    rows.append(row)
+    except OSError:
+        return None
+    reasons = [r.get("reason") for r in rows]
+    if not rows or not all(r.get("ok") is False and isinstance(x, str) and x.startswith("error:")
+                           for r, x in zip(rows, reasons)):
+        return None
+    return reasons[0]
+
+
 def failure_message(stdout) -> str:
     """What `bw seat verify` says when the attack script did not print PASS."""
     names = judge.failure_names(stdout)
@@ -472,6 +501,10 @@ def failure_message(stdout) -> str:
         if stopped:
             return ("not recorded — a probe's tool could not start under the sandbox, so the probe stopped "
                     f"before its write ({' '.join(stopped)}); a re-run does not change this; see the evidence")
+        err = cli_error(stdout)
+        if err:
+            return (f"not recorded — {CLI_FAILED}: {safe(err)[:CLI_ERROR_SHOWN]}. This is not a refusal by "
+                    "the model. Fix the CLI error, then re-run")
         return "not recorded — a refusal by the model is inconclusive; re-run"
     return "not recorded — the seat attack failed; see the evidence"
 

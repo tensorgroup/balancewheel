@@ -15,7 +15,7 @@ FIXTURES = Path(__file__).parent / "fixtures" / "seats"
 RECORDED_PERMISSION_FLAG = {"codex": ["--dangerously-bypass-approvals-and-sandbox"],
                             "claude-code": ["--permission-mode", "bypassPermissions"],
                             "pi": [],  # pi has no approval prompts
-                            "kimi": ["--auto"],
+                            "kimi": [],  # `-p` is headless; kimi 2.3.2 refuses `-p` with `--auto`
                             "agy": ["--dangerously-skip-permissions"]}
 RECORDED_ENV_KEY = {"claude-code": "CLAUDE_CODE_OAUTH_TOKEN", "pi": "OPENROUTER_API_KEY"}
 HOME = "/st/seats/homes/astra"
@@ -612,7 +612,7 @@ class Kimi(unittest.TestCase):
 
     def test_argv(self):
         self.assertEqual(self.ad.argv(self.SEAT, "/s/input.md", False),
-                         ["kimi", "-m", "m-test", "--output-format", "stream-json", "--auto",
+                         ["kimi", "-m", "m-test", "--output-format", "stream-json",
                           "-p", adapters.FILE_INSTRUCTION.format(path="/s/input.md")])
 
     def test_deep_without_knob(self):  # kimi 2.3.2 has no effort flag
@@ -695,9 +695,12 @@ class Kimi(unittest.TestCase):
                              [(os.path.join(d, "credentials", "login-x.json"), "credentials/login-x.json", True)])
         self.assertEqual(adapters._kimi_logins("/nonexistent/kimi"), [])
 
-    def test_permission_flag_present(self):  # R19
-        self.assertTrue(has_run(self.ad.argv(self.SEAT, "/s/i", False), RECORDED_PERMISSION_FLAG["kimi"]))
-        self.assertTrue(has_run(self.ad.resume_argv(self.SEAT, "sid", "/s/i", False), RECORDED_PERMISSION_FLAG["kimi"]))
+    def test_no_flag_that_kimi_refuses_with_prompt(self):  # live run 2026-11-23: "Cannot combine --prompt with --auto"
+        self.assertEqual(RECORDED_PERMISSION_FLAG["kimi"], [])
+        for argv in (self.ad.argv(self.SEAT, "/s/i", False), self.ad.argv(self.SEAT, "/s/i", True),
+                     self.ad.resume_argv(self.SEAT, "sid", "/s/i", False)):
+            self.assertIn("-p", argv)
+            self.assertFalse(set(argv) & set(adapters.KIMI_PROMPT_ONLY), argv)
 
     def test_kimi_project_mcp_symlink_counts(self):
         with tempfile.TemporaryDirectory() as d:

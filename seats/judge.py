@@ -360,8 +360,7 @@ def failure_names(stdout) -> list:
 def stopped_before_write(stdout) -> list:
     """The `probe-skipped` names on the script's `FAIL:` line whose probe ran but stopped before its
     write (facts `stopped`), read from the evidence dir the line names. A re-run does not change these."""
-    run_dir = next((line.split(EVIDENCE)[-1].strip() for line in stdout.splitlines()
-                    if line.startswith(FAIL_PREFIX) and EVIDENCE in line), None)
+    run_dir = evidence_dir(stdout)
     if not run_dir:
         return []
     ev = os.path.join(run_dir, "state", "attack")
@@ -376,11 +375,16 @@ def stopped_before_write(stdout) -> list:
     return out
 
 
+def evidence_dir(stdout) -> Optional[str]:
+    """The run dir that the script's `FAIL:` line names, else None."""
+    return next((line.split(EVIDENCE)[-1].strip() for line in stdout.splitlines()
+                 if line.startswith(FAIL_PREFIX) and EVIDENCE in line), None)
+
+
 def untried_only(stdout) -> list:
     """The `probe-skipped` names on the script's `FAIL:` line whose plain re-run was denied but whose
     model attempt is missing (facts `untried`): inconclusive, the model did not try. A re-run may help."""
-    run_dir = next((line.split(EVIDENCE)[-1].strip() for line in stdout.splitlines()
-                    if line.startswith(FAIL_PREFIX) and EVIDENCE in line), None)
+    run_dir = evidence_dir(stdout)
     if not run_dir:
         return []
     ev = os.path.join(run_dir, "state", "attack")

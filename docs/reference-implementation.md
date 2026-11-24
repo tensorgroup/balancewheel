@@ -30,7 +30,8 @@ the live attack on the codex and agy seats: the codex install read, the codex CA
 updated 2026-11-23 a fifth time after the seat review fixes: the agy seat moves to its own gemini dir in the seat
 home (`--gemini_dir`), seats lose the agent sockets and the keychain, and the parent of each code
 name is rename-proof (see Seat runtimes under `bw seat`); updated 2026-11-23 a sixth time: the panel instructions
-now live in this repo as `bw panel` (see Panel instructions).*
+now live in this repo as `bw panel` (see Panel instructions); updated 2026-11-23 a seventh time after the
+first live panel: the kimi seat runs `-p` with no `--auto` (Kimi Code 2.3.2 refuses the pair).*
 
 ## The cast
 
@@ -357,7 +358,7 @@ returned only the usage-limit error. The kimi column is therefore "help" plus th
 | Session store under the real home | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` o | `~/.claude/projects/<cwd>/<id>.jsonl` o | `~/.pi/agent/sessions/--<cwd>--/` o | `~/.kimi-code/sessions/` u | `~/.gemini/antigravity-cli/conversations/<id>.db` and `brain/<id>/` o |
 | Error-line shape | events `error` and `turn.failed` u; stderr was empty o | `result` with `is_error`, `subtype`, `api_error_status` o (fields) | assistant `message_end` with `stopReason` `error` u; stderr `Warning:` lines are not errors o | stderr `error: failed to run prompt: provider.api_error: 429 …`, exit 1 o | `result.status` other than `SUCCESS` o (field) |
 | Prompt echo, and where | none with `--json` and a stdin prompt o | none o | stdout: `message_start`, `message_end`, `agent_end` with `role` `user` o | u | none (the `user_input` step has no text) o |
-| Headless tool-permission flag | `--dangerously-bypass-approvals-and-sandbox` h | `--permission-mode bypassPermissions` h,o | none (no approval prompts) h | `--auto` h | `--dangerously-skip-permissions` h,o |
+| Headless tool-permission flag | `--dangerously-bypass-approvals-and-sandbox` h | `--permission-mode bypassPermissions` h,o | none (no approval prompts) h | none: `-p` runs headless, and 2.3.2 refuses `-p` with `--auto` o | `--dangerously-skip-permissions` h,o |
 | Env keys it needs | none | none (or `CLAUDE_CODE_OAUTH_TOKEN`, see below) o | the provider key, for OpenRouter `OPENROUTER_API_KEY` h,o | none | none |
 | Credential file it refreshes in place | `auth.json` (it holds a refresh token) o | `.credentials.json` when the login is a file u; none with a token o | none for an API key o | the JSON file under `credentials/` (it holds a refresh token) o | none (keychain) u |
 | Answer (final text) | last `item.completed` with `item.type` `agent_message`, field `item.text` o | `result.result` o | last assistant `message_end`, `content[].text` o | u | `result.response` o |
@@ -485,8 +486,9 @@ continues. pi has no approval prompts, so it needs no permission flag.
 that names the brief file. The usage-limit error is one stderr line that starts with `error: failed
 to run prompt: provider.api_error: 429`, then a `See log:` line, and exit 1. stdout holds only a
 `system.version` event. Run one OK prompt when the plan resets, and record the session, answer, and
-usage shapes before the kimi fixtures are final. `--auto` is "Never Ask" mode; `--yolo` still asks
-for risky actions. Kimi Code ignores its own deny rules in `-p` mode.
+usage shapes before the kimi fixtures are final. Do not add `--auto` (or `--yolo`, or `--plan`) to a
+`-p` run: Kimi Code 2.3.2 exits with "Cannot combine --prompt with --auto" before any model turn.
+Kimi Code ignores its own deny rules in `-p` mode.
 
 **agy.** The event key is `event`, not `type`. `--effort` exists (`low` to `max`), so the agy
 adapter can take an effort flag. agy has no documented config-dir variable. A private `HOME` sends

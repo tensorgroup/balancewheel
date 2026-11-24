@@ -625,15 +625,17 @@ PI = SeatAdapter(
 # KIMI_CODE_HOME and HOME are the seat home. Kimi Code ignores its own deny rules in -p mode: only
 # the OS sandbox enforces. kimi 2.3.2 has no effort flag. Only the usage-limit error path was
 # observed (stderr `error: ...`, then `See log:`); the session, answer, and tool shapes come from
-# the docs and are UNVERIFIED until one OK run is recorded.
+# the docs and are UNVERIFIED until one OK run is recorded. `-p` is the headless mode, and it takes no
+# permission flag: kimi 2.3.2 refuses `-p` together with `--auto`, `--yolo`, or `--plan` ("Cannot combine
+# --prompt with --auto"), before any model turn (checked 2026-11-23 with no login).
 
-KIMI_AUTO = ["--auto"]  # "Never Ask" mode, the headless permission flag (R19)
+KIMI_PROMPT_ONLY = ["--auto", "-y", "--yolo", "--plan"]  # flags kimi refuses next to `-p`
 KIMI_PROJECT_CODE = [".kimi-code/mcp.json", ".kimi-code/skills"]
 KIMI_ERROR = re.compile(r"error\b", re.I)
 
 
 def _kimi_flags(seat):
-    return ["-m", seat["model"], "--output-format", "stream-json", *KIMI_AUTO, *seat.get("args", [])]
+    return ["-m", seat["model"], "--output-format", "stream-json", *seat.get("args", [])]
 
 
 def _kimi_argv(seat, input_path, deep):

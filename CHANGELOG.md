@@ -72,6 +72,11 @@ not against the prose.
 
 ### Fixed
 
+- **The kimi seat runs** (`seats/adapters.py`). It runs `kimi -p` with no `--auto`: Kimi Code 2.3.2
+  refuses `-p` together with `--auto`, `--yolo`, or `--plan`, before any model turn. `bw seat verify`
+  no longer calls a CLI error a refusal by the model: when every seat run of the attack failed with a
+  CLI error, it says "the seat CLI failed before the model ran" and shows the error (`seats/verify.py`).
+  Such a run still never revokes a pass.
 - **Seat containment** (`seats/grants.py`). A seat can no longer rename the parent of a code name (a
   literal write deny on each dir node from the seat home down). Seats cannot connect to an SSH or GPG
   agent socket, and, except agy, cannot ask the keychain. A seat has its own secret list
