@@ -402,7 +402,9 @@ _BW_FD = re.compile(rf"\{{{_BW_NAME}{_IDX}\}}")  # {X}>file stores an fd number 
 _BW_ANY = re.compile(_BW_NAME)
 # an assignment inside a word or arithmetic: a[X=5]=1, $((X++)), $((++X)), X|=0, X[0]=1 (not X==1)
 _BW_IN = re.compile(rf"(?<![A-Za-z0-9_$])(?:(?:\+\+|--)\s*{_BW_NAME}|{_BW_NAME}{_IDX}\s*(?:\+\+|--|(?:<<|>>|[-+*/%&|^])?=(?!=)))")
-_PRINTF_N = re.compile(r"%[-+ #0-9.*]*n")  # printf stores a count into the matching operand
+# printf stores a count into the matching operand: %n with any flags, width, precision, or length
+# modifier bash skips before the conversion (%ln, %hhn, %'n, %zn, %5.2n)
+_PRINTF_N = re.compile(r"%[-+ #0'0-9.*]*[hlLjzt]*n")
 _ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=")
 _RESERVED = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
 _UNSEEN = re.compile(r"[$`{]")  # a name the shell would build at run time

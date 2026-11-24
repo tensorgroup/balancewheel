@@ -127,7 +127,9 @@ def lead_entries(config, data, state):
 
 
 # a template token such as <seat policy> or <why>, or TODO; a real policy may use < and > ("< 5 min")
-_PLACEHOLDER = re.compile(r"<[A-Za-z_][A-Za-z_ -]*>|\bTODO\b")
+# a whole-token template placeholder such as <role> or <policy here>, or TODO; `x<y and z>w` and
+# `List<String>` are real text (the brackets touch a word outside them)
+_PLACEHOLDER = re.compile(r"(?<![\w<])<[A-Za-z_][A-Za-z_ -]*>(?![\w>])|\bTODO\b")
 
 
 def _check_policies(config, seats):

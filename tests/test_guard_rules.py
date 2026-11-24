@@ -722,13 +722,19 @@ class CheckpointDirTests(unittest.TestCase):
         out = os.path.join(self.tmp, "elsewhere")
         for cmd in (f'cd {out}; printf %n BW_CHECKPOINT; mkdir -p "$BW_CHECKPOINT/x"; echo x > "$BW_CHECKPOINT/x/f"',
                     "printf '%n' BW_PANEL", "printf 'a%5n' BW_PANEL", "printf -- %n BW_PANEL",
-                    'printf "$f" BW_PANEL', 'printf %n "$n"', 'printf -v ok -v "$x" y', "printf -v ok -vBW_PANEL y"):
+                    'printf "$f" BW_PANEL', 'printf %n "$n"', 'printf -v ok -v "$x" y', "printf -v ok -vBW_PANEL y",
+                    # round 2: bash skips flags and length modifiers before the conversion
+                    f'cd {out}; printf %ln BW_CHECKPOINT; mkdir -p "$BW_CHECKPOINT/x"; echo x > "$BW_CHECKPOINT/x/f"',
+                    "printf %ln BW_PANEL", "printf %hhn BW_PANEL", "printf \"%'n\" BW_PANEL", "printf %zn BW_PANEL",
+                    "printf %Ln BW_PANEL", "printf %tn BW_ASKS", "printf %jn BW_PANEL", "printf -- %ln BW_PANEL",
+                    "printf '%s%-5.2ln' a BW_PANEL", "builtin printf %ln BW_CHECKPOINT"):
             d = decide(shell(cmd), self.bw_ctx())
             self.assertEqual((d.decision, d.source, d.rule), ("ask", "rule", "ask:bw-env"), cmd)
 
     def test_printf_that_assigns_any_variable_is_not_allowed(self):   # g01
         for cmd in ("printf -v CDPATH %s /tmp; cd src && echo x > a", "printf -v PATH %s .", "printf -vIFS %s /",
-                    "printf %n HOME", "printf -v out '%s' hi", "printf -- '%s%n' a BASH_ENV"):
+                    "printf %n HOME", "printf -v out '%s' hi", "printf -- '%s%n' a BASH_ENV",
+                    "printf %ln PATH", "printf %hhn IFS", "printf %zn CDPATH"):
             d = decide(shell(cmd, cwd=self.wt), self.bw_ctx())
             self.assertEqual((d.decision, d.source), ("ask", "gray"), cmd)
         for cmd in ("printf '%s\\n' hi", "printf -- -v", "printf '%d%%' 5", 'printf "%s" "$BW_PANEL"'):

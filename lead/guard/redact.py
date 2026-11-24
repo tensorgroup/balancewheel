@@ -19,9 +19,13 @@ _PATTERNS = [
     # Basic <base64>: a capital B and a mixed-case token of 8+ characters, so "basic tests" stays
     (re.compile(r"\b(Basic)\s+(?=[A-Za-z0-9+/]*[A-Z])(?=[A-Za-z0-9+/]*[a-z])[A-Za-z0-9+/]{8,}={0,2}"), r"\1 [REDACTED]"),
     # "password": "x" and 'api_key': 'x' in tool and MCP args (also as \"token\": \"x\" inside a JSON string)
-    (re.compile(r"""(?i)((\\?["'])[A-Za-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key"""
-                r"""|private[_-]?key|authorization|credentials?)\2\s*:\s*)(\\?["'])(?:(?!\3).)+\3"""),
+    (re.compile(r"""(?i)((\\?["'])[A-Za-z0-9_.-]*(?:password|passwd|passphrase|secret|token|api[_-]?key"""
+                r"""|access[_-]?key|private[_-]?key|authorization|credentials?)\2\s*:\s*)(\\?["'])(?:(?!\3).)+\3"""),
      r"\1\3[REDACTED]\3"),
+    # the same keys with a number for a value ("pin_token": 123456)
+    (re.compile(r"""(?i)((\\?["'])[A-Za-z0-9_.-]*(?:password|passwd|passphrase|secret|token|api[_-]?key"""
+                r"""|access[_-]?key|private[_-]?key|authorization|credentials?)\2\s*:\s*)-?\d[\d.eE+-]*"""),
+     r"\1[REDACTED]"),
 ]
 
 

@@ -163,9 +163,11 @@ class Entries(Base):
             self.assertIn("placeholder", str(e.exception))
 
     def test_a_real_policy_with_angle_brackets_passes(self):   # plan 9 final review
-        c = self.make_config(eps={"policy": "Escalate when a run takes < 5 min or > 30 min; a->b is fine."})
-        self.assertTrue(export.entries(c, self.load([]), self.state))
-        for text in ("<seat policy>", "Holds <why> duties.", "TODO"):
+        for real in ("Escalate when a run takes < 5 min or > 30 min; a->b is fine.", "Ask when x<y and z>w.",
+                     "Escalate when cost<budget and latency>2s.", "Reviews List<String> code."):
+            c = self.make_config(eps={"policy": real})
+            self.assertTrue(export.entries(c, self.load([]), self.state), real)
+        for text in ("<seat policy>", "Holds <why> duties.", "TODO", "<role>", "<policy here>"):
             with self.subTest(text), self.assertRaises(export.PackError):
                 export.entries(self.make_config(eps={"policy": text}), self.load([]), self.state)
 
@@ -622,6 +624,22 @@ class Cli(Base):
                                  "ts": "2026-11-02T00:00:00Z"})
         data = mod._panel_data(cfg.load_config(self.config))
         self.assertEqual([(x["id"], x["status"]) for x in data["watches"]], [("w1", "resolved")])
+
+    def test_a_number_ts_and_a_string_ts_compare(self):   # round 2: logs from other setups
+        import importlib.machinery
+        import importlib.util
+        loader = importlib.machinery.SourceFileLoader("bw_cli_pack_ts", BW)
+        mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(mod)
+        w = {"type": "watch", "id": "w1", "kind": "redundant-seat", "target": "alpha", "status": "open"}
+        store.append(self.log, dict(w, ts="2026-11-01T00:00:00Z"))
+        store.append(self.log2, dict(w, ts=1793577600))  # 2026-11-02T00:00:00Z as epoch seconds
+        store.append(self.log2, {"type": "watch-update", "watch_id": "w1", "status": "resolved", "ts": 1793577700})
+        store.append(self.log, panel("p1", "2026-11-03T00:00:00Z", {"alpha": "model-a"}))
+        store.append(self.log2, dict(panel("p2", "2026-11-01T00:00:00Z", {"alpha": "model-a"}), ts=1793491200))
+        data = mod._panel_data(cfg.load_config(self.config))
+        self.assertEqual([(x["id"], x["status"]) for x in data["watches"]], [("w1", "resolved")])
+        self.assertEqual([p["id"] for p in data["panels"]], ["p2", "p1"])
 
     def test_cli_os_error_names_the_failing_path(self):   # g21
         store.append(self.log, panel("p1", "2026-11-01T00:00:00Z", {"alpha": "model-a"}, {"alpha": (1, 0, 0, 1)}))

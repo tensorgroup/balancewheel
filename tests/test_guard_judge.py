@@ -72,10 +72,11 @@ class TestPrepare(unittest.TestCase):
 
     def test_json_credentials_never_reach_the_judge(self):   # g07
         for args in ({"password": "hunter2"}, {"api_key": "abc"}, {"headers": {"Authorization": "Basic dXNlcjpwYXNz"}},
-                     {"client_secret": "s3"}, {"github_token": "x1"}):
+                     {"client_secret": "s3"}, {"github_token": "x1"}, {"passphrase": "open sesame"},
+                     {"pin_token": 123456}, {"password": 1234}, {"ssh_passphrase": "x"}):
             call = shell_call("x")._replace(kind="mcp", tool="t", command=None, args=args)
             self.assertEqual(judge.prepare(call, WT, HOME), (None, "secret in call"), args)
-        for args in ({"max_tokens": 5, "key": "k", "token": None}, {"q": "basic tests"}):
+        for args in ({"max_tokens": 5, "key": "k", "token": None}, {"q": "basic tests"}, {"token_count": 3}):
             call = shell_call("x")._replace(kind="mcp", tool="t", command=None, args=args)
             self.assertIsNone(judge.prepare(call, WT, HOME)[1], args)
 

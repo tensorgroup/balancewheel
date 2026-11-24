@@ -67,6 +67,7 @@ from panel import cli as panel_cli  # noqa: E402
 from packs import export as pack_export  # noqa: E402
 from lead.paths import ConfigError, load_config, state_dir  # noqa: E402  (also puts metrics/ on sys.path)
 import store  # noqa: E402
+import summary as metrics_summary  # noqa: E402
 from lead.projects import resolve_project, worktree_key  # noqa: E402
 from lead import proc  # noqa: E402
 from lead.paths import read_json, write_json_atomic  # noqa: E402
@@ -316,9 +317,18 @@ def cmd_verify(a, config, state):
     return _report(*verify.sandbox_verify(config, state, a.runtime, a.lead))
 
 
+def _ts_key(ts):
+    """A ts in one comparable form: epoch seconds for a number or a store timestamp, 0 for anything else.
+    Logs from other setups may hold either, and a str never compares with an int."""
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        return float(ts)
+    t = metrics_summary._parse(ts)
+    return t.timestamp() if t else 0.0
+
+
 def _watch_last(w):
     """When a watch last changed: its latest update, else its own ts."""
-    return max([u.get("ts") or "" for u in w.get("updates") or []] + [w.get("ts") or ""])
+    return max([_ts_key(u.get("ts")) for u in w.get("updates") or []] + [_ts_key(w.get("ts"))])
 
 
 def _panel_data(config):
@@ -339,7 +349,7 @@ def _panel_data(config):
         if w["id"] not in watches or _watch_last(w) >= _watch_last(watches[w["id"]]):
             watches[w["id"]] = w
     data["watches"] = list(watches.values())
-    data["panels"] = sorted(data["panels"], key=lambda p: p.get("ts") or "")
+    data["panels"] = sorted(data["panels"], key=lambda p: _ts_key(p.get("ts")))
     return data
 
 

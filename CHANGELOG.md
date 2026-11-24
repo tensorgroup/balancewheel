@@ -132,7 +132,8 @@ not against the prose.
 ### Fixed
 
 - **`bw pack export` reads more real packs and refuses more broken ones** (`packs/export.py`, `bin/bw`).
-  A policy with `<` and `>` passes; only a token such as `<seat policy>` or `TODO` is a placeholder. A
+  A policy with `<` and `>` passes (`x<y and z>w`, `List<String>`); only a whole token such as
+  `<seat policy>` or `TODO` is a placeholder. A ts may be a number in one log and a string in another. A
   block value may be single-quoted or carry a trailing `# comment`. A UTF-8 BOM before `name:` is read
   past and kept. A `catalog:` line with a value, or a top-level key between `catalog:` and the begin
   marker, is refused. DEL and the C1 controls are escaped in written values. A refusal after the bullet
@@ -151,7 +152,8 @@ not against the prose.
   judge-down case's "judge circuit open" floor proof never matched in a real run, so the case could fail.
 - **JSON-shaped credentials skip the judge and are redacted in the log** (`lead/guard/redact.py`).
   `"password": "..."`, `'api_key': '...'`, `"client_secret"`, `"github_token"`, an `Authorization` key, and
-  `Basic <base64>` now count as secrets. `"max_tokens"` and a bare `"key"` do not.
+  `"passphrase"`, `Basic <base64>`, and such a key with a number for its value now count as secrets.
+  `"max_tokens"`, `"token_count"`, and a bare `"key"` do not.
 - **The judge is told the gray rule** (`lead/guard/judge.py`, `judging.py`). The user message gains `rule`
   (bw's own `gray:*` id) and the system prompt names it. The prompt hash changes, so evidence under a judge
   model starts fresh once.
@@ -169,6 +171,7 @@ not against the prose.
 - **The guard rules close six ways to change a variable or write a file unseen** (`lead/guard/rules.py`).
   A `printf -v NAME` or a `%n` format assigns a variable, so printf with either is gray (`gray:option`).
   With a protected `BW_*` name it is the rule ask `ask:bw-env` (`printf %n BW_CHECKPOINT` sets it to 0).
+  Every `%n` form counts: flags, width, precision, and length modifiers (`%ln`, `%hhn`, `%'n`, `%zn`).
   Every `-v` and `-p` operand is checked, not only the first. A `cd` in a command that names `CDPATH` is
   gray (`gray:cdpath`). `&> 1`, `&>> 1`, and `&> -` write a file named `1` or `-`; only `>&N` and `>&-`
   copy or close a descriptor. `cp`, `mv`, `ln`, and `install` into an existing dir also check
