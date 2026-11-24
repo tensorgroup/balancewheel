@@ -713,6 +713,63 @@ class CheckpointDirTests(unittest.TestCase):
         d = decide(write_call(os.path.join(self.cp, "asks", "a")), self.ctx(checkpoint_dir=None))
         self.assertEqual(d.rule, "gray:outside-write")
 
+    # end fix wave (panel plans 7-9)
+    def bw_ctx(self):
+        return self.ctx(lead_env={"BW_PANEL": os.path.join(self.cp, "panel"), "BW_ASKS": os.path.join(self.cp, "asks"),
+                                  "BW_CHECKPOINT": os.path.join(self.cp, "checkpoint.md")})
+
+    def test_printf_that_assigns_a_protected_name_is_a_rule_ask(self):   # g01, g04
+        out = os.path.join(self.tmp, "elsewhere")
+        for cmd in (f'cd {out}; printf %n BW_CHECKPOINT; mkdir -p "$BW_CHECKPOINT/x"; echo x > "$BW_CHECKPOINT/x/f"',
+                    "printf '%n' BW_PANEL", "printf 'a%5n' BW_PANEL", "printf -- %n BW_PANEL",
+                    'printf "$f" BW_PANEL', 'printf %n "$n"', 'printf -v ok -v "$x" y', "printf -v ok -vBW_PANEL y"):
+            d = decide(shell(cmd), self.bw_ctx())
+            self.assertEqual((d.decision, d.source, d.rule), ("ask", "rule", "ask:bw-env"), cmd)
+
+    def test_printf_that_assigns_any_variable_is_not_allowed(self):   # g01
+        for cmd in ("printf -v CDPATH %s /tmp; cd src && echo x > a", "printf -v PATH %s .", "printf -vIFS %s /",
+                    "printf %n HOME", "printf -v out '%s' hi", "printf -- '%s%n' a BASH_ENV"):
+            d = decide(shell(cmd, cwd=self.wt), self.bw_ctx())
+            self.assertEqual((d.decision, d.source), ("ask", "gray"), cmd)
+        for cmd in ("printf '%s\\n' hi", "printf -- -v", "printf '%d%%' 5", 'printf "%s" "$BW_PANEL"'):
+            self.assertEqual(decide(shell(cmd, cwd=self.wt), self.bw_ctx()).decision, "allow", cmd)
+
+    def test_cd_in_a_command_that_names_cdpath_is_gray(self):   # g01
+        d = decide(shell("echo CDPATH=x && cd sub", cwd=self.wt), self.ctx())
+        self.assertEqual((d.decision, d.source, d.rule), ("ask", "gray", "gray:cdpath"))
+        self.assertEqual(decide(shell("cd .git && ls", cwd=self.wt), self.ctx()).decision, "allow")
+
+    def test_amp_redirect_to_a_number_or_dash_writes_a_file(self):   # g02
+        for cmd in ("cd .. && echo x &> 1", "cd .. && echo x &>> 1", "cd .. && echo x &> -", "cd .git && echo x &> 1"):
+            d = decide(shell(cmd, cwd=self.wt), self.ctx())
+            self.assertEqual((d.decision, d.rule), ("ask", "gray:outside-write"), cmd)
+        for cmd in ("ls 2>&1", "echo x >&2", "echo x >&-", "echo x &> 1"):
+            self.assertEqual(decide(shell(cmd, cwd=self.wt), self.ctx()).decision, "allow", cmd)
+
+    def test_cp_and_mv_into_a_dir_check_the_file_they_write(self):   # g03
+        os.symlink(os.path.join(self.cp, "cap-signal"), os.path.join(self.cp, "asks", "cap-signal"))
+        for d in ("d", "d2", "h"):
+            os.makedirs(os.path.join(self.wt, d))
+        os.symlink(os.path.join(self.tmp, "elsewhere", "a.txt"), os.path.join(self.wt, "d", "a.txt"))
+        os.symlink(os.path.join(self.wt, ".git", "hooks", "pre-commit"), os.path.join(self.wt, "h", "pre-commit"))
+        ctx = self.bw_ctx()
+        for cmd in ('cp cap-signal "$BW_ASKS"', "cp a.txt d", "mv a.txt d", "cp -t d a.txt", "cp b.txt a.txt d/"):
+            d = decide(shell(cmd, cwd=self.wt), ctx)
+            self.assertEqual((d.decision, d.rule), ("ask", "gray:outside-write"), cmd)
+        d = decide(shell("cp pre-commit h", cwd=self.wt), ctx)
+        self.assertEqual((d.decision, d.rule), ("block", "block:git-hooks-config"))
+        for cmd in ("cp a.txt d2", "mv a.txt d2", "cp a.txt b.txt", "cp -T a.txt d2", 'cp a.txt "$BW_ASKS"'):
+            self.assertEqual(decide(shell(cmd, cwd=self.wt), ctx).decision, "allow", cmd)
+
+    def test_more_hidden_changes_of_a_bw_variable_are_rule_asks(self):   # g04
+        for cmd in ("if [[ BW_PANEL=1 -eq 1 ]]; then true; fi", "! [[ BW_PANEL=1 -eq 1 ]]", "while [[ BW_PANEL=1 ]]; do break; done",
+                    "(( 0 + BW_PANEL[0]=1 ))", "echo $(( BW_PANEL[0]=1 ))", "echo ${BW_PANEL[0]:=x}",
+                    'printf -v ok -v "$x" y', "wait -p ok -p $x", "${a}export BW_CHECKPOINT=/x", "$c BW_PANEL=/x",
+                    "a=([BW_PANEL=1]=2)"):
+            d = decide(shell(cmd), self.bw_ctx())
+            self.assertEqual((d.decision, d.source, d.rule), ("ask", "rule", "ask:bw-env"), cmd)
+        for cmd in ("[[ BW_PANEL[0] == 1 ]]", "if [[ -n $BW_PANEL ]]; then true; fi", "$c --version"):
+            self.assertNotEqual(decide(shell(cmd), self.bw_ctx()).rule, "ask:bw-env", cmd)
 
 if __name__ == "__main__":
     unittest.main()

@@ -129,6 +129,17 @@ not against the prose.
 
 ### Fixed
 
+- **The guard rules close six ways to change a variable or write a file unseen** (`lead/guard/rules.py`).
+  A `printf -v NAME` or a `%n` format assigns a variable, so printf with either is gray (`gray:option`).
+  With a protected `BW_*` name it is the rule ask `ask:bw-env` (`printf %n BW_CHECKPOINT` sets it to 0).
+  Every `-v` and `-p` operand is checked, not only the first. A `cd` in a command that names `CDPATH` is
+  gray (`gray:cdpath`). `&> 1`, `&>> 1`, and `&> -` write a file named `1` or `-`; only `>&N` and `>&-`
+  copy or close a descriptor. `cp`, `mv`, `ln`, and `install` into an existing dir also check
+  `dir/<basename>`, so a link there to a bw-owned file, a git hook, or a path outside stays gray or blocks.
+  `[[ BW_X=1 ]]` after `if`, `!`, or `while`, an array element (`BW_X[0]=1`, `a=([BW_X=1]=2)`), and a
+  command name the shell builds at run time (`${a}export BW_X=..`) are `ask:bw-env`. The rules changed,
+  so the guard verification key and the evidence key change once.
+
 - **The guard judge child gets a small environment** (`lead/guard/judging.py`). It inherits only the key's
   variable, `PATH`, `HOME`, `TMPDIR`, `LANG` and `LC_*`, and the proxy and SSL variables. No other secret of
   bw's environment reaches it.

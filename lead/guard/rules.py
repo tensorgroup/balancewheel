@@ -247,8 +247,23 @@ _NOWRITE = ("/dev/null", "/dev/stdout", "/dev/stderr")
 
 
 def _file_targets(seg):
+    """The files a segment's redirections write. Only `>&N` and `>&-` copy or close a descriptor;
+    `&> 1`, `&>> 1`, and `&> -` write a file named `1` or `-`."""
     return [w for op, w in seg.redirs if op in _WRITE_OPS and w.text not in _NOWRITE
-            and not (op in (">&", "&>") and re.fullmatch(r"\d+|-", w.text))]
+            and not (op == ">&" and re.fullmatch(r"\d+|-", w.text))]
+
+
+def _into_dir(name, t, paths, cwd):
+    """The files cp, mv, ln, or install write when the destination is an existing dir: dir/<basename>
+    of each source. A link already there would take the write elsewhere."""
+    if name not in ("cp", "mv", "ln", "install") or len(paths) < 2 or _has(t, "T", ("--no-target-directory",)):
+        return []
+    tdir = _has(t, "t", ("--target-directory",))
+    dest, srcs = (paths[0], paths[1:]) if tdir else (paths[-1], paths[:-1])
+    d = os.path.join(cwd, dest)
+    if not os.path.isdir(d):
+        return []
+    return [os.path.join(d, os.path.basename(s.rstrip("/")) or s) for s in srcs]
 
 
 _WRITERS = {"rm", "mkdir", "rmdir", "touch", "mv", "tee", "chmod", "chown", "truncate", "dd", "cp", "ln", "install"}
@@ -284,6 +299,7 @@ def _s_block(seg, env, cwd):
     if base in _WRITERS:
         pos = [a[3:] if base == "dd" and a.startswith("of=") else a for a in _operands(args)]
         targets += pos[-1:] if base in _LAST_ONLY else pos
+        targets += _into_dir(base, args, pos, cwd)
     for t in targets:
         if env.guarded(_paths(t, cwd)):
             return blk("block:git-hooks-config", f"{t} is a git hook or config file")
@@ -379,12 +395,14 @@ def _in_order(want, args):
 # writes through it is judged before the link exists, so it can be allowed. The OS sandbox is
 # the containment; the guard is the second layer.
 _BW_NAME = r"BW_(?:CHECKPOINT|ASKS|INBOX|SESSION|STATE_DIR|PANEL[A-Za-z0-9_]*|GUARD_[A-Za-z0-9_]*)"
+_IDX = r"(?:\[[^]]*\])?"  # an array element of the name: X[0]
 _BW_SET = re.compile(rf"{_BW_NAME}(?:\+=|=|\[)")  # X=, X+=, X[..]= at the start of a word
-_BW_DEFAULT = re.compile(rf"\$\{{{_BW_NAME}:?=")  # ${X=..} and ${X:=..} assign when X is unset
-_BW_FD = re.compile(rf"\{{{_BW_NAME}\}}")  # {X}>file stores an fd number in X
+_BW_DEFAULT = re.compile(rf"\$\{{{_BW_NAME}{_IDX}:?=")  # ${X=..} and ${X:=..} assign when X is unset
+_BW_FD = re.compile(rf"\{{{_BW_NAME}{_IDX}\}}")  # {X}>file stores an fd number in X
 _BW_ANY = re.compile(_BW_NAME)
-# an assignment inside a word or arithmetic: a[X=5]=1, $((X++)), $((++X)), X|=0 (not X==1)
-_BW_IN = re.compile(rf"(?<![A-Za-z0-9_$])(?:(?:\+\+|--)\s*{_BW_NAME}|{_BW_NAME}\s*(?:\+\+|--|(?:<<|>>|[-+*/%&|^])?=(?!=)))")
+# an assignment inside a word or arithmetic: a[X=5]=1, $((X++)), $((++X)), X|=0, X[0]=1 (not X==1)
+_BW_IN = re.compile(rf"(?<![A-Za-z0-9_$])(?:(?:\+\+|--)\s*{_BW_NAME}|{_BW_NAME}{_IDX}\s*(?:\+\+|--|(?:<<|>>|[-+*/%&|^])?=(?!=)))")
+_PRINTF_N = re.compile(r"%[-+ #0-9.*]*n")  # printf stores a count into the matching operand
 _ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=")
 _RESERVED = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
 _UNSEEN = re.compile(r"[$`{]")  # a name the shell would build at run time
@@ -393,22 +411,24 @@ _UNSEEN = re.compile(r"[$`{]")  # a name the shell would build at run time
 _NAME_CMDS = {"export", "unset", "declare", "typeset", "readonly", "local", "read", "getopts", "mapfile",
               "readarray", "let", "env"}
 # Commands whose operands are shell text or a name only after an option: a protected name anywhere
-# is a rule ask; an unexpanded operand stays gray (eval) or is checked where the name is (wait -p,
-# printf -v).
-_TEXT_CMDS = {"eval", "trap", "alias", "wait", "printf"}
+# is a rule ask; an unexpanded operand stays gray (eval) or is checked where the name is (wait -p).
+# printf (-v NAME and a %n format) has its own check in _bw_env.
+_TEXT_CMDS = {"eval", "trap", "alias", "wait"}
 _BUILT_NAME = re.compile(r"(?:\$\{?[A-Za-z0-9_]+\}?|`[^`]*`|\$\([^)]*\))[A-Za-z0-9_]*\+?=")  # ${p}W_X=, $n=
 # a protected name not read as $X, ${X}, ${#X} (length), or ${!X} (indirect)
 _BW_SHELL = re.compile(rf"(?<![A-Za-z0-9_$])(?<!\$\{{)(?<!\$\{{#)(?<!\$\{{!){_BW_NAME}")
 
 
-def _opt_arg(ops, flag):
-    """The operand of `flag` (`-vX` or `-v X`), or None."""
+def _opt_args(ops, flag):
+    """Every operand of `flag` (`-vX` or `-v X`); the shell may take any of them when it repeats."""
+    out = []
     for k, x in enumerate(ops):
         if x.text == flag:
-            return ops[k + 1] if k + 1 < len(ops) else None
-        if x.text.startswith(flag) and len(x.text) > len(flag) and not x.text.startswith("--"):
-            return Word(x.text[len(flag):], x.quoted, x.unexpanded)
-    return None
+            if k + 1 < len(ops):
+                out.append(ops[k + 1])
+        elif x.text.startswith(flag) and len(x.text) > len(flag) and not x.text.startswith("--"):
+            out.append(Word(x.text[len(flag):], x.quoted, x.unexpanded))
+    return out
 
 
 def _unseen_name(x):
@@ -437,13 +457,11 @@ def _bw_env(w, depth=0):
     """True if the segment may assign, export, unset, or declare a name bw sets for the lead.
     Checked: `${X:=..}` and `{X}>` anywhere; the leading assignments (after `{`, `then`, `time -p`,
     `function f`, ...), with a nameref target `r=X` too; and the operands of a command that sets
-    a variable (`export`, `declare -n r=X`, `printf -vX`, `wait -p X`, `trap 'X=..'`, `alias`,
-    `coproc X`, `command export ...`)."""
-    if any(_BW_FD.fullmatch(x.text) or (x.unexpanded and (_BW_DEFAULT.search(x.text) or _BW_IN.search(x.text)))
-           for x in w):
-        return True  # ${X:=..}, {X}>, and arithmetic such as $((X=5)) or ${a[X=5]}
-    if w[0].text == "[[" and any(_BW_IN.search(x.text) for x in w):
-        return True  # [[ X=1 -eq 1 ]] evaluates the operands as arithmetic
+    a variable (`export`, `declare -n r=X`, `printf -vX`, `printf %n X`, `wait -p X`, `trap 'X=..'`,
+    `alias`, `coproc X`, `command export ...`, `${a}export X=..`)."""
+    if any(_BW_FD.fullmatch(x.text) or ((x.unexpanded or x.text.startswith("["))
+                                         and (_BW_DEFAULT.search(x.text) or _BW_IN.search(x.text))) for x in w):
+        return True  # ${X:=..}, {X}>, and arithmetic such as $((X=5)), ${a[X=5]}, or a=([X=5]=1)
     i = 0
     while i < len(w):
         t = w[i].text
@@ -470,6 +488,10 @@ def _bw_env(w, depth=0):
     if i >= len(w):
         return False
     cmd, ops = os.path.basename(w[i].text), w[i + 1:]
+    if cmd == "[[":  # [[ X=1 -eq 1 ]] evaluates the operands as arithmetic, also after `if` or `!`
+        return any(_BW_IN.search(x.text) for x in ops)
+    if _unseen_name(w[i]) and any(_BW_ANY.search(x.text) for x in ops):
+        return True  # a command name the shell builds at run time (${a}export X=..) may set a name
     if cmd in ("for", "select", "coproc"):  # only the loop or coprocess variable is assigned
         return bool(ops) and (_unseen_name(ops[0]) or bool(_BW_ANY.search(ops[0].text)))
     if cmd in _NAME_CMDS:
@@ -480,9 +502,18 @@ def _bw_env(w, depth=0):
         nameref = cmd in ("declare", "typeset", "local") and any("n" in _cluster(x.text) for x in ops)
         return nameref and any((not x.text.startswith(("-", "+")) and "=" not in x.text)
                                or (x.unexpanded and _UNSEEN.search(x.text.partition("=")[2])) for x in ops)
+    if cmd == "printf":
+        # -v NAME stores the output; a %n in the format stores a count into its operand
+        # (`printf %n X` sets X=0). A format the shell builds at run time may hold a %n.
+        targets = _opt_args(ops, "-v")
+        if (targets and any(_BW_ANY.search(x.text) for x in ops)) or any(_unseen_name(x) for x in targets):
+            return True
+        k = _printf_format(ops)
+        fmt, rest = (ops[k], ops[k + 1:]) if k < len(ops) else (None, [])
+        if fmt is not None and (_PRINTF_N.search(fmt.text) or fmt.unexpanded):
+            return any(_BW_SHELL.search(x.text) or (_PRINTF_N.search(fmt.text) and _unseen_name(x)) for x in rest)
+        return False
     if cmd in _TEXT_CMDS:
-        if cmd == "printf" and _opt_arg(ops, "-v") is None:
-            return False
         # trap and alias text is code: a bare protected name changes it, a `$X` read does not
         hit = _BW_SHELL if cmd in ("trap", "alias") else _BW_ANY
         if any(hit.search(x.text) or (cmd in ("trap", "alias") and _BW_DEFAULT.search(x.text)) for x in ops):
@@ -493,9 +524,24 @@ def _bw_env(w, depth=0):
             # the text runs as code later, whatever its quotes: judge it as a command
             if any(_code_sets_bw(x.text.partition("=")[2] if cmd == "alias" else x.text, depth) for x in ops):
                 return True
-        target = _opt_arg(ops, "-v" if cmd == "printf" else "-p") if cmd in ("printf", "wait") else None
-        return target is not None and _unseen_name(target)
+        return cmd == "wait" and any(_unseen_name(x) for x in _opt_args(ops, "-p"))
     return False
+
+
+def _printf_format(ops):
+    """The index of printf's format word: the first word after its options (`-v NAME`, `--`)."""
+    k = 0
+    while k < len(ops):
+        t = ops[k].text
+        if t == "--":
+            return k + 1
+        if t == "-v":
+            k += 2
+        elif t.startswith("-v"):
+            k += 1
+        else:
+            return k
+    return len(ops)
 
 
 def _s_ask(seg, env, cwd):
@@ -720,7 +766,8 @@ def _h_write(name):
             return gry("gray:no-path", f"{name} names no path")
         # rm stays worktree-only; mkdir, touch, cp, and mv may also write into the checkpoint dir
         ok = env.inside if name == "rm" else env.writable
-        if all(ok(_real(p, cwd), strict=name in ("rm", "mv")) for p in paths):
+        if (all(ok(_real(p, cwd), strict=name in ("rm", "mv")) for p in paths)
+                and all(env.writable(_rp(p)) for p in _into_dir(name, t, paths, cwd))):
             return None
         if name == "rm" and rec:
             return ask("ask:rm-outside", "recursive rm outside the worktree or into a git dir")
@@ -783,8 +830,17 @@ def _h_pytest(t, args, env, cwd):
     return _confined(t, env, cwd)
 
 
+def _h_printf(t, args, env, cwd):
+    """printf only prints: `-v NAME` and a %n format assign a variable (PATH, CDPATH, IFS, ...)."""
+    k = _printf_format(args)
+    if _opt_args(args[:k], "-v") or (k < len(args) and _PRINTF_N.search(args[k].text)):
+        return _opt("printf -v or a %n format assigns a variable")
+    return None
+
+
 _HANDLERS = {n: _h_read(n) for n in ("ls", "cat", "head", "tail", "wc", "grep", "file", "stat", "diff", "rg", "find", "tree")}
-_HANDLERS.update({n: (lambda *a: None) for n in ("pwd", "echo", "printf", "true", "which", "type", "cd")})
+_HANDLERS.update({n: (lambda *a: None) for n in ("pwd", "echo", "true", "which", "type", "cd")})
+_HANDLERS["printf"] = _h_printf
 _HANDLERS.update({n: _h_write(n) for n in _WL})
 _HANDLERS.update({"git": _h_git, "npm": _h_npm, "tee": _h_tee, "make": _h_make, "pytest": _h_pytest, "bash": _h_runner, "sh": _h_runner,
                   "node": _h_runner, "cargo": _runner("test", "build", "check", "clippy", "fmt", deny=("config",)),
@@ -863,6 +919,8 @@ def _shell(call, env):
     cwd, known, tainted, decs = _rp(call.cwd or env.ctx.worktree), True, False, []
     for seg in segs:
         d = _segment(seg, env, cwd)
+        if seg.words and seg.words[0].text == "cd" and "CDPATH" in (call.command or "") and _rank(d) < 1:
+            d = gry("gray:cdpath", "the command sets CDPATH, so cd may move to another dir")
         if not known and d.decision == "allow":
             d = gry("gray:cwd-unknown", "an earlier cd may not have run as written")
         if seg.words and seg.words[0].text == "cd" and known:
