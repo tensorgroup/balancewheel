@@ -32,6 +32,26 @@ FULL_ACCESS_WARNING = "Orca starts agents with full access; set Agents → Agent
 _PROFILE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
+def canvas(config):
+    """The configured canvas: "terminal" or "orca". A raw dict without the key reads "terminal"."""
+    return config.get("canvas", "terminal")
+
+
+def in_use(config):
+    """True when bw may call Orca: the canvas is Orca, or a plan maps to an Orca provider."""
+    if canvas(config) == "orca":
+        return True
+    return any(p.get("orca_provider") for p in (config.get("plans") or {}).values())
+
+
+def active_tools(config):
+    """The configured tools, without `orca` on the terminal canvas (bw makes no Orca call there)."""
+    tools = dict(config.get("tools") or {})
+    if canvas(config) == "terminal":
+        tools.pop("orca", None)
+    return tools
+
+
 def support_dir():
     return os.environ.get("BW_ORCA_SUPPORT") or os.path.expanduser("~/Library/Application Support/orca")
 

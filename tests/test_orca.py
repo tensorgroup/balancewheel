@@ -238,6 +238,26 @@ class CheckSettingsTest(unittest.TestCase):
         self.assertEqual((cs[0].state, cs[0].detail), ("unknown", "no settings row"))
 
 
+class GateTest(unittest.TestCase):
+    def test_in_use_false_for_terminal_without_providers(self):
+        c = {"canvas": "terminal", "plans": {"a": {"orca_provider": None}}}
+        self.assertFalse(orca.in_use(c))
+
+    def test_in_use_true_for_orca_canvas(self):
+        self.assertTrue(orca.in_use({"canvas": "orca", "plans": {}}))
+
+    def test_in_use_true_for_a_mapped_plan(self):
+        self.assertTrue(orca.in_use({"canvas": "terminal", "plans": {"a": {"orca_provider": "codex"}}}))
+
+    def test_canvas_missing_reads_terminal(self):
+        self.assertEqual(orca.canvas({"plans": {}}), "terminal")
+
+    def test_active_tools_drops_orca_on_the_terminal_canvas(self):
+        tools = {"orca": {"self_updating": True}, "pi": {"update": ["pi", "up"]}}
+        self.assertEqual(set(orca.active_tools({"canvas": "terminal", "tools": tools})), {"pi"})
+        self.assertEqual(set(orca.active_tools({"canvas": "orca", "tools": tools})), {"orca", "pi"})
+
+
 if __name__ == "__main__":
     unittest.main()
 

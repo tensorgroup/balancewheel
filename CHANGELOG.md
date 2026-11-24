@@ -15,6 +15,7 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **`canvas`**: `terminal` or `orca`.
 - **`panel`**: `cap_min`, `deep_cap_min`, `max_rounds`, `max_parallel`, each an integer of at least 1
   (defaults 12, 30, 2, 4).
 - **`seats.*.tier`**: `default` or `reserved`.
@@ -169,6 +170,9 @@ not against the prose.
 
 ### Changed
 
+- **Orca is no longer the default canvas.** A schema-3 config without `canvas` keeps Orca panes when it
+  has `tools.orca` or a plan with `orca_provider`. Any other config opens Terminal tabs. Set
+  `"canvas": "orca"` to keep Orca, or `"canvas": "terminal"` to stop using it. A schema 1 or 2 file reads `orca`.
 - Changed (log schema): a panel record may have empty `seats` when `absent` names every seat.
   `validate_panel` can keep a bw-assigned id. `store.load()` returns `panel_runs` and keeps a panel's `tier`.
   `store.load()` keeps one `panel_run` event per panel id (the first), so a repeated event is not counted twice.

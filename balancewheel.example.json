@@ -1,6 +1,7 @@
 {
   "_comment": "Replace these rows with your own. Names of seats, leads, plans, and profiles are yours; model ids are data and are expected to change. Copy to ~/.config/balancewheel/config.json.",
   "schema_version": 3,
+  "canvas": "orca",
   "plans": {
     "claude-plan": {
       "vendor": "anthropic",

@@ -258,6 +258,32 @@ class PlanOrcaAndProbeKeys(unittest.TestCase):
         self.assertEqual(c["plans"]["metered"]["key_env"], "OR_KEY")
 
 
+class Canvas(unittest.TestCase):
+    def rejects(self, obj, *needles):
+        with self.assertRaises(cfg.ConfigError) as e:
+            load_obj(obj)
+        for n in needles:
+            self.assertIn(n, str(e.exception))
+
+    def test_canvas_defaults_to_terminal_without_orca_config(self):
+        self.assertEqual(load_obj(v3())["canvas"], "terminal")
+
+    def test_schema_3_without_canvas_infers_orca_from_tools_or_provider(self):
+        o = v3(); o["tools"] = {"orca": {"self_updating": True}}
+        self.assertEqual(load_obj(o)["canvas"], "orca")
+        o = v3(); o.setdefault("plans", {})["pz"] = {"billing": "plan", "quota": "orca", "orca_provider": "codex"}
+        self.assertEqual(load_obj(o)["canvas"], "orca")
+
+    def test_explicit_canvas_wins_over_the_inference(self):
+        o = v3(); o["tools"] = {"orca": {"self_updating": True}}; o["canvas"] = "terminal"
+        self.assertEqual(load_obj(o)["canvas"], "terminal")
+
+    def test_canvas_bad_value_rejected(self):
+        for bad in ("Terminal", "nodeterm", "", 1, None, ["orca"]):
+            o = v3(); o["canvas"] = bad
+            self.rejects(o, "canvas: must be one of ['orca', 'terminal']")
+
+
 class SeatTierAndPanel(unittest.TestCase):
     SEAT = {"runtime": "codex", "model": "vendor/model-b", "roles": ["review"], "plan": "plan-b"}
 

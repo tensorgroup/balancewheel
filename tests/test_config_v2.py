@@ -27,6 +27,13 @@ class SchemaV2(unittest.TestCase):
             load_obj(obj)
         self.assertIn(needle, str(e.exception))
 
+    def test_schema_2_keeps_the_orca_canvas(self):
+        self.assertEqual(cfg.load_config(str(V2))["canvas"], "orca")
+
+    def test_canvas_needs_schema_3(self):
+        o = v2(); o["canvas"] = "terminal"
+        self.rejects(o, "canvas: unknown key (needs schema_version 3)")
+
     def test_v1_loads_with_empty_default_profile(self):
         c = cfg.load_config(str(V1))
         self.assertEqual(c["default_profile"], "default")

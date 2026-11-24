@@ -17,7 +17,8 @@ EFFORT_LEVELS = {
 }
 SEAT_NAME = re.compile(r"[a-z0-9-]+")  # used with fullmatch: a trailing newline is refused
 TOP_KEYS = {"_comment", "schema_version", "seats", "state_dir", "metrics_log", "commands_dir", "bin_dir", "watches"}
-V3_TOP_KEYS = {"guard", "triage", "improve", "panel"}
+V3_TOP_KEYS = {"guard", "triage", "improve", "panel", "canvas"}
+CANVASES = {"terminal", "orca"}
 V3_LEAD_KEYS = {"autonomy"}
 V3_PROFILE_KEYS = {"protected_branches", "deploy_commands"}
 GUARD_KEYS = {"mode", "model", "on_judge_failure", "rules_on_native"}
@@ -421,6 +422,18 @@ def _validate_defaults(obj, key, defaults, minimum=0):
     return vals
 
 
+def _resolve_canvas(obj, plans, tools, version):
+    """The canvas the lead opens in. A schema-3 file with no key keeps Orca only when it uses Orca today."""
+    if "canvas" in obj:
+        canvas = obj["canvas"]
+        _expect(isinstance(canvas, str) and canvas in CANVASES, f"canvas: must be one of {sorted(CANVASES)}")
+        return canvas
+    if version < 3:
+        return "orca"
+    uses = "orca" in tools or any(p.get("orca_provider") for p in plans.values())
+    return "orca" if uses else "terminal"
+
+
 def load_config(path=None):
     p = config_path(path)
     try:
@@ -450,6 +463,7 @@ def load_config(path=None):
             _expect(s["fallback"] in seats and s["fallback"] != name, f"seats.{name}.fallback: must name another seat")
     warnings = []
     tools = _validate_tools(obj, warnings)
+    canvas = _resolve_canvas(obj, plans, tools, version)
     leads = _validate_leads(obj, plans, version)
     for pname, plan in plans.items():
         for wid, names in plan["orca_windows"].items():
@@ -488,6 +502,7 @@ def load_config(path=None):
     _expect(watches["redundant_min_panels"] >= 1, "watches.redundant_min_panels: must be at least 1")
     return {
         "schema_version": version,
+        "canvas": canvas,
         "plans": plans,
         "tools": tools,
         "leads": leads,
