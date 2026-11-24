@@ -69,6 +69,27 @@ SECRET = judging.JudgeResult("judge-skipped", None, "secret in call", None, 0)
 QUEUE_FULL = judging.JudgeResult("judge-skipped", None, "queue full", None, 0)
 
 
+def fake_clock_advancing(step):
+    """A clock that moves on by `step` each time it is read. The runner reads it once at the start
+    and once after each attempt, so each attempt seems to take `step` seconds."""
+    t = [1000.0]
+
+    def clock():
+        now = t[0]
+        t[0] += step
+        return now
+    return clock
+
+
+def fail_fast_then_ok(calls):
+    """The first child fails at once (exit 0, ok false); every later child gives a verdict."""
+    def run(argv, timeout, **kw):
+        calls.append(timeout)
+        out = '{"ok": false, "reason": "URLError"}' if len(calls) == 1 else ALLOW
+        return proc.Result(0, out, "", False)
+    return run
+
+
 class TestJudgeRunner(unittest.TestCase):
     def test_no_model_skips(self):
         r = runner(model=None, run=raising(AssertionError)).judge(CALL, "d", 1.0)
@@ -94,8 +115,8 @@ class TestJudgeRunner(unittest.TestCase):
         self.assertEqual(c["stdin"]["config"], {"model": "test/judge", "key_env": "BW_TEST_JUDGE_KEY"})
         self.assertEqual(c["stdin"]["text"], judge.prepare(CALL, WT, HOME)[0])
         calls.clear()
-        runner(run=fake_run(ALLOW, calls=calls)).judge(CALL, "d", 0.02)
-        self.assertEqual(calls[0]["stdin"]["timeout"], 0.05)  # the urllib timeout has a floor (B15)
+        r = runner(run=fake_run(ALLOW, calls=calls)).judge(CALL, "d", 0.02)
+        self.assertEqual((r.source, r.reason, calls), ("judge-skipped", "no time left", []))  # no child at all
 
     def test_the_key_never_reaches_argv_or_stdin(self):
         calls = []
@@ -189,7 +210,64 @@ class TestJudgeRunner(unittest.TestCase):
         j = runner(run=fake_run('{"ok": false, "reason": "URLError"}', calls=calls))
         j.judge(CALL, "d", 1.0)
         j.judge(CALL, "d", 1.0)
+        self.assertEqual(len(calls), 4)  # each judge() call: a failure, then its one retry; nothing cached
+
+
+class TestActingBudget(unittest.TestCase):
+    def test_deadline_constants(self):
+        self.assertEqual((judging.HOOK_DEADLINE, judging.READ_DEADLINE, judging.JUDGE_MARGIN, judging.MIN_ATTEMPT_S),
+                         (2.0, 0.5, 0.15, 0.3))
+
+    def test_acting_budget(self):
+        self.assertAlmostEqual(judging.acting_budget(0.1), 2.0 - 0.5 - 0.1 - 0.15)
+        self.assertEqual(judging.acting_budget(5.0), 0.0)
+
+    def test_one_retry_only_if_time_remains(self):
+        calls = []
+        j = runner(run=fail_fast_then_ok(calls), clock=fake_clock_advancing(0.2))
+        r = j.judge(CALL, "d", 1.0)
+        self.assertEqual((r.attempts, r.source, r.decision), (2, "judge", "allow"))
+        j2 = runner(run=fail_fast_then_ok([]), clock=fake_clock_advancing(0.8))
+        r2 = j2.judge(CALL, "d", 1.0)
+        self.assertEqual((r2.attempts, r2.source, r2.reason), (1, "judge-failed", "URLError"))
+
+    def test_a_success_is_never_retried(self):
+        calls = []
+        r = runner(run=fake_run(ALLOW, calls=calls), clock=fake_clock_advancing(0.1)).judge(CALL, "d", 1.0)
+        self.assertEqual((r.attempts, len(calls)), (1, 1))
+
+    def test_two_failures_count_once_for_the_breaker(self):
+        j = runner(run=fake_run('{"ok": false, "reason": "URLError"}'), clock=fake_clock_advancing(0.01))
+        for i in range(2):
+            self.assertEqual(j.judge(CALL, "d%d" % i, 1.0).attempts, 2)
+        self.assertEqual(j.judge(CALL, "d2", 1.0).source, "judge-failed")  # the third call opens it
+        self.assertEqual(j.judge(CALL, "d3", 1.0).reason, "judge circuit open")
+
+    def test_no_time_left_skips(self):
+        r = runner(run=raising(AssertionError)).judge(CALL, "d", 0.1)
+        self.assertEqual((r.source, r.reason, r.attempts), ("judge-skipped", "no time left", 0))
+
+    def test_a_cache_hit_needs_no_time(self):
+        j = runner(run=fake_run(ALLOW), clock=Clock())
+        first = j.judge(CALL, "d", 1.0)
+        self.assertEqual(j.judge(CALL, "d", 0.0), first)
+
+    def test_child_timeout_is_the_remaining_budget(self):
+        calls = []
+        runner(run=fail_fast_then_ok(calls), clock=fake_clock_advancing(0.2)).judge(CALL, "d", 1.0)
         self.assertEqual(len(calls), 2)
+        self.assertAlmostEqual(calls[0], 1.0)
+        self.assertAlmostEqual(calls[1], 0.8)
+
+    def test_ms_covers_both_attempts(self):
+        r = runner(run=fail_fast_then_ok([]), clock=fake_clock_advancing(0.2)).judge(CALL, "d", 1.0)
+        self.assertAlmostEqual(r.ms, 400.0)
+
+    def test_a_verdict_reason_is_cleaned(self):
+        out = json.dumps({"ok": True, "decision": "allow", "reason": "ok\x1b[31m API_TOKEN=abc123 done"})
+        r = runner(run=fake_run(out)).judge(CALL, "d", 1.0)
+        self.assertNotIn("\x1b", r.reason)
+        self.assertNotIn("abc123", r.reason)
 
 
 class TestFinalDecision(unittest.TestCase):

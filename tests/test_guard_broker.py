@@ -16,6 +16,7 @@ from lead.guard import broker as brk
 from lead.guard import judging, record
 from lead.guard.rules import RuleContext
 
+store = record.store
 TOKEN = "t0k3n"
 SESSION = {"session_id": "s1", "project": "wt", "profile": "dev", "lead": "pi-lead",
            "runtime": "pi", "runtime_version": "1.2.3"}
@@ -455,7 +456,8 @@ class ShadowJudgeTests(BrokerBase):
         self.assertEqual((d["judge_reason"], d["judge_ms"]), ("local read", 7))
         self.assertEqual((d["outcome"], d["mode"]), ("shadow-allowed", "shadow"))
         self.assertTrue(d["rule"].startswith("gray:"))
-        self.assertEqual(j.budgets, [judging.SHADOW_BUDGET_S])
+        self.assertEqual(len(j.budgets), 1)  # the acting budget, as if this call had been judged inline
+        self.assertAlmostEqual(j.budgets[0], judging.acting_budget(d["latency_ms"] / 1000), places=6)
 
     def test_judge_ask_is_recorded_as_ask(self):
         self.use(FakeJudge(result=judging.JudgeResult("judge", "ask", "unsure", 9, 1)))
@@ -530,7 +532,7 @@ class ShadowJudgeTests(BrokerBase):
     def test_stop_waits_for_a_real_child_within_its_timeout(self):  # B6
         jr = self.runner()
         jr.argv = ["sleep", "5"]  # a stalled child; the real proc.run kills its group at the budget
-        with mock.patch.object(judging, "SHADOW_BUDGET_S", 0.5):
+        with mock.patch.object(judging, "acting_budget", lambda rules_s: 0.5):  # one attempt, no time to retry
             self.use(jr)
             self.ask(bash("jq . f.json"))
             self.assertTrue(wait_for(lambda: not self.b._queue))  # the judge thread has taken the item
@@ -623,6 +625,158 @@ class ShadowJudgeTests(BrokerBase):
         self.assertEqual((d["judge_model"], d["prompt_hash"]), ("test/judge", judging.judge.prompt_hash()))
 
 
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+FAILED_TIMEOUT = judging.JudgeResult("judge-failed", None, "timeout", 1350, 1)
+FAILED_EXIT = judging.JudgeResult("judge-failed", None, "exit 3", 20, 2)
+OPEN = judging.JudgeResult("judge-skipped", None, "judge circuit open", None, 0)
+NO_TIME = judging.JudgeResult("judge-skipped", None, "no time left", None, 0)
+NO_JUDGE = judging.JudgeResult("judge-skipped", None, "no judge", None, 0)
+SECRET = judging.JudgeResult("judge-skipped", None, "secret in call", None, 0)
+OVERSIZED = judging.JudgeResult("judge-skipped", None, "call over 4 KiB", None, 0)
+
+
+class ActingJudgeTests(BrokerBase):
+    mode = "acting"
+
+    def use(self, judge, **kw):
+        self.b.stop()
+        self.b = self.start(judge=judge, **kw)
+        return self.b
+
+    def ask_with(self, result, cmd="jq . f.json"):
+        self.use(FakeJudge(result))
+        return self.ask(bash(cmd))
+
+    def assert_floor(self):
+        """Never weaker than the rules: only a judge verdict may differ from rule_decision."""
+        for d in self.decisions():
+            if d["source"] != "judge":
+                self.assertEqual(d["decision"], d["rule_decision"], d)
+
+    def test_judge_allow_is_the_reply_in_acting(self):
+        j = FakeJudge()
+        self.use(j)
+        r = self.ask(bash("jq . f.json"))
+        self.assertEqual(r["decision"], "allow")
+        (d,) = self.decisions()
+        self.assertEqual(d["id"], r["id"])
+        self.assertEqual((d["source"], d["decision"], d["rule_decision"], d["outcome"]),
+                         ("judge", "allow", "ask", "allowed"))
+        self.assertEqual(r["reason"], "local read")
+        self.assertEqual(len(j.budgets), 1)
+        self.assertLessEqual(j.budgets[0], judging.acting_budget(0))
+        self.assertGreater(j.budgets[0], judging.acting_budget(0) - 0.2)
+
+    def test_judge_ask_is_an_ask(self):
+        r = self.ask_with(judging.JudgeResult("judge", "ask", "unsure", 9, 1))
+        self.assertEqual((r["decision"], r["reason"]), ("ask", "unsure"))
+        self.assertEqual(self.decisions()[0]["outcome"], "asked")
+
+    def test_floor_on_every_judge_failure(self):
+        for result in (FAILED_TIMEOUT, FAILED_EXIT, OPEN, NO_TIME, NO_JUDGE, SECRET, OVERSIZED):
+            r = self.ask_with(result)
+            self.assertEqual(r["decision"], "ask", result)
+            d = self.decisions()[-1]
+            self.assertEqual((d["source"], d["decision"], d["outcome"]), (result.source, "ask", "asked"))
+            self.assertNotEqual(r["reason"], result.reason)  # the rules' reason, not the judge's
+        self.assert_floor()
+
+    def test_floor_without_a_judge_and_with_a_judge_that_raises(self):
+        r = self.ask(bash("jq . f.json"))  # the base broker has no judge
+        self.assertEqual(r["decision"], "ask")
+        self.assertEqual(self.decisions()[-1]["source"], "judge-skipped")
+
+        class Raising(FakeJudge):
+            def judge(self, *a):
+                raise RuntimeError("bug")
+        self.use(Raising())
+        r = self.ask(bash("jq . f.json"))
+        self.assertEqual(r["decision"], "ask")
+        d = self.decisions()[-1]
+        self.assertEqual((d["source"], d["judge_reason"]), ("judge-failed", "RuntimeError"))
+        self.assert_floor()
+
+    def test_a_real_runner_that_times_out_keeps_the_floor(self):
+        self.use(judging.JudgeRunner({"model": "test/judge", "key_env": "BW_TEST_JUDGE_KEY"}, self.wt, self.tmp,
+                                     run=timed_out))
+        r = self.ask(bash("jq . f.json"))
+        self.assertEqual(r["decision"], "ask")
+        self.assertEqual(self.decisions()[-1]["source"], "judge-failed")
+
+    def test_judge_never_lifts_a_rule_block_or_rule_ask(self):
+        j = FakeJudge()
+        self.use(j)
+        self.assertEqual(self.ask(bash("herdr pane send x"))["decision"], "block")
+        self.assertEqual(self.ask(bash("gh release create v0"))["decision"], "ask")
+        self.assertEqual(j.calls, 0)
+        self.assertEqual([(d["source"], d["decision"]) for d in self.decisions()], [("rule", "block"), ("rule", "ask")])
+        self.assert_floor()
+
+    def test_record_before_reply_in_acting(self):
+        self.use(FakeJudge(sleep=0.1))
+        seen = []
+        real = brk.Broker._send
+
+        def spy(conn, obj):
+            seen.append(len(self.decisions()))
+            return real(conn, obj)
+        with mock.patch.object(brk.Broker, "_send", staticmethod(spy)):
+            r = self.ask(bash("jq . f.json"))
+        self.assertEqual(r["decision"], "allow")
+        self.assertEqual(seen, [1])
+
+    def test_slow_judge_records_client_timeout(self):
+        self.use(FakeJudge(sleep=2.2))
+        self.assertIsNone(self.raw(json.dumps({"v": 1, "token": TOKEN, "runtime": "pi", "cwd": self.wt,
+                                               "payload": bash("jq . f.json")}).encode() + b"\n",
+                                   timeout=judging.HOOK_DEADLINE))  # the hook gives up at its deadline
+        self.assertTrue(wait_for(lambda: [d.get("outcome") for d in self.decisions()] == ["client-timeout"]))
+        d = self.decisions()[-1]
+        self.assertEqual((d["outcome"], d["outcome_first"], d["decision"]), ("client-timeout", "allowed", "allow"))
+        self.b.stop()
+
+    def test_send_failure_after_the_record_appends_an_outcome(self):
+        with mock.patch.object(brk.Broker, "_send", staticmethod(lambda conn, obj: False)):
+            self.ask(bash("herdr pane send x"))
+        self.assertTrue(wait_for(lambda: len(record.load(self.state)["decisions"]) == 1
+                                 and self.decisions()[-1]["outcome"] == "client-timeout"))
+        events = store.read_events(record.path(self.state))[0]
+        self.assertEqual([e["type"] for e in events][-2:], ["decision", "outcome"])
+        self.assertEqual(events[-1]["decision_id"], events[-2]["id"])
+        self.assertEqual(self.decisions()[-1]["outcome"], "client-timeout")
+        self.assertEqual(self.decisions()[-1]["outcome_first"], "blocked")
+
+    def test_a_prompt_reply_appends_no_outcome(self):
+        self.ask(bash("herdr pane send x"))
+        events = store.read_events(record.path(self.state))[0]
+        self.assertEqual([e["type"] for e in events], ["decision"])
+
+    def test_outcome_for_unknown_decision_is_an_orphan(self):
+        record.append(self.state, {"type": "outcome", "decision_id": "zzzzzzzzzzzz", "outcome": "client-timeout"})
+        r = record.load(self.state)
+        self.assertEqual([o["decision_id"] for o in r["orphan_outcomes"]], ["zzzzzzzzzzzz"])
+        self.assertEqual(r["decisions"], [])
+
+    def test_reply_reason_is_cleaned(self):
+        r = self.ask_with(judging.JudgeResult("judge", "allow", "fine\x1b[2J API_TOKEN=sekrit1 ok", 5, 1))
+        self.assertEqual(r["decision"], "allow")
+        self.assertNotIn("\x1b", r["reason"])
+        self.assertNotIn("sekrit1", r["reason"])
+        self.assertNotIn("sekrit1", json.dumps(self.decisions()))
+
+    def test_counts_in_acting(self):
+        self.ask_with(JUDGE_ALLOW)
+        self.assertEqual(self.b.counts()["judge"], {"judged": 1, "allowed": 1, "failed": 0, "skipped": 0})
+
+    def test_hook_deadlines_match(self):
+        from lead.guard import hook
+        self.assertEqual(hook.DEADLINE, judging.HOOK_DEADLINE)
+        self.assertEqual(brk.READ_DEADLINE, judging.READ_DEADLINE)
+        with open(os.path.join(ROOT, "lead", "guard", "pi_guard.ts")) as f:
+            ts = f.read()
+        self.assertIn("const DEADLINE_MS = %d;" % int(judging.HOOK_DEADLINE * 1000), ts)
+
+
 class TestRecord(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(dir="/tmp")
@@ -675,13 +829,16 @@ class TestBindFailure(BrokerBase):
 
 class StandaloneServeTests(unittest.TestCase):
     def ctx_from(self, *extra):
+        return self.seen_from(*extra)["ctx"]
+
+    def seen_from(self, *extra):
         seen = {}
 
         class Stop(Exception):
             pass
 
-        def fake_broker(state, gdir, token, mode, session, ctx, reply_garbage=False):
-            seen["ctx"] = ctx
+        def fake_broker(state, gdir, token, mode, session, ctx, reply_garbage=False, judge=None):
+            seen["ctx"], seen["judge"] = ctx, judge
             raise Stop()
 
         tmp = tempfile.mkdtemp(dir="/tmp")
@@ -691,11 +848,22 @@ class StandaloneServeTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"BW_TEST_TOKEN": "x"}), mock.patch.object(brk, "Broker", fake_broker), \
                 self.assertRaises(Stop):
             brk.main(argv)
-        return seen["ctx"]
+        return seen
 
     def test_checkpoint_dir_flag_reaches_the_rules(self):
         self.assertEqual(self.ctx_from("--checkpoint-dir", "/tmp/cp").checkpoint_dir, "/tmp/cp")
         self.assertIsNone(self.ctx_from().checkpoint_dir)
+
+    def test_judge_flags_build_a_runner(self):
+        self.assertIsNone(self.seen_from()["judge"])
+        j = self.seen_from("--judge-model", "test/judge", "--judge-key-env", "BW_TEST_NO_KEY")["judge"]
+        self.assertIsInstance(j, judging.JudgeRunner)
+        self.assertEqual(j.cfg, {"model": "test/judge", "key_env": "BW_TEST_NO_KEY"})
+        self.assertEqual(self.seen_from("--judge-model", "test/judge")["judge"].cfg["key_env"], "OPENROUTER_API_KEY")
+
+    def test_there_is_no_on_judge_failure_flag(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            self.seen_from("--on-judge-failure", "ask")
 
 
 if __name__ == "__main__":

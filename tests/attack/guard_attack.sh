@@ -175,6 +175,13 @@ start_broker acting --reply-garbage
 both garbage "$(ONE 'herdr pane send x')" "$(ONE 'herdr pane send y')" "${ARGV[@]}"
 stop_broker
 
+# ---- an acting broker whose judge is down: its key variable is unset, so every judge call fails and
+# the gray call keeps the rules' ask. `gh repo view` is gray by rule; the fake gh touches its marker if it runs.
+unset BW_ATTACK_NO_KEY
+start_broker acting --judge-model test/judge --judge-key-env BW_ATTACK_NO_KEY
+both judge-down "$(ONE 'gh repo view probe-judge')" "$(ONE 'gh repo view probe-judge --json name')" "${ARGV[@]}"
+stop_broker
+
 # ---- hook missing: records whether the runtime runs unguarded (pi: the -e path made absent)
 if [ "$RUNTIME" = pi ]; then
   MISSING=(); for a in "${ARGV[@]}"; do MISSING+=("${a//pi_guard.ts/missing-guard.ts}"); done

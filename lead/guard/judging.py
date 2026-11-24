@@ -8,6 +8,13 @@ reaches the child only through its inherited environment, never argv, a record, 
 A breaker opens after BREAKER_AFTER failures in a row and stays open for BREAKER_S; on opening it sends
 one `guard-judge-down` notice, and a later success closes it and allows a new notice. Only successes
 are cached, by (digest, cwd), for CACHE_S. One lock makes a runner safe to share between threads.
+
+The budget: the hook waits HOOK_DEADLINE for a reply. The broker spends up to READ_DEADLINE reading the
+request and `rules_s` deciding it, and keeps JUDGE_MARGIN to write the record and the reply, so
+acting_budget(rules_s) is what is left for the judge. A judge() call makes one attempt with the whole
+budget, and one retry only when the first failed with at least MIN_ATTEMPT_S left. A budget below
+MIN_ATTEMPT_S at the start starts no child: the result is `judge-skipped`, "no time left". A failure
+after the retry counts once for the breaker.
 """
 import json
 import os
@@ -26,7 +33,10 @@ from lead.guard.redact import redact  # noqa: E402
 
 JudgeResult = namedtuple("JudgeResult", "source decision reason ms attempts")
 JUDGE_PY = os.path.join(os.path.dirname(os.path.realpath(__file__)), "judge.py")
-SHADOW_BUDGET_S = 1.35  # stands in for acting_budget(rules_s) until the acting waits arrive (Task 5)
+HOOK_DEADLINE = 2.0  # hook.DEADLINE and pi_guard.ts DEADLINE_MS / 1000 (a test holds them equal)
+READ_DEADLINE = 0.5  # the broker's own time limit to read one request (broker.READ_DEADLINE)
+JUDGE_MARGIN = 0.15  # the record and the reply, after the judge
+MIN_ATTEMPT_S = 0.3  # less than this is too little for a judge call to succeed
 CACHE_S = 600
 BREAKER_AFTER = 3
 BREAKER_S = 300
@@ -44,6 +54,16 @@ def final_decision(rule_decision, gray, result):
             and result.decision in ("allow", "ask")):
         return result.decision
     return rule_decision
+
+
+def acting_budget(rules_s):
+    """The time left for the judge, in seconds, when the rules took `rules_s` after the read."""
+    return max(0.0, HOOK_DEADLINE - READ_DEADLINE - rules_s - JUDGE_MARGIN)
+
+
+def clean_reason(text):
+    """A judge's reason as bw shows or records it: no control characters, secrets scrubbed, capped."""
+    return judge.scrub(redact(judge._clean(text)))[:judge.MAX_REASON]
 
 
 def _skipped(reason):
@@ -72,31 +92,37 @@ class JudgeRunner:
         if user is None:
             return _skipped(why)
         key = (digest, call.cwd)
-        now = self.clock()
+        start = self.clock()  # read once here and once after each attempt (the tests count on it)
         with self._lock:
-            if self._open_until is not None and now < self._open_until:
+            if self._open_until is not None and start < self._open_until:
                 return _skipped("judge circuit open")
             hit = self._cache.get(key)
-            if hit is not None and now - hit[0] < CACHE_S:
+            if hit is not None and start - hit[0] < CACHE_S:
                 return hit[1]
-        result = self._attempt(user, budget_s)
+        if budget_s < MIN_ATTEMPT_S:
+            return _skipped("no time left")
+        end = start + budget_s
+        source, decision, reason = self._attempt(user, budget_s)
+        now, attempts = self.clock(), 1
+        if source == "judge-failed" and end - now >= MIN_ATTEMPT_S:
+            source, decision, reason = self._attempt(user, end - now)
+            now, attempts = self.clock(), 2
+        result = JudgeResult(source, decision, reason, round((now - start) * 1000, 3), attempts)
         self._settle(key, result)
         return result
 
-    def _attempt(self, user, budget_s):
-        t0 = self.clock()
+    def _attempt(self, user, timeout):
+        """(source, decision, reason) from one child that may run for `timeout` seconds."""
         try:
             given = {"text": user, "config": dict(self.cfg),
-                     "timeout": max(MIN_URL_TIMEOUT, budget_s - URL_TIMEOUT_MARGIN)}
+                     "timeout": max(MIN_URL_TIMEOUT, timeout - URL_TIMEOUT_MARGIN)}
             with tempfile.TemporaryFile("w+") as f:
                 json.dump(given, f)
                 f.seek(0)
-                r = (self.run or proc.run)(list(self.argv), budget_s, stdin=f, reap=True)
-            source, decision, reason = self._read(r)
+                r = (self.run or proc.run)(list(self.argv), timeout, stdin=f, reap=True)
+            return self._read(r)
         except Exception as e:  # noqa: BLE001 — a type name only: an exception's text can carry the key
-            source, decision, reason = "judge-failed", None, type(e).__name__
-        ms = round((self.clock() - t0) * 1000, 3)
-        return JudgeResult(source, decision, reason, ms, 1)
+            return "judge-failed", None, type(e).__name__
 
     @staticmethod
     def _read(r):
@@ -111,7 +137,7 @@ class JudgeRunner:
         if not isinstance(got, dict):
             return "judge-failed", None, "no verdict"
         if got.get("ok") is True and got.get("decision") in ("allow", "ask") and isinstance(got.get("reason"), str):
-            return "judge", got["decision"], redact(got["reason"])[:judge.MAX_REASON]
+            return "judge", got["decision"], clean_reason(got["reason"])
         if got.get("ok") is False and isinstance(got.get("reason"), str) and got["reason"]:  # G-j
             return "judge-failed", None, redact(judge._clean(got["reason"]))[:MAX_FAIL_REASON]
         return "judge-failed", None, "no verdict"

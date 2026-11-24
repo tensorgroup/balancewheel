@@ -9,7 +9,11 @@ call's record follows the reply once judged. A shadow gray call goes to one judg
 queue of SHADOW_QUEUE items. A full queue, or a stop with items still queued, records them as
 `judge-skipped` without a model call. Without a judge, a gray call is recorded at once as
 `judge-skipped`. Every judge failure or skip records the rules' own decision (judging.final_decision).
-The acting judge arrives with the bounded waits; until then an acting gray call is `judge-skipped`.
+In acting, the worker judges a gray call inline, within judging.acting_budget of the time the rules
+took; a failure, a timeout, or a skip gives the rules' own decision (the floor). The reply's reason is
+the judge's cleaned reason on a judge decision, else the rules' reason. When a reply that follows its
+record cannot be sent, or is sent HOOK_DEADLINE or more after the accept, the client has given up: an
+`outcome` event with `client-timeout` follows the record (record.load folds it into the decision).
 """
 import argparse
 import collections
@@ -35,7 +39,7 @@ from lead.guard.rules import RuleContext, decide  # noqa: E402
 MAX_REQUEST = 1024 * 1024
 MAX_PATH = 103  # sun_path is 104 bytes on macOS, NUL included
 MAX_WORKERS = 8
-READ_DEADLINE = 0.5
+READ_DEADLINE = judging.READ_DEADLINE
 OUTCOME = {"allow": "allowed", "block": "blocked", "ask": "asked"}
 SHADOW_QUEUE = 32
 JUDGE_COUNT = {"judge": "judged", "judge-failed": "failed", "judge-skipped": "skipped"}
@@ -187,11 +191,14 @@ class Broker:
                 if self._halted():
                     return
                 item = self._queue.popleft()
-            try:
-                result = self.judge.judge(item[1], item[0]["digest"], judging.SHADOW_BUDGET_S)
-            except Exception as exc:  # the judge is untrusted code: its bug keeps the rules' decision
-                result = judging.JudgeResult("judge-failed", None, type(exc).__name__, None, 0)
-            self._judged(item, result)
+            # the budget an acting broker would have had for this call, so shadow measures acting's waits
+            self._judged(item, self._run_judge(item[1], item[0], judging.acting_budget(item[0]["latency_ms"] / 1000)))
+
+    def _run_judge(self, call, ev, budget_s):
+        try:
+            return self.judge.judge(call, ev["digest"], budget_s)
+        except Exception as exc:  # the judge is untrusted code: its bug keeps the rules' decision
+            return judging.JudgeResult("judge-failed", None, type(exc).__name__, None, 0)
 
     def _judged(self, item, result):
         try:
@@ -211,15 +218,15 @@ class Broker:
             except OSError:
                 self._sem.release()
                 return
-            t = threading.Thread(target=self._work, args=(conn,), daemon=True)
+            t = threading.Thread(target=self._work, args=(conn, time.monotonic()), daemon=True)
             with self._lock:
                 self._workers = [w for w in self._workers if w.is_alive()]
                 self._workers.append(t)
             t.start()
 
-    def _work(self, conn):
+    def _work(self, conn, accepted):
         try:
-            self._handle(conn)
+            self._handle(conn, accepted)
         except Exception:  # _handle reports its own failures; this is the last resort
             pass
         finally:
@@ -263,14 +270,17 @@ class Broker:
 
     @staticmethod
     def _send(conn, obj):
-        conn.settimeout(1.0)
+        """True when the reply went out; False when the client is gone."""
         data = obj if isinstance(obj, bytes) else json.dumps(obj).encode() + b"\n"
         try:
+            conn.settimeout(1.0)
             conn.sendall(data)
+            return True
         except OSError:
-            pass
+            return False
 
-    def _handle(self, conn):
+    def _handle(self, conn, accepted=None):
+        accepted = time.monotonic() if accepted is None else accepted
         line, err = self._read_line(conn)
         if err:
             return self._send(conn, {"v": 1, "error": err})
@@ -294,7 +304,7 @@ class Broker:
             call = normalise(self.session["runtime"], req.get("payload"), cwd, self.ctx.worktree)
             d = decide(call, self.ctx)
             where = "record"
-            self._finish(conn, call, d, t0)
+            self._finish(conn, call, d, t0, accepted)
         except Exception as exc:
             self._fail(conn, where, exc)
 
@@ -303,8 +313,8 @@ class Broker:
         self._error(where, exc)
         self._send(conn, {"v": 1, "error": "internal error"})
 
-    def _finish(self, conn, call, d, t0):
-        latency = round((time.monotonic() - t0) * 1000, 3)
+    def _finish(self, conn, call, d, t0, accepted):
+        latency = round((time.monotonic() - t0) * 1000, 3)  # rules_s: the end of the read to the end of decide()
         text = call_text(call)
         with self._lock:  # one-shot: the first matching call spends the marker
             self_test = bool(self._marker) and self._marker in text
@@ -322,7 +332,9 @@ class Broker:
               "judge_model": self.judge_model, "prompt_hash": self.prompt_hash, "self_test": self_test}
         # rules.decide gives source "gray" (always with decision "ask" and a gray:* rule) or "rule".
         gray = d.source == "gray"
-        if gray and self.mode == "shadow" and self.judge is not None and not self_test:
+        judged = gray and self.judge is not None and not self_test
+        result, queued = None, False
+        if judged and self.mode == "shadow":
             with self._qcond:
                 queued = len(self._queue) < SHADOW_QUEUE
                 if queued:
@@ -331,12 +343,28 @@ class Broker:
             if not queued:
                 self._record(ev, call, d, judging.JudgeResult("judge-skipped", None, "queue full", None, 0))
         else:
-            self._record(ev, call, d, judging.JudgeResult("judge-skipped", None, "no judge", None, 0) if gray else None)
+            if judged:  # acting: judge inline, inside what is left of the hook's deadline
+                result = self._run_judge(call, ev, judging.acting_budget(latency / 1000))
+            elif gray:
+                result = judging.JudgeResult("judge-skipped", None, "no judge", None, 0)
+            self._record(ev, call, d, result)
         if self.reply_garbage:
             return self._send(conn, b"garbage, not json\n")
         # the self-test must see what the rules decided, whatever the mode; a queued call is shadow
         shown = d.decision if self_test else "allow" if self.mode == "shadow" else ev["decision"]
-        self._send(conn, {"v": 1, "id": did, "decision": shown, "reason": d.reason})
+        reason = d.reason
+        if self.mode == "acting" and result is not None and result.source == "judge" and result.reason:
+            reason = judging.clean_reason(result.reason)
+        sent = self._send(conn, {"v": 1, "id": did, "decision": shown, "reason": reason})
+        if not queued and (not sent or time.monotonic() - accepted >= judging.HOOK_DEADLINE):
+            self._client_timeout(did)
+
+    def _client_timeout(self, did):
+        """The client gave up before the reply: say so after the record, which is already written."""
+        try:
+            record.append(self.state_dir, {"type": "outcome", "decision_id": did, "outcome": "client-timeout"})
+        except Exception as exc:
+            self._error("outcome", exc)
 
     def _record(self, ev, call, d, result):
         """Fill in who decided and the final decision, append the row, and count it."""
@@ -344,7 +372,7 @@ class Broker:
         final = judging.final_decision(d.decision, gray, result)
         ev.update({"source": result.source if gray else "rule", "decision": final,
                    "outcome": "shadow-allowed" if self.mode == "shadow" else OUTCOME.get(final, "asked"),
-                   "judge_reason": redact(result.reason) if gray and result.reason else None,
+                   "judge_reason": judging.clean_reason(result.reason) if gray and result.reason else None,
                    "judge_ms": result.ms if gray else None})
         record.append(self.state_dir, ev)
         if ev["self_test"]:
@@ -371,6 +399,9 @@ def main(argv=None):
     sv.add_argument("--token-env", required=True)
     sv.add_argument("--reply-garbage", action="store_true")
     sv.add_argument("--checkpoint-dir", default=None)
+    sv.add_argument("--judge-model", default=None, help="judge gray calls with this model (unset: no judge)")
+    sv.add_argument("--judge-key-env", default="OPENROUTER_API_KEY",
+                    help="the variable that holds the judge's key; the key never goes on argv")
     a = ap.parse_args(argv)
     token = os.environ.get(a.token_env)
     if not token:
@@ -384,7 +415,10 @@ def main(argv=None):
                       is_pristine=launch.pristine_checker(wt, head), checkpoint_dir=a.checkpoint_dir)
     session = {"session_id": "standalone", "project": wt, "profile": "standalone", "lead": "standalone",
                "runtime": a.runtime, "runtime_version": "standalone"}
-    b = Broker(a.state_dir, a.guard_dir, token, a.mode, session, ctx, reply_garbage=a.reply_garbage)
+    judge = None
+    if a.judge_model:
+        judge = judging.JudgeRunner({"model": a.judge_model, "key_env": a.judge_key_env}, wt, ctx.home)
+    b = Broker(a.state_dir, a.guard_dir, token, a.mode, session, ctx, reply_garbage=a.reply_garbage, judge=judge)
     b.bind()
     done = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):

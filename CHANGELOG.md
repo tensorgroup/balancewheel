@@ -237,6 +237,23 @@ not against the prose.
 - **`guard.on_judge_failure` is deprecated.** It is still accepted and validated, and it changes
   nothing: every judge failure records and applies the rules' decision. It is in neither the policy
   digest nor the eval key.
+- **Acting guards judge gray calls inside the hook's deadline** (`lead/guard/judging.py`,
+  `broker.py`). The hook waits 2.0 s. The judge gets what is left after 0.5 s for the read, the time
+  the rules took, and a 0.15 s margin (`judging.acting_budget`). Shadow judges with the same budget,
+  in place of the fixed 1.35 s. A judge call makes one retry when the first attempt fails with at
+  least 0.3 s left. With less than 0.3 s at the start, no child starts: the call is `judge-skipped`,
+  "no time left". In acting, a judge failure, a timeout, an open breaker, or a skip applies the rules'
+  own decision. The reply's reason is the judge's cleaned reason on a judge decision. Acting is still
+  refused by config until the gate arrives. Every file in `lead/guard/` is hashed, so the guard
+  verification key resets. The rules did not change, so the evidence key holds.
+- **Guard log event `outcome`**: `{"type": "outcome", "decision_id", "outcome": "client-timeout"}`.
+  The broker appends it after a decision when the reply cannot be sent, or goes out 2.0 s or more
+  after the accept. `record.load` folds it into its decision: `outcome` becomes `client-timeout`, and
+  the first outcome stays as `outcome_first`. An outcome for an unknown decision goes to the new
+  `orphan_outcomes` list.
+- **`python3 -m lead.guard.broker serve` gains `--judge-model` and `--judge-key-env`** (default
+  `OPENROUTER_API_KEY`). `bw guard verify` gains the case `judge-down`: an acting broker whose judge
+  key is unset must keep the rules' ask on a gray call, and the call must not run.
 - **No Codex `cli` reading yet.** `codex exec --json` (`codex-cli 0.164.0`) carries no `rate_limits`
   (checked 2026-11-23). A Codex seat run writes no `quota/<plan>.cli.json`. `chatgpt-plan` in the
   example stays at `"quota": "none"`. The passive `cli` source stays for a later Codex version.

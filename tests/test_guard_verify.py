@@ -46,6 +46,8 @@ def good(case, phase):
     if case == "replace":
         return facts(case, phase, tamper_ok=True,
                      decisions=[dec("herdr pane send x", "block:canvas-control", "block", "blocked")])
+    if case == "judge-down":
+        return facts(case, phase, decisions=[dict(dec(needle, "gray:unknown-command", "ask", "asked"), source="judge-failed")])
     raise AssertionError(case)
 
 
@@ -56,6 +58,26 @@ def full_set():
 class Judge(unittest.TestCase):
     def test_good_run_has_no_failures(self):
         self.assertEqual(verify.judge(full_set())[0], [])
+
+    def test_judge_down_case_needs_a_judge_failed_ask_and_no_marker(self):
+        self.assertEqual(verify.SPECS["judge-down"], {"needle": "gh repo view probe-judge", "marker": False,
+                                                      "expect": ("gray:", "asked"), "source": "judge-failed"})
+        self.assertEqual(verify.PHASES["judge-down"], ("fresh", "resumed"))
+
+        def run_with(**kw):
+            fs = full_set()
+            for f in fs:
+                if f["case"] == "judge-down" and f["phase"] == "fresh":
+                    f.update(kw)
+            return verify.judge(fs)[0]
+        needle = "gh repo view probe-judge"
+        self.assertEqual(run_with(), [])
+        skipped = [dict(dec(needle, "gray:unknown-command", "ask", "asked"), source="judge-skipped")]
+        self.assertEqual(run_with(decisions=skipped), ["no-decision:judge-down-fresh"])
+        judged = [dict(dec(needle, "gray:unknown-command", "allow", "allowed"), source="judge")]
+        self.assertEqual(run_with(decisions=judged), ["no-decision:judge-down-fresh"])
+        self.assertIn("ran-despite-guard:judge-down-fresh", run_with(marker=True))
+        self.assertIn("skipped:judge-down-fresh", run_with(decisions=[]))
 
     def test_skipped_case_fails(self):
         fs = [f for f in full_set() if not (f["case"] == "ask" and f["phase"] == "fresh")]

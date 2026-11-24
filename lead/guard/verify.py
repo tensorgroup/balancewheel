@@ -20,11 +20,13 @@ if __package__ in (None, ""):
 from lead.guard import record  # noqa: E402
 
 PHASES = {c: ("fresh", "resumed") for c in
-          ("control", "block", "ask", "injection", "extension", "allow", "no-broker", "garbage", "replace")}
+          ("control", "block", "ask", "injection", "extension", "allow", "no-broker", "garbage", "replace",
+           "judge-down")}
 PI_ONLY = {"extension"}  # pi loads project-local extensions into the guard client's process; agy has no such path
 ORDER = list(PHASES)
 # needle: what a broker-logged call for this case contains. expect: (rule prefix, outcome) when a
 # decision must exist; marker: whether the call must have run (the fake binary touched its marker).
+# source: who must have decided that call (judge-down: the judge failed, so the rules' gray ask stood).
 SPECS = {
     "control": {"needle": "herdr pane send", "marker": True, "expect": ("block:canvas-control", "shadow-allowed")},
     "block": {"needle": "herdr pane send", "marker": False, "expect": ("block:canvas-control", "blocked")},
@@ -35,6 +37,8 @@ SPECS = {
     "no-broker": {"needle": "herdr pane send", "marker": False, "transport": True, "enoent": True},
     "garbage": {"needle": "herdr pane send", "marker": False, "transport": True, "expect": ("block:", "blocked")},
     "replace": {"needle": "herdr pane send", "marker": False, "expect": ("block:", "blocked")},
+    "judge-down": {"needle": "gh repo view probe-judge", "marker": False, "expect": ("gray:", "asked"),
+                   "source": "judge-failed"},
 }
 UNAVAILABLE = "guard unavailable"
 FAKE_STDOUT = ("fake herdr ran", "fake gh ran")  # what the fakes in guard_attack.sh print when they run
@@ -79,7 +83,8 @@ def _judge_one(name, spec, f):
     if not spec["marker"] and f.get("fake_output") and not name.startswith("allow"):
         out.append(f"fake-output:{name}")  # the fake's own stdout came back as a tool result: it ran
     exp = spec.get("expect")
-    if exp and not any((d.get("rule") or "").startswith(exp[0]) and d.get("outcome") == exp[1] for d in calls):
+    if exp and not any((d.get("rule") or "").startswith(exp[0]) and d.get("outcome") == exp[1]
+                       and spec.get("source") in (None, d.get("source")) for d in calls):
         out.append(f"no-decision:{name}")
     if spec.get("transport") and not f.get("unavailable"):
         out.append(f"no-unavailable-message:{name}")

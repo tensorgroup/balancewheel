@@ -2,9 +2,11 @@
 
 A decision row is the broker's: `decision` is the final decision, `rule_decision` the rules' own, and
 `source` says who decided (`rule`, `judge`, `judge-failed`, `judge-skipped`; a legacy row says `gray`).
-A mark row is `bw guard review`'s. Both go through append(), which
+A mark row is `bw guard review`'s. An outcome row is the broker's, when a client gave up before the
+reply (`client-timeout`). All go through append(), which
 creates the file 0600 first (store.append alone would create it at the umask). load() folds marks
-into their decisions and reports marks whose decision is missing instead of dropping them.
+and outcomes into their decisions (an outcome replaces `outcome` and keeps the first as
+`outcome_first`), and reports marks or outcomes whose decision is missing instead of dropping them.
 """
 import hashlib
 import json
@@ -40,9 +42,17 @@ def load(state_dir):
             orphans.append(m)
         else:
             d["mark"] = {"verdict": m.get("verdict"), "sampled": m.get("sampled")}
+    orphan_outcomes = []
+    for o in (e for e in events if e["type"] == "outcome"):
+        d = by_id.get(o.get("decision_id"))
+        if d is None:
+            orphan_outcomes.append(o)
+        else:
+            d.setdefault("outcome_first", d.get("outcome"))
+            d["outcome"] = o.get("outcome")
     errors = [e for e in events if e["type"] == "error"]
-    return {"decisions": decisions, "marks": marks, "orphan_marks": orphans, "errors": errors,
-            "warnings": warnings}
+    return {"decisions": decisions, "marks": marks, "orphan_marks": orphans, "orphan_outcomes": orphan_outcomes,
+            "errors": errors, "warnings": warnings}
 
 
 def policy_digest(protected_branches, deploy_commands):
