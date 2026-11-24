@@ -99,11 +99,12 @@ class JudgeRunner:
         self._open_until = None
         self._noticed = False
 
-    def judge(self, call, digest, budget_s):
+    def judge(self, call, digest, budget_s, rule=None):
+        """`rule`: the gray rule id the rules gave the call; the judge sees why the call is gray."""
         if not self.cfg["model"]:
             return _skipped("no judge")
         start = self.clock()  # read once here and once after each attempt (the tests count on it)
-        user, why = judge.prepare(call, self.worktree, self.home)  # its time is in ms too
+        user, why = judge.prepare(call, self.worktree, self.home, rule)  # its time is in ms too
         if user is None:
             return _skipped(why)
         key = (digest, call.cwd)

@@ -174,9 +174,13 @@ def _trigger(config, state, profile, runtime, verify_key, entry, ekey, s, decisi
     """(reason, kind, need) of the first demotion trigger that holds for an acting entry, else None.
     `need` is what acting needs again besides the cooldown: the real fix for that reason."""
     if tuple((entry.get("key") or {}).get("evidence") or ()) != ekey:
-        return "the evidence key changed", "key", "the gate to hold on the new key"
+        return "the evidence key changed", "key", "the gate's full counts on the new key (no cooldown)"
     if not _verified(state, runtime, verify_key):
         return f"guard key unverified; run `bw guard verify {runtime}`", "key", None  # the reason is the fix
+    if runtime not in ADAPTERS or not interactive.is_checked(state, runtime,
+                                                             interactive.check_key(runtime, ADAPTERS[runtime])):
+        return ("the interactive check is not on its current key", "key",
+                f"the interactive check (`bw guard verify {runtime} --interactive` at a terminal)")
     if s["false_allows"]:
         ids = [d["id"] for d in review.false_allows(decisions, ekey)]
         return (f"a sampled allow was marked wrong ({', '.join(map(str, ids[:3]))})", "evidence",
@@ -185,8 +189,12 @@ def _trigger(config, state, profile, runtime, verify_key, entry, ekey, s, decisi
     ekey_eval = eval_key(config, runtime)
     res = evaluate.current(state, runtime, ekey_eval)
     status = res.get("status") if isinstance(res, dict) else None
-    if status == "fail" or (status == "incomplete" and not evaluate.passed_on(state, runtime, ekey_eval)):
-        return (f"the eval is {status} on its current key", "evidence",
+    if status == "fail":
+        return ("the eval is fail on its current key", "evidence",
+                f"an eval pass (`bw guard eval --runtime {runtime}`)")
+    if status == "incomplete" and not evaluate.passed_on(state, runtime, ekey_eval):
+        # the judge failed, not the guard: no cooldown, an eval pass is the whole fix
+        return ("the eval is incomplete on its current key", "key",
                 f"an eval pass (`bw guard eval --runtime {runtime}`)")
     if s["stops_reviewed"] and _rate(s) >= review.MAX_FALSE_STOP:
         return (f"false stops reached {_rate(s) * 100:.0f}% of reviewed stops", "evidence",
@@ -201,8 +209,9 @@ def requirement(dem):
         return f"acting again needs {need}" if need else ""
     after = day(dem["ts"] + COOLDOWN_S)
     if not need:  # a demotion stored before `need` existed
-        return f"acting again after {after} and {MIN_NEW_MARKS} new marks"
-    return f"acting again needs {need}, and {MIN_NEW_MARKS} new marks after {after}"
+        return f"acting again after {after} and {MIN_NEW_MARKS} new marks (marks made since the demotion count)"
+    return (f"acting again needs {need}, after {after} and {MIN_NEW_MARKS} new marks "
+            f"(marks made since the demotion count)")
 
 
 def _trim(dems):

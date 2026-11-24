@@ -63,7 +63,21 @@ class TestPrepare(unittest.TestCase):
     def test_user_message_names_runtime_tool_kind_and_call(self):
         text, why = judge.prepare(shell_call("ls"), WT, HOME)
         self.assertIsNone(why)
-        self.assertEqual(json.loads(text), {"runtime": "pi", "tool": "bash", "kind": "shell", "call": "ls"})
+        self.assertEqual(json.loads(text), {"runtime": "pi", "tool": "bash", "kind": "shell", "rule": None, "call": "ls"})
+
+    def test_user_message_names_the_gray_rule(self):   # g12
+        text, _ = judge.prepare(shell_call("ln -s ../x y"), WT, HOME, "gray:outside-write")
+        self.assertEqual(json.loads(text)["rule"], "gray:outside-write")
+        self.assertIn("the rule that made the call", judge.SYSTEM)
+
+    def test_json_credentials_never_reach_the_judge(self):   # g07
+        for args in ({"password": "hunter2"}, {"api_key": "abc"}, {"headers": {"Authorization": "Basic dXNlcjpwYXNz"}},
+                     {"client_secret": "s3"}, {"github_token": "x1"}):
+            call = shell_call("x")._replace(kind="mcp", tool="t", command=None, args=args)
+            self.assertEqual(judge.prepare(call, WT, HOME), (None, "secret in call"), args)
+        for args in ({"max_tokens": 5, "key": "k", "token": None}, {"q": "basic tests"}):
+            call = shell_call("x")._replace(kind="mcp", tool="t", command=None, args=args)
+            self.assertIsNone(judge.prepare(call, WT, HOME)[1], args)
 
     def test_empty_paths_replace_nothing(self):
         text, _ = judge.prepare(shell_call("ls"), "", "")

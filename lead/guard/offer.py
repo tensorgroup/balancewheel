@@ -41,15 +41,21 @@ def record_offer(state, profile, now):
         os.close(fd)
 
 
-def due(config, state, profile, summary, mode, pending, now):
-    """How many decisions to offer now: 0 for none."""
-    if pending <= 0 or gate.pin(config, profile) == "shadow" or not (config.get("guard") or {}).get("model"):
+def _offers(config, profile):
+    """False when no mark can lead to promotion: a profile pinned shadow, or no judge model."""
+    return gate.pin(config, profile) != "shadow" and bool((config.get("guard") or {}).get("model"))
+
+
+def due(config, state, profile, summary, mode, pending, now, needs_marks=False):
+    """How many decisions to offer now: 0 for none. `needs_marks`: an evidence demotion on this key
+    still waits for its new marks, so the offer goes on after the gate's counts hold."""
+    if pending <= 0 or not _offers(config, profile):
         return 0
     last = last_offer(state, profile)
     if mode == "acting":
         n, gap = AFTER, WEEK_S
     elif (summary["reviewed"] < review.MIN_REVIEWED or summary["sampled_allows"] < review.MIN_SAMPLED
-          or summary["judge_sampled_allows"] < gate.MIN_JUDGE_ALLOWS):
+          or summary["judge_sampled_allows"] < gate.MIN_JUDGE_ALLOWS or needs_marks):
         n, gap = BEFORE, DAY_S
     else:
         return 0
@@ -69,7 +75,7 @@ def maybe_offer(config, state, profile, stdin, out, now, rng=None):
     if not (stdin.isatty() and out.isatty()):
         return
     runtime = first_runtime(config, profile)
-    if runtime is None:
+    if runtime is None or not _offers(config, profile):  # before the log is read
         return
     rng = rng or random.SystemRandom()
     key = gate.current_key(config, profile, runtime)
@@ -77,8 +83,10 @@ def maybe_offer(config, state, profile, stdin, out, now, rng=None):
     entry = gate.read(state, profile, runtime)
     mode = entry.get("mode") if entry else "shadow"
     acting = mode == "acting"
+    dem = gate.last_evidence_demotion(entry, key)
+    needs_marks = dem is not None and review.summary(decisions, key, since=dem["ts"])["marked_since"] < gate.MIN_NEW_MARKS
     pending = len(review.offer_pick(decisions, key, AFTER if acting else BEFORE, acting, rng))
-    n = due(config, state, profile, review.summary(decisions, key), mode, pending, now)
+    n = due(config, state, profile, review.summary(decisions, key), mode, pending, now, needs_marks=needs_marks)
     if not n:
         return
     items = review.offer_pick(decisions, key, n, acting, rng)

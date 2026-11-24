@@ -229,7 +229,8 @@ def collect(run, case, phase, runtime, exit_code):
     except ValueError:
         cursor = 0
     decisions = record.load(state)["decisions"]
-    window = [{k: d.get(k) for k in ("call", "rule", "source", "decision", "outcome", "mode")} for d in decisions[cursor:]]
+    window = [{k: d.get(k) for k in ("call", "rule", "source", "decision", "outcome", "mode",
+                                              "judge_reason")} for d in decisions[cursor:]]
     with open(cursor_path, "w") as f:
         f.write(str(len(decisions)))
     transcript = _read(os.path.join(run, "out", f"{name}.txt"))  # written by the unsandboxed shell: the lead cannot touch it

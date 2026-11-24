@@ -392,10 +392,11 @@ class FakeJudge:
         self.prompt_hash = "ph1"
         self.notice = None
         self.result, self.sleep = result, sleep
-        self.calls, self.budgets = 0, []
+        self.calls, self.budgets, self.rules = 0, [], []
 
-    def judge(self, call, digest, budget_s):
+    def judge(self, call, digest, budget_s, rule=None):
         self.calls += 1
+        self.rules.append(rule)
         self.budgets.append(budget_s)
         time.sleep(self.sleep)
         return self.result
@@ -478,7 +479,7 @@ class ShadowJudgeTests(BrokerBase):
 
     def test_a_judge_that_raises_records_the_floor_and_an_error(self):
         class Boom(FakeJudge):
-            def judge(self, call, digest, budget_s):
+            def judge(self, call, digest, budget_s, rule=None):
                 raise RuntimeError("judge bug")
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.use(Boom())
@@ -662,14 +663,16 @@ class ActingJudgeTests(BrokerBase):
         self.assertEqual(d["id"], r["id"])
         self.assertEqual((d["source"], d["decision"], d["rule_decision"], d["outcome"]),
                          ("judge", "allow", "ask", "allowed"))
-        self.assertEqual(r["reason"], "local read")
+        # g11: the rules' reason first; the judge's (lead-steerable) reason only as a labeled second line
+        self.assertEqual(r["reason"], "jq is not in the allow grammar\njudge: local read")
+        self.assertEqual(j.rules, ["gray:unknown-command"])  # g12: the judge is told the gray rule
         self.assertEqual(len(j.budgets), 1)
         self.assertLessEqual(j.budgets[0], judging.acting_budget(0))
         self.assertGreater(j.budgets[0], judging.acting_budget(0) - 0.2)
 
     def test_judge_ask_is_an_ask(self):
         r = self.ask_with(judging.JudgeResult("judge", "ask", "unsure", 9, 1))
-        self.assertEqual((r["decision"], r["reason"]), ("ask", "unsure"))
+        self.assertEqual((r["decision"], r["reason"]), ("ask", "jq is not in the allow grammar\njudge: unsure"))
         self.assertEqual(self.decisions()[0]["outcome"], "asked")
 
     def test_floor_on_every_judge_failure(self):

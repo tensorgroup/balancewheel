@@ -196,7 +196,7 @@ class Broker:
 
     def _run_judge(self, call, ev, budget_s):
         try:
-            return self.judge.judge(call, ev["digest"], budget_s)
+            return self.judge.judge(call, ev["digest"], budget_s, ev["rule"])
         except Exception as exc:  # the judge is untrusted code: its bug keeps the rules' decision
             return judging.JudgeResult("judge-failed", None, type(exc).__name__, None, 0)
 
@@ -352,9 +352,9 @@ class Broker:
             return self._send(conn, b"garbage, not json\n")
         # the self-test must see what the rules decided, whatever the mode; a queued call is shadow
         shown = d.decision if self_test else "allow" if self.mode == "shadow" else ev["decision"]
-        reason = d.reason
+        reason = d.reason  # always the rules' reason: the judge's text comes from a lead-steerable call
         if self.mode == "acting" and result is not None and result.source == "judge" and result.reason:
-            reason = judging.clean_reason(result.reason)
+            reason = f"{d.reason}\njudge: {judging.clean_reason(result.reason)}"
         sent = self._send(conn, {"v": 1, "id": did, "decision": shown, "reason": reason})
         if not queued and (not sent or time.monotonic() - accepted >= judging.HOOK_DEADLINE):
             self._client_timeout(did)

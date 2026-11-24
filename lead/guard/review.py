@@ -50,12 +50,18 @@ def of_key(decisions, key):
 OFFER_ALLOWS = 2  # sampled allows in each offer before promotion: 20 sampled allows in about 10 offers
 
 
+def allowed(d):
+    """True if the call ran: an allow, except an acting allow whose client gave up before the reply
+    (outcome client-timeout), which stopped the call."""
+    return d.get("decision") == "allow" and not (d.get("mode") == "acting" and d.get("outcome") == "client-timeout")
+
+
 def _pools(decisions, key):
     """(stops, judge allows, other allows) among the unmarked decisions under `key`."""
     mine = [d for d in of_key(decisions, key) if "mark" not in d]
-    return ([d for d in mine if d.get("decision") != "allow"],
-            [d for d in mine if d.get("decision") == "allow" and d.get("source") == "judge"],
-            [d for d in mine if d.get("decision") == "allow" and d.get("source") != "judge"])
+    return ([d for d in mine if not allowed(d)],
+            [d for d in mine if allowed(d) and d.get("source") == "judge"],
+            [d for d in mine if allowed(d) and d.get("source") != "judge"])
 
 
 def _sample_allows(judged, others, k, rng):
@@ -109,15 +115,15 @@ def epoch(ts):
 def false_allows(decisions, key):
     """The sampled allows under `key` whose latest mark is `wrong`."""
     return [d for d in of_key(decisions, key) if "mark" in d and d["mark"].get("sampled")
-            and d.get("decision") == "allow" and d["mark"].get("verdict") == "wrong"]
+            and allowed(d) and d["mark"].get("verdict") == "wrong"]
 
 
 def summary(decisions, key, since=None):
     """Counts under one evidence key. `since` (epoch seconds) adds `marked_since`: decisions marked after it."""
     ds = of_key(decisions, key)
     marked = [d for d in ds if "mark" in d]
-    stops = [d for d in marked if d.get("decision") != "allow"]
-    sampled = [d for d in marked if d["mark"].get("sampled") and d.get("decision") == "allow"]
+    stops = [d for d in marked if not allowed(d)]
+    sampled = [d for d in marked if d["mark"].get("sampled") and allowed(d)]
     false_stops = [d for d in stops if d["mark"].get("verdict") == "wrong"]
     false_allows = [d for d in sampled if d["mark"].get("verdict") == "wrong"]
     gray = sum(1 for d in ds if record.is_gray(d))
@@ -168,12 +174,14 @@ def show(d, out, n, total):
     tag = "allow (sampled)" if d.get("sampled") else d.get("decision")
     print(f"--- {n}/{total}  id={d['id']}", file=out)
     print(safe(f"runtime={d.get('runtime')} tool={d.get('tool')} decision={tag} "
-               f"source={d.get('source')} rule={d.get('rule')}"), file=out)
+               f"source={d.get('source')} rule={d.get('rule')} outcome={d.get('outcome')}"), file=out)
     print("call:", file=out)
     for line in str(d.get("call", "")).split("\n") or [""]:
         print(textwrap.fill(safe(line), 100, initial_indent="  ", subsequent_indent="  ",
                             break_long_words=True, replace_whitespace=False) or "  ", file=out)
     print(safe(f"reason: {d.get('reason')}"), file=out)
+    if d.get("judge_reason"):
+        print(safe(f"judge: {d.get('judge_reason')}"), file=out)
 
 
 def print_summary(decisions, key, out):

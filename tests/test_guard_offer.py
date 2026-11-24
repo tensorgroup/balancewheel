@@ -1,5 +1,6 @@
 """`bw start`'s guard review offer: when it is due, who sees it, and what a yes runs. Hermetic."""
 import io, os, random, shutil, sys, tempfile, unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, ROOT)
@@ -82,6 +83,18 @@ class OfferCase(unittest.TestCase):
         for short in ({"reviewed": 49}, {"sampled_allows": 19}, {"judge_sampled_allows": 4}):
             with self.subTest(short):
                 self.assertEqual(offer.due(self.config, self.state, "p", dict(s, **short), "shadow", 5, NOW), 5)
+
+    def test_offered_while_an_evidence_demotion_waits_for_new_marks(self):   # g09
+        s = {"reviewed": 50, "sampled_allows": 20, "judge_sampled_allows": 5}
+        self.seed()
+        self.assertEqual(offer.due(self.config, self.state, "p", s, "shadow", 5, NOW, needs_marks=True), 5)
+
+    def test_a_shadow_pin_or_no_model_never_reads_the_log(self):   # g17
+        self.seed()
+        config = cfg()
+        del config["guard"]["model"]
+        with mock.patch.object(offer.record, "load", side_effect=AssertionError("log read")):
+            self.assertEqual(self.maybe("y\n", config=config), "")
 
     def test_no_offer_without_a_judge_model(self):  # no mark can lead to promotion
         self.seed()

@@ -32,7 +32,9 @@ not against the prose.
   guard key, a failed eval, or false stops at 10% or more. The demotion line and `bw status` say what acting needs
   again for that reason: for a wrong sampled allow, the allow re-marked right (`bw guard review --remark <id>`) or
   a key change; for the eval, an eval pass; for false stops, under 10% of reviewed stops; for an unverified key,
-  `bw guard verify <runtime>`. After an evidence demotion, acting also needs 5 new marks after 7 days. A pinned
+  `bw guard verify <runtime>`. After an evidence demotion, acting also waits until 7 days after the demotion and
+  5 new marks; marks made during the 7 days count. A key change has no cooldown: the new key needs the gate's
+  full counts. A pinned
   `acting` profile on an unverified guard key exits 7, and a cap switch onto it stays on the current lead. A
   profile pinned `shadow` resets a stored `acting`, and it reads neither the log nor the guard key at lead start.
   With no judge model, lead start prints one line: "guard: no judge model set — the guard stays in shadow (set
@@ -128,6 +130,31 @@ not against the prose.
   verification, the reserved tier, a missing login, or a failed panel no longer counts against it.
 
 ### Fixed
+
+- **The guard gate demotes on a changed interactive-check key, and an incomplete eval has no cooldown**
+  (`lead/guard/gate.py`, `offer.py`). A change of the guard client or the hook files demotes an acting
+  guard (kind `key`, no cooldown); acting again needs `bw guard verify <runtime> --interactive`. An eval
+  that ends incomplete (the judge failed) with no pass on its key demotes with kind `key`, not `evidence`,
+  so an eval pass is the whole fix. The start offer goes on while an evidence demotion waits for its 5 new
+  marks. The demotion line says "after <date> and 5 new marks (marks made since the demotion count)".
+- **`bw guard verify` keeps `judge_reason` in each case's decisions** (`lead/guard/verify.py`). Before, the
+  judge-down case's "judge circuit open" floor proof never matched in a real run, so the case could fail.
+- **JSON-shaped credentials skip the judge and are redacted in the log** (`lead/guard/redact.py`).
+  `"password": "..."`, `'api_key': '...'`, `"client_secret"`, `"github_token"`, an `Authorization` key, and
+  `Basic <base64>` now count as secrets. `"max_tokens"` and a bare `"key"` do not.
+- **The judge is told the gray rule** (`lead/guard/judge.py`, `judging.py`). The user message gains `rule`
+  (bw's own `gray:*` id) and the system prompt names it. The prompt hash changes, so evidence under a judge
+  model starts fresh once.
+- **An acting ask shows the rules' reason** (`lead/guard/broker.py`). The judge's reason, which a lead can
+  steer, follows on a second line as `judge: ...`.
+- **An acting allow whose client gave up (outcome `client-timeout`) counts as a stop** in `bw guard review`
+  pools and counts (`lead/guard/review.py`). The review shows each decision's outcome and judge reason.
+- **A lead cannot read the guard log or the guard state** (`lead/sandbox.py`). `state_dir/guard.jsonl` and
+  the `guard-*.json` files are read-denied. Every lead's containment key changes once: run
+  `bw sandbox verify <runtime>` again.
+- **`bw start` runs no guard eval with no judge model or a profile pinned `shadow`**, and the start offer
+  reads the guard log only when it can offer (`lead/start.py`, `lead/guard/offer.py`). The eval line names
+  the gray calls the judge skipped.
 
 - **The guard rules close six ways to change a variable or write a file unseen** (`lead/guard/rules.py`).
   A `printf -v NAME` or a `%n` format assigns a variable, so printf with either is gray (`gray:option`).

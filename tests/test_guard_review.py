@@ -234,7 +234,7 @@ class ReviewTests(unittest.TestCase):
         with open(gate.path(self.state), "w") as f:
             json.dump({"p": {"pi": entry}}, f)
         self.assertIn("  guard shadow for profile p (pi) since 2026-11-30: a sampled allow was marked wrong; "
-                      "acting again after 2026-12-07 and 5 new marks", review.status_lines(CFG, self.state, NOW))
+                      "acting again after 2026-12-07 and 5 new marks (marks made since the demotion count)", review.status_lines(CFG, self.state, NOW))
 
     def test_status_after_a_demotion_prints_the_real_requirement_per_reason(self):
         from lead.guard import gate
@@ -243,11 +243,11 @@ class ReviewTests(unittest.TestCase):
             ("a sampled allow was marked wrong (j0)", "evidence",
              "the allow re-marked right, if the mark was a mistake (`bw guard review --remark j0`), or a key change",
              "; acting again needs the allow re-marked right, if the mark was a mistake (`bw guard review --remark j0`), "
-             "or a key change, and 5 new marks after 2026-12-07"),
+             "or a key change, after 2026-12-07 and 5 new marks (marks made since the demotion count)"),
             ("the eval is fail on its current key", "evidence", "an eval pass (`bw guard eval --runtime pi`)",
-             "; acting again needs an eval pass (`bw guard eval --runtime pi`), and 5 new marks after 2026-12-07"),
+             "; acting again needs an eval pass (`bw guard eval --runtime pi`), after 2026-12-07 and 5 new marks (marks made since the demotion count)"),
             ("false stops reached 12% of reviewed stops", "evidence", "false stops under 10% of reviewed stops",
-             "; acting again needs false stops under 10% of reviewed stops, and 5 new marks after 2026-12-07"),
+             "; acting again needs false stops under 10% of reviewed stops, after 2026-12-07 and 5 new marks (marks made since the demotion count)"),
             ("guard key unverified; run `bw guard verify pi`", "key", None, ""),  # the reason names the fix
             ("the evidence key changed", "key", "the gate to hold on the new key",
              "; acting again needs the gate to hold on the new key"))
@@ -364,6 +364,27 @@ class CliTests(unittest.TestCase):
         out = self.bw("--help").stdout
         self.assertIn("guard review", out)
         self.assertIn("guard install", out)
+
+
+class EndFixWaveReview(unittest.TestCase):
+    def test_an_acting_allow_the_client_gave_up_on_is_a_stop(self):   # g10
+        key = ("p", "pi", "r", "d", "m", "h")
+        fields = dict(zip(record.EVIDENCE_KEY, key))
+        rows = [dict(fields, id="a", decision="allow", source="judge", mode="acting", outcome="client-timeout"),
+                dict(fields, id="b", decision="allow", source="judge", mode="acting", outcome="allowed"),
+                dict(fields, id="c", decision="allow", source="judge", mode="shadow", outcome="client-timeout")]
+        self.assertEqual([review.allowed(d) for d in rows], [False, True, True])
+        stops, judged, _ = review._pools(rows, key)
+        self.assertEqual(([d["id"] for d in stops], [d["id"] for d in judged]), (["a"], ["b", "c"]))
+        rows[0]["mark"] = {"verdict": "wrong", "sampled": True}
+        s = review.summary(rows, key)
+        self.assertEqual((s["stops_reviewed"], s["false_stops"], s["false_allows"]), (1, 1, 0))
+
+    def test_show_prints_the_outcome_and_the_judge_reason(self):   # g10
+        out = io.StringIO()
+        review.show({"id": "x", "decision": "allow", "outcome": "client-timeout", "judge_reason": "fine\x1b"}, out, 1, 1)
+        self.assertIn("outcome=client-timeout", out.getvalue())
+        self.assertIn("judge: fine\\x1b", out.getvalue())
 
 
 if __name__ == "__main__":

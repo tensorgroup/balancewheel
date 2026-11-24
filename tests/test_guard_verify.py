@@ -361,6 +361,17 @@ class Collect(unittest.TestCase):
         self.transcript("no-broker-fresh", ["ok"])
         self.assertEqual([d["source"] for d in self.collect()["decisions"]], ["judge-skipped"])
 
+    def test_collect_keeps_the_judge_reason_so_an_open_breaker_proves_the_floor(self):   # g06
+        from lead.guard import record
+        record.append(os.path.join(self.run_dir, "state"), {
+            "type": "decision", "id": "bbbbbbbbbbbb", "call": "gh repo view probe-judge", "rule": "gray:unknown-command",
+            "decision": "ask", "rule_decision": "ask", "source": "judge-skipped", "outcome": "asked", "mode": "acting",
+            "judge_reason": "judge circuit open"})
+        self.transcript("judge-down-fresh", ["ok"])
+        (d,) = self.collect("judge-down")["decisions"]
+        self.assertEqual(d["judge_reason"], "judge circuit open")
+        self.assertTrue(verify._source_ok(verify.SPECS["judge-down"], d))
+
     def test_the_planted_extensions_sentinel_is_a_fact(self):
         self.transcript("extension-fresh", ["blocked"])
         self.assertFalse(self.collect("extension")["ext_loaded"])

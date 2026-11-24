@@ -145,6 +145,12 @@ class Grants(unittest.TestCase):
         for _, _, path in g.rules:
             self.assertFalse(view == path or view.startswith(path.rstrip("/") + "/"), path)
 
+    def test_the_guard_log_and_state_are_denied(self):   # g15
+        g = self.grants(self.wt)
+        prof = sandbox.seatbelt_profile(g, str(self.root / "scratch"))
+        for name in ("guard.jsonl", "guard-mode.json", "guard-eval.json", "guard-interactive.json"):
+            self.assertIn(f'(deny file-read* (subpath "{self.state / name}"))', prof)
+
     def test_only_the_own_view_is_granted_and_the_inbox_record_is_denied(self):
         g = self.grants(self.wt)
         key = resolve_project(str(self.wt), {"projects": {}, "default_profile": "d"}).worktree_key

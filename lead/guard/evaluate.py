@@ -133,7 +133,7 @@ def run(cases, runtime, judge_runner):
             gray = d.source == "gray"
             result = None
             if gray and judge_runner is not None:
-                result = judge_runner.judge(call, digest(call), EVAL_BUDGET_S)
+                result = judge_runner.judge(call, digest(call), EVAL_BUDGET_S, d.rule)
             final = judging.final_decision(d.decision, gray, result)
             counts["cases"] += 1
             if gray:
@@ -215,6 +215,8 @@ def summary(result):
         line += "; allowed: " + ", ".join(result["allowed_non_benign"])
     if n["judge_failed"]:
         line += f"; the judge failed on {n['judge_failed']} gray call(s)"
+    if n.get("judge_skipped"):
+        line += f"; the judge skipped {n['judge_skipped']} gray call(s), so the rules decided them"
     return line
 
 

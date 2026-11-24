@@ -448,12 +448,16 @@ once for each bw-contained lead runtime.
     decide first. A rule block blocks. A rule ask asks. The judge sees only gray calls and can
     answer only `allow` or `ask`; if it fails or times out, the rules' own decision stands, so
     acting is never weaker than shadow. bw steps back to shadow by itself when a sampled allow is
-    marked wrong, the evidence key changes, the guard key is unverified, the eval fails, or false
-    stops reach 10%. The demotion line and `bw status` name what acting needs again for that
-    reason: for a wrong sampled allow, the allow re-marked right (`bw guard review --remark <id>`,
-    when the mark was a mistake) or a key change; for the eval, an eval pass; for false stops,
-    under 10% of reviewed stops; for an unverified key, `bw guard verify <runtime>`. After a
-    demotion on evidence, acting also needs 5 new marks after 7 days. A
+    marked wrong, the evidence key changes, the guard key is unverified, the interactive check is
+    not on its current key, the eval fails or ends incomplete, or false stops reach 10%. The
+    demotion line and `bw status` name what acting needs again for that reason: for a wrong
+    sampled allow, the allow re-marked right (`bw guard review --remark <id>`, when the mark was a
+    mistake) or a key change; for the eval, an eval pass; for false stops, under 10% of reviewed
+    stops; for an unverified key, `bw guard verify <runtime>`; for the interactive check,
+    `bw guard verify <runtime> --interactive`. After a demotion on evidence (a wrong allow, a
+    failed eval, false stops), acting also waits until 7 days after the demotion and 5 new marks;
+    marks made during the 7 days count. A key change, an unverified key, a changed interactive
+    check, or an incomplete eval has no cooldown: the new key needs the gate's full counts. A
     profile pinned `acting` on an unverified key exits 7. `bw improve` suggests `auto` for a
     profile pinned `shadow` when every other condition holds.
   - **After upgrading.** pi and Kimi leads need `bw sandbox verify` again (the adapter hash

@@ -1,5 +1,6 @@
 """The guard gate: promotion to acting, demotion to shadow, and the refusal, on synthetic state."""
 import json, os, shutil, sys, tempfile, unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, ROOT)
@@ -417,6 +418,39 @@ class Summary(GateCase):
         self.seed()
         d = [d for d in record.load(self.state)["decisions"] if d["id"] == "s0"][0]
         self.assertEqual(d["mark"]["ts"], NOW - 10 * DAY)
+
+
+class EndFixWave(GateCase):
+    def test_a_changed_interactive_check_key_demotes_with_no_cooldown(self):   # g05
+        self.seed()
+        self.promote()
+        real = interactive.check_key
+        with mock.patch.object(gate.interactive, "check_key", lambda rt, ad: dict(real(rt, ad), client_sha="changed")):
+            o = gate.decide(CFG_AUTO, self.state, "p", "pi", VKEY, NOW + 10)
+        self.assertEqual(o.mode, "shadow")
+        self.assertIn("interactive check", o.line)
+        d = self.stored()["demotions"][-1]
+        self.assertEqual(d["kind"], "key")
+        self.assertIn("--interactive", d["need"])
+        self.assertEqual(gate.decide(CFG_AUTO, self.state, "p", "pi", VKEY, NOW + 20).mode, "acting")  # key back
+
+    def test_an_incomplete_eval_demotes_with_no_cooldown(self):   # g09
+        self.seed()
+        self.promote()
+        ek = gate.eval_key(CFG_AUTO, "pi")
+        with open(evaluate.path(self.state), "w") as f:
+            json.dump({"pi": {"key": ek, "result": {"status": "incomplete"}, "ts": NOW, "last_pass": None}}, f)
+        self.assertEqual(gate.decide(CFG_AUTO, self.state, "p", "pi", VKEY, NOW + 10).mode, "shadow")
+        self.assertEqual(self.stored()["demotions"][-1]["kind"], "key")
+        evaluate.write(self.state, "pi", ek, {"status": "pass"})
+        self.assertEqual(gate.decide(CFG_AUTO, self.state, "p", "pi", VKEY, NOW + 20).mode, "acting")
+
+    def test_requirement_says_marks_since_the_demotion_count(self):   # plan 8 follow-up
+        line = gate.requirement({"kind": "evidence", "ts": NOW, "need": "an eval pass"})
+        self.assertIn(f"after {gate.day(NOW + gate.COOLDOWN_S)} and 5 new marks (marks made since the demotion count)",
+                      line)
+        key = gate.requirement({"kind": "key", "ts": NOW, "need": "the gate's full counts on the new key (no cooldown)"})
+        self.assertIn("no cooldown", key)
 
 
 if __name__ == "__main__":

@@ -467,6 +467,7 @@ class StartCase(unittest.TestCase):
 
     def test_start_runs_the_guard_eval_when_its_key_changed(self):
         self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
+        self.config["guard"] = {"mode": {"p": "auto"}, "model": "test/judge", "key_env": "BW_TEST_UNSET_JUDGE_KEY"}
         run = FakeRun()
         with mock.patch.object(start.evaluate, "ensure", return_value=("pass", "guard eval pi: pass — fake")) as ens:
             code, out = self.start(run, update=False)
@@ -543,6 +544,7 @@ class StartCase(unittest.TestCase):
 
     def test_start_no_verify_passes_allow_run_false_to_the_guard_eval(self):
         self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
+        self.config["guard"] = {"mode": {"p": "auto"}, "model": "test/judge", "key_env": "BW_TEST_UNSET_JUDGE_KEY"}
         with mock.patch.object(start.evaluate, "ensure", return_value=("pending", "guard eval pi: pending: --no-verify")) as ens:
             code, out = self.start(FakeRun(), verify=False, update=False)
         self.assertEqual(ens.call_args.kwargs["allow_run"], False)
@@ -550,11 +552,21 @@ class StartCase(unittest.TestCase):
 
     def test_a_failing_guard_eval_is_a_line_not_the_end_of_start(self):
         self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
+        self.config["guard"] = {"mode": {"p": "auto"}, "model": "test/judge", "key_env": "BW_TEST_UNSET_JUDGE_KEY"}
         with mock.patch.object(start.evaluate, "ensure", side_effect=ValueError("secret text")):
             code, out = self.start(FakeRun(), verify=False, update=False)
         self.assertEqual(code, 0, out)
         self.assertIn("bw start: guard eval pi: failed to run (ValueError)", out)
         self.assertNotIn("secret text", out)
+
+    def test_no_guard_eval_with_no_judge_model_or_a_shadow_pin(self):   # plan 8 follow-up, g17
+        self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
+        for guard in ({"mode": {"p": "auto"}}, {"mode": {"p": "shadow"}, "model": "test/judge"}):
+            self.config["guard"] = guard
+            with mock.patch.object(start.evaluate, "ensure") as ens:
+                code, out = self.start(FakeRun(), verify=False, update=False)
+            ens.assert_not_called()
+            self.assertNotIn("guard eval", out)
 
     def test_runtime_no_tool_maps_to_prints_no_update_lock_once(self):
         del self.config["tools"]["kimi"]

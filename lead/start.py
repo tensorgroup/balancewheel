@@ -40,7 +40,7 @@ from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
 from .projects import refuse_inside, resolve_project
 from .rotation import decide
-from .guard import evaluate, interactive, offer
+from .guard import evaluate, gate, interactive, offer
 from seats import verify as seat_verify
 
 PASSED_ENV = ("BALANCEWHEEL_CONFIG", "BW_STATE_DIR")
@@ -184,7 +184,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
             for rt in waiting:  # a runtime whose tool never reported still gets its check
                 submit(rt, True)
     verify_items = [i for rt in runtimes for i in items_by_rt.get(rt, [])]
-    _guard_evals(config, runtimes, state, verify, run, say)
+    _guard_evals(config, runtimes, state, verify, run, say, profile=project.profile)
 
     # 4. quota (probes, one Orca read; expired caps cleared) and the lead, on a fresh clock
     started, now = now, clock()
@@ -235,8 +235,11 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     return code
 
 
-def _guard_evals(config, runtimes, state, verify, run, say):
-    """The guard eval for each runtime with a guarded lead; it runs only when its key changed."""
+def _guard_evals(config, runtimes, state, verify, run, say, profile=None):
+    """The guard eval for each runtime with a guarded lead; it runs only when its key changed. With no
+    judge model, or a profile pinned shadow, nothing can promote: no eval runs and no line prints."""
+    if not (config.get("guard") or {}).get("model") or (profile and gate.pin(config, profile) == "shadow"):
+        return
     for rt in runtimes:
         if not any(kind == "guard" for kind, _ in verifymod.items_for_runtime(config, rt)):
             continue

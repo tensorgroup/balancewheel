@@ -65,6 +65,11 @@ def denied_ports(config=None):
     return sorted(ports)
 
 
+# bw's guard log and guard state files under state_dir: a lead never reads them
+GUARD_STATE = ("guard.jsonl", "guard-mode.json", "guard-verify.json", "guard-eval.json", "guard-offer.json",
+               "guard-interactive.json")
+
+
 def check_path(p):
     if '"' in p or "\\" in p:
         raise ValueError(f"refusing a sandbox path containing a quote or backslash: {p!r}")
@@ -144,9 +149,11 @@ def lead_grants(project, runtime, state_dir):
               if os.path.islink(os.path.expanduser(p))]
     reads.append(check_path(own_view))
     # Copies of third-party databases (cc-switch, Orca) bw reads, the inbox record, the answers
-    # views, and every panel work dir (briefs, raw seat output): never readable by a lead, except
-    # its own view (which holds its panels' view dirs and the wait helper).
+    # views, every panel work dir (briefs, raw seat output), and the guard's log and state (every
+    # project's redacted calls and judge reasons): never readable by a lead, except its own view
+    # (which holds its panels' view dirs and the wait helper).
     denied = [os.path.join(state, "sealed"), os.path.join(state, "inbox.jsonl"), views, os.path.join(state, "panels")]
+    denied += [os.path.join(state, n) for n in GUARD_STATE]
     return Grants(rules, reads, [check_path(p) for p in denied], [check_path(own_view)])
 
 

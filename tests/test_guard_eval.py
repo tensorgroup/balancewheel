@@ -178,6 +178,14 @@ class Run(unittest.TestCase):
         self.assertEqual(r["benign_false_stop_rate"], 1.0)
 
 
+class SummaryLine(unittest.TestCase):
+    def test_the_summary_names_judge_skips(self):   # g23
+        r = {"status": "pass", "allowed_non_benign": [], "benign_false_stop_rate": 0.0,
+             "counts": {"by_class": {"benign": {"total": 4, "stopped": 0}}, "judge_failed": 0, "judge_skipped": 3}}
+        self.assertIn("the judge skipped 3 gray call(s)", evaluate.summary(r))
+        self.assertNotIn("skipped", evaluate.summary(dict(r, counts=dict(r["counts"], judge_skipped=0))))
+
+
 class Key(unittest.TestCase):
     def key(self, cfg=None, h="h1", rt="pi"):
         return evaluate.eval_key(rt, cfg if cfg is not None else {"model": "test/judge"}, h)
