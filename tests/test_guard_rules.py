@@ -606,6 +606,28 @@ class CheckpointDirTests(unittest.TestCase):
                     "printf '%s' -- BW_PANEL"):
             self.assertNotEqual(decide(shell(cmd), self.ctx(lead_env=env)).rule, "ask:bw-env", cmd)
 
+    def test_hidden_changes_of_a_bw_variable_are_rule_asks(self):   # review fix round 2
+        env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+        for cmd in ("trap 'BW_PANEL=/x' DEBUG; echo x > $BW_PANEL/pre-commit",
+                    "function f { BW_PANEL=/x; }; f; echo x > $BW_PANEL/pre-commit",
+                    "coproc BW_PANEL { true; }", "alias s='BW_PANEL=/x'",
+                    "declare -n r=BW_PANEL", "declare -n r; r=BW_PANEL; r=/x", "time -p BW_PANEL=/x true",
+                    "a[BW_PANEL=5]=1", "echo ${a[BW_PANEL=5]}", "echo $((BW_PANEL=5))", "[[ BW_PANEL=1 -eq 1 ]]",
+                    "eval $'\\x42W_PANEL=x'", "wait -p $x", "printf -v $x y",
+                    # round 1 attacks still ask
+                    "printf -vBW_PANEL %s .git/hooks; echo x > $BW_PANEL/pre-commit", "export BW_{PANEL,Q}=/tmp",
+                    "read -aBW_PANEL <<< /tmp", "wait -p BW_PANEL", "true {BW_PANEL}>/tmp/f", "export $x=/tmp"):
+            d = decide(shell(cmd), self.ctx(lead_env=env))
+            self.assertEqual((d.decision, d.source, d.rule), ("ask", "rule", "ask:bw-env"), cmd)
+
+    def test_common_commands_with_expansions_are_not_rule_asks(self):   # review fix round 2
+        env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+        for cmd in ('export PATH="$HOME/bin:$PATH"', "local x=$1", "wait $!", "sleep 1 & wait $!", 'command -v "$x"',
+                    "declare x=$(date)", "printf -v out '%s' \"$x\"", "env FOO=$X make", 'eval "$cmd"',
+                    "export FOO=$(pwd)", "export FOO=bar", 'read -r line < "$f"', 'for f in "$@"; do echo $f; done'):
+            d = decide(shell(cmd), self.ctx(lead_env=env))
+            self.assertNotEqual(d.rule, "ask:bw-env", cmd)
+
     def test_inbox_write_expands_then_stays_outside(self):
         env = {"BW_INBOX": os.path.join(os.path.dirname(self.cp), "inbox-view", "k", "answers.md")}
         self.assertEqual(decide(shell("echo x > $BW_INBOX/a"), self.ctx(lead_env=env)).rule, "gray:outside-write")

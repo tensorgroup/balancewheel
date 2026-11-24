@@ -380,31 +380,82 @@ _BW_SET = re.compile(rf"{_BW_NAME}(?:\+=|=|\[)")  # X=, X+=, X[..]= at the start
 _BW_DEFAULT = re.compile(rf"\$\{{{_BW_NAME}:?=")  # ${X=..} and ${X:=..} assign when X is unset
 _BW_FD = re.compile(rf"\{{{_BW_NAME}\}}")  # {X}>file stores an fd number in X
 _BW_ANY = re.compile(_BW_NAME)
+_BW_IN = re.compile(rf"(?<![A-Za-z0-9_]){_BW_NAME}(?:\+=|=)")  # an assignment inside a word: a[X=5]=1
 _ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=")
 _RESERVED = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
-_VAR_CMDS = {"export", "unset", "declare", "typeset", "readonly", "local", "read", "getopts", "mapfile",
-             "readarray", "let", "env", "eval", "builtin", "command", "wait"}
+_UNSEEN = re.compile(r"[$`{]")  # a name the shell would build at run time
+# Commands that set a variable named by an operand: a protected name in any operand, or an
+# operand whose NAME part (before the first `=`) the shell would expand, is a rule ask.
+_NAME_CMDS = {"export", "unset", "declare", "typeset", "readonly", "local", "read", "getopts", "mapfile",
+              "readarray", "let", "env"}
+# Commands whose operands are shell text or a name only after an option: a protected name anywhere
+# is a rule ask; an unexpanded operand stays gray (eval) or is checked where the name is (wait -p,
+# printf -v).
+_TEXT_CMDS = {"eval", "trap", "alias", "wait", "printf"}
+
+
+def _opt_arg(ops, flag):
+    """The operand of `flag` (`-vX` or `-v X`), or None."""
+    for k, x in enumerate(ops):
+        if x.text == flag:
+            return ops[k + 1] if k + 1 < len(ops) else None
+        if x.text.startswith(flag) and len(x.text) > len(flag) and not x.text.startswith("--"):
+            return Word(x.text[len(flag):], x.quoted, x.unexpanded)
+    return None
+
+
+def _unseen_name(x):
+    return bool(x.unexpanded) and bool(_UNSEEN.search(x.text.partition("=")[0]))
 
 
 def _bw_env(w):
     """True if the segment may assign, export, unset, or declare a name bw sets for the lead.
-    Checked: the leading assignments (after `{`, `then`, `time`, ...), `${X:=..}`, `{X}>`, and,
-    when the command changes variables, every operand: a protected name anywhere in it (`-vX`,
-    `-aX`, `r=X` too) or any unexpanded operand (`BW_{A,B}`, `$x=`)."""
-    if any(_BW_FD.fullmatch(x.text) or (x.unexpanded and _BW_DEFAULT.search(x.text)) for x in w):
-        return True
+    Checked: `${X:=..}` and `{X}>` anywhere; the leading assignments (after `{`, `then`, `time -p`,
+    `function f`, ...), with a nameref target `r=X` too; and the operands of a command that sets
+    a variable (`export`, `declare -n r=X`, `printf -vX`, `wait -p X`, `trap 'X=..'`, `alias`,
+    `coproc X`, `command export ...`)."""
+    if any(_BW_FD.fullmatch(x.text) or (x.unexpanded and (_BW_DEFAULT.search(x.text) or _BW_IN.search(x.text)))
+           for x in w):
+        return True  # ${X:=..}, {X}>, and arithmetic such as $((X=5)) or ${a[X=5]}
+    if w[0].text == "[[" and any(_BW_IN.search(x.text) for x in w):
+        return True  # [[ X=1 -eq 1 ]] evaluates the operands as arithmetic
     i = 0
-    while i < len(w) and (w[i].text in _RESERVED or _ASSIGN.match(w[i].text)):
-        if _BW_SET.match(w[i].text):
-            return True
-        i += 1
-    if i == len(w):
+    while i < len(w):
+        t = w[i].text
+        if t == "function":  # `function f {`: the name, then the body
+            i += 2
+        elif t == "time" and i + 1 < len(w) and w[i + 1].text == "-p":
+            i += 2
+        elif t in ("command", "builtin"):  # a prefix: judge the command after its options
+            i += 1
+            while i < len(w) and w[i].text.startswith("-") and w[i].text not in ("-v", "-V"):
+                i += 1
+            if i < len(w) and w[i].text in ("-v", "-V"):
+                return False  # a lookup, not a run
+        elif t in _RESERVED:
+            i += 1
+        elif _ASSIGN.match(t):
+            if _BW_SET.match(t) or _BW_IN.search(t) or _BW_ANY.match(t.partition("=")[2]):
+                return True
+            i += 1
+        else:
+            break
+    if i >= len(w):
         return False
     cmd, ops = os.path.basename(w[i].text), w[i + 1:]
-    if cmd in ("for", "select"):  # only the loop variable is assigned
-        return bool(ops) and (bool(ops[0].unexpanded) or bool(_BW_ANY.search(ops[0].text)))
-    if cmd in _VAR_CMDS or (cmd == "printf" and any(x.text.startswith("-v") for x in ops)):
-        return any(x.unexpanded or _BW_ANY.search(x.text) for x in ops)
+    if cmd in ("for", "select", "coproc"):  # only the loop or coprocess variable is assigned
+        return bool(ops) and (_unseen_name(ops[0]) or bool(_BW_ANY.search(ops[0].text)))
+    if cmd in _NAME_CMDS:
+        return any(_unseen_name(x) or _BW_ANY.search(x.text) for x in ops)
+    if cmd in _TEXT_CMDS:
+        if cmd == "printf" and _opt_arg(ops, "-v") is None:
+            return False
+        if any(_BW_ANY.search(x.text) for x in ops):
+            return True
+        if cmd == "eval" and any(x.unexpanded and "\\" in x.text for x in ops):
+            return True  # escapes such as $'\x42W_..' can spell a protected name
+        target = _opt_arg(ops, "-v" if cmd == "printf" else "-p") if cmd in ("printf", "wait") else None
+        return target is not None and _unseen_name(target)
     return False
 
 
