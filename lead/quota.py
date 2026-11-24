@@ -262,7 +262,10 @@ def read_quota(state, config=None, now=None):
 
 
 def _finite(v):
-    return _num(v) and math.isfinite(v)
+    try:
+        return _num(v) and math.isfinite(v)
+    except OverflowError:  # an int too large for a float
+        return False
 
 
 def _cli_window(w, now):

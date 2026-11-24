@@ -460,6 +460,8 @@ BAD = [
     {"primary": win(resets_in_seconds=0)}, {"primary": win(resets_in_seconds=-5)},
     {"primary": win(), "secondary": win(minutes=300)},                   # the same name twice
     {"primary": win(), "secondary": win(used=None, minutes=10080)},      # one bad window rejects all
+    {"primary": win(used=10**400)},                                      # an int too large for a float
+    {"primary": win(resets_at=10**400)}, {"primary": win(resets_in_seconds=10**400)},
 ]
 
 
