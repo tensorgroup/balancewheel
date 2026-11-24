@@ -18,6 +18,21 @@ JUDGE_PY = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file_
 BASE_HASH = judge.prompt_hash()
 
 
+def _no_network(*a, **k):
+    raise AssertionError("a judge test tried to open a real connection")
+
+
+_NET = mock.patch("urllib.request.build_opener", _no_network)
+
+
+def setUpModule():  # no judge test reaches the network; TestPost patches over this with a fake opener
+    _NET.start()
+
+
+def tearDownModule():
+    _NET.stop()
+
+
 def shell_call(cmd):
     return Call("pi", "bash", "shell", cmd, (), None, None, WT, WT)
 
@@ -53,6 +68,92 @@ class TestPrepare(unittest.TestCase):
     def test_empty_paths_replace_nothing(self):
         text, _ = judge.prepare(shell_call("ls"), "", "")
         self.assertEqual(json.loads(text)["call"], "ls")
+
+
+class TestSecretShapes(unittest.TestCase):
+    SHAPES = {
+        "curl user": "curl -u admin:hunter2 https://example.invalid/",
+        "curl --user": "curl --user=admin:hunter2 https://example.invalid/",
+        "mysql -p": "mysql -u root -phunter2 db",
+        "aws key": "aws configure set aws_access_key_id AKIAABCDEFGHIJKLMNOP",
+        "github ghp": "git clone https://ghp_" + "a1B2" * 9 + "@example.invalid/r",
+        "github gho": "echo gho_" + "Zz09" * 9,
+        "openai sk": "echo sk-" + "Ab3d" * 8,
+        "openrouter sk": "echo sk-or-v1-" + "0a1b" * 16,
+        "slack xoxb": "echo xoxb-1234567890-abcdefghij",
+        "slack xoxp": "echo xoxp-1234567890-abcdefghij",
+        "high entropy": "echo q8Vt3ZkP0wLx7RmN2bYc9HdJ4sFg6QeA",
+    }
+
+    def test_each_secret_shape_is_not_sent(self):
+        for name, cmd in self.SHAPES.items():
+            with self.subTest(name):
+                self.assertEqual(judge.prepare(shell_call(cmd), WT, HOME), (None, "secret in call"))
+
+    def test_ordinary_commands_are_not_flagged(self):
+        for cmd in ("git status", "git log --oneline -3", "git show 189f27e0a1b2c3d4e5f60718293a4b5c6d7e8f90",
+                    "python3 -m unittest tests.test_guard_judge -v", "ls -la", "mkdir -p build", "cp -pR a b",
+                    "git push -u origin main", "cat src/ComponentName/SubComponent/FileName.tsx",
+                    "pytest tests/test_worktree_and_home_paths_are_replaced_and_scrubbed.py",
+                    "docker ps --format '{{.ID}}'", "cat 2f1c7a9e-4b3d-4e8a-9c1b-0d2e3f4a5b6c.json"):
+            with self.subTest(cmd):
+                self.assertIsNone(judge.prepare(shell_call(cmd), WT, HOME)[1])
+
+
+class TestPaths(unittest.TestCase):
+    HOME_NA = "/Users/josé"  # synthetic non-ASCII home
+
+    def test_non_ascii_home_is_replaced_in_a_tool_call(self):
+        p = self.HOME_NA + "/notes.txt"
+        call = Call("pi", "read", "read", None, (p,), None, {"path": p}, WT, WT)
+        text, _ = judge.prepare(call, WT, self.HOME_NA)
+        self.assertNotIn("jos", text)
+        self.assertIn("~/notes.txt", text)
+
+    def test_non_ascii_home_is_replaced_in_a_shell_call(self):
+        text, _ = judge.prepare(shell_call("cat " + self.HOME_NA + "/a"), WT, self.HOME_NA)
+        self.assertNotIn("jos", text)
+        self.assertIn("~/a", text)
+
+    def test_home_is_replaced_only_at_a_path_boundary(self):
+        text, _ = judge.prepare(shell_call("ls /Users/bobby /Users/bob /Users/bob/x"), WT, "/Users/bob")
+        self.assertEqual(json.loads(text)["call"], "ls /Users/bobby ~ ~/x")
+
+
+class _Resp(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _Opener:
+    def __init__(self, data):
+        self.data = data
+
+    def open(self, req, timeout):
+        return _Resp(self.data)
+
+
+class TestPost(unittest.TestCase):
+    def test_a_reply_over_the_cap_is_refused(self):
+        big = b'{"x": "' + b"a" * judge.MAX_RESPONSE + b'"}'
+        with mock.patch("urllib.request.build_opener", lambda *a: _Opener(big)):
+            with self.assertRaises(ValueError):
+                judge._post({}, "k", 1.0)
+
+    def test_a_reply_under_the_cap_is_read(self):
+        with mock.patch("urllib.request.build_opener", lambda *a: _Opener(b'{"ok": 1}')):
+            self.assertEqual(judge._post({}, "k", 1.0), {"ok": 1})
+
+    def test_no_redirect_comes_from_triage(self):
+        from lead import triage
+        self.assertIs(judge._NoRedirect, triage._NoRedirect)
+
+    def test_judge_once_binds_post_late(self):
+        with mock.patch.object(judge, "_post", lambda *a: reply('{"decision": "allow", "reason": "ok"}')):
+            self.assertTrue(judge.judge_once("{}", CFG, 1.0, env={"K": "v"})["ok"])
 
 
 class TestBody(unittest.TestCase):

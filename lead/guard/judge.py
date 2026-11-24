@@ -13,7 +13,9 @@ because an exception's text can carry the key.
 """
 import hashlib
 import json
+import math
 import os
+import re
 import sys
 import unicodedata
 import urllib.request
@@ -22,12 +24,50 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 
 from lead.guard.redact import redact  # noqa: E402
-from lead.triage import scrub  # noqa: E402
+from lead.triage import _NoRedirect, scrub  # noqa: E402
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
 MAX_INPUT = 4096  # UTF-8 bytes of the user message
 MAX_REASON = 300
 MAX_TOKENS = 200
+MAX_RESPONSE = 64 * 1024  # bytes of the reply body
+# Secret shapes that redact() does not catch. Judge-only: a match skips the judge and the rules'
+# decision stands; the local log keeps redact()'s own scrubbing. Best-effort, not a secrets scanner.
+_SECRET_SHAPES = [
+    re.compile(r"(?:^|\s)(?:-u\s*|--user(?:=|\s+))['\"]?[^\s:'\"]+:[^\s'\"]+"),  # curl -u user:pass
+    re.compile(r"\b(?:mysql\w*|mariadb\w*)\b[^|;&\n]*\s-p\S+"),  # mysql -pPASSWORD
+    re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),  # AWS access key id
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),  # GitHub tokens
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"),  # OpenAI, OpenRouter (sk-or-v1-), Anthropic (sk-ant-)
+    re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}"),  # Slack
+]
+_TOKEN = re.compile(r"[A-Za-z0-9+=_-]{32,}")  # `/` splits tokens, so a path is never one
+_MIN_ENTROPY = 4.0  # bits per character; a lowercase hex sha tops out at 4.0 and has no capitals
+
+
+def _entropy(s):
+    return -sum(c / len(s) * math.log2(c / len(s)) for c in (s.count(ch) for ch in set(s)))
+
+
+def _high_entropy(tok):
+    """A long token with capitals, small letters, and digits, spread like random text."""
+    return (any(c.isupper() for c in tok) and any(c.islower() for c in tok) and any(c.isdigit() for c in tok)
+            and _entropy(tok) >= _MIN_ENTROPY)
+
+
+def _has_secret(text):
+    if redact(text) != text or any(rx.search(text) for rx in _SECRET_SHAPES):
+        return True
+    return any(_high_entropy(m.group()) for m in _TOKEN.finditer(text))
+
+
+def _replace_path(text, path, token):
+    """Put token in place of path, raw or JSON-escaped, only where a path ends: before `/`, the end,
+    or a character that cannot continue a name. /home/bob in /home/bobby stays."""
+    for form in {path, json.dumps(path)[1:-1]}:
+        text = re.sub(re.escape(form) + r"(?![\w.-])", lambda _m: token, text)
+    return text
 # OpenRouter's unified switch (docs checked 2026-11-23): `enabled: false` turns reasoning off on every
 # model that allows it; `effort: "none"` is the OpenAI-style spelling of the same thing.
 REASONING_OFF = {"enabled": False}
@@ -69,12 +109,12 @@ def call_text(call):
 def prepare(call, worktree, home):
     """(the user message, None), or (None, why it is not sent)."""
     text = call_text(call)
-    if redact(text) != text:
+    if _has_secret(text):
         return None, "secret in call"
     if worktree:
-        text = text.replace(worktree, "{worktree}")
+        text = _replace_path(text, worktree, "{worktree}")
     if home:
-        text = text.replace(home, "~")
+        text = _replace_path(text, home, "~")
     text = scrub(text)
     user = json.dumps({"runtime": call.runtime, "tool": call.tool, "kind": call.kind, "call": text})
     if len(user.encode("utf-8")) > MAX_INPUT:
@@ -118,23 +158,23 @@ def parse(reply):
     return got["decision"], scrub(redact(_clean(got["reason"])))[:MAX_REASON]
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *a, **kw):
-        return None
-
-
 def _post(body, key, timeout, url=URL):
     if url != URL:
         raise ValueError("the judge posts only to its fixed URL")
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                  headers={"Content-Type": "application/json"})
     req.add_unredirected_header("Authorization", "Bearer " + key)
+    # timeout bounds each socket read, not the whole call; the child's own timeout (Task 4) bounds that
     with urllib.request.build_opener(_NoRedirect).open(req, timeout=timeout) as r:
-        return json.load(r)
+        data = r.read(MAX_RESPONSE + 1)
+    if len(data) > MAX_RESPONSE:
+        raise ValueError("reply over the cap")
+    return json.loads(data)
 
 
-def judge_once(user_text, cfg, timeout, post=_post, env=os.environ):
+def judge_once(user_text, cfg, timeout, post=None, env=os.environ):
     """{"ok": True, "decision", "reason"} or {"ok": False, "reason": a type name or "key unset"}."""
+    post = post or _post  # looked up at call time, so a patch of judge._post always applies
     try:
         key = env.get(cfg["key_env"])
         if not key:
@@ -148,8 +188,7 @@ def judge_once(user_text, cfg, timeout, post=_post, env=os.environ):
 def main():
     try:
         given = json.load(sys.stdin)
-        # _post is looked up here, at call time, so a test patch of judge._post reaches the child path
-        out = judge_once(given["text"], given["config"], float(given["timeout"]), post=_post)
+        out = judge_once(given["text"], given["config"], float(given["timeout"]))
     except Exception as e:  # noqa: BLE001
         out = {"ok": False, "reason": type(e).__name__}
     print(json.dumps(out))
