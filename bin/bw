@@ -316,8 +316,14 @@ def cmd_verify(a, config, state):
     return _report(*verify.sandbox_verify(config, state, a.runtime, a.lead))
 
 
+def _watch_last(w):
+    """When a watch last changed: its latest update, else its own ts."""
+    return max([u.get("ts") or "" for u in w.get("updates") or []] + [w.get("ts") or ""])
+
+
 def _panel_data(config):
-    """The main log plus every `improve.panel_logs` log: panels (first copy of an id wins, sorted by ts), watches, usage."""
+    """The main log plus every `improve.panel_logs` log: panels (first copy of an id wins, sorted by ts),
+    watches (one per id: the copy changed last wins, so its status is the latest), usage."""
     data = store.load(store.log_path(config))
     seen = {p["id"] for p in data["panels"]}
     for log in config.get("improve", {}).get("panel_logs", []):  # logs a setup keeps somewhere other than metrics_log
@@ -328,7 +334,12 @@ def _panel_data(config):
                 data["panels"] = data["panels"] + [p]
         data["watches"] = data["watches"] + extra["watches"]
         data["usage"] = data["usage"] + extra["usage"]
-    data["panels"] = sorted(data["panels"], key=lambda p: str(p.get("ts")))
+    watches = {}
+    for w in data["watches"]:
+        if w["id"] not in watches or _watch_last(w) >= _watch_last(watches[w["id"]]):
+            watches[w["id"]] = w
+    data["watches"] = list(watches.values())
+    data["panels"] = sorted(data["panels"], key=lambda p: p.get("ts") or "")
     return data
 
 
@@ -416,7 +427,8 @@ def cmd_pack(a, config, state):
         print(f"bw: pack export: {e}", file=sys.stderr)
         return 1
     except OSError as e:
-        print(f"bw: pack export: could not write {os.path.join(a.to, 'pack.yaml')}: {e.strerror}", file=sys.stderr)
+        print(f"bw: pack export: could not write {e.filename or os.path.join(a.to, 'pack.yaml')}: {e.strerror}",
+              file=sys.stderr)
         return 1
     if not r["changed"]:
         print(f"bw: pack is current at {r['old_version']}; nothing written")

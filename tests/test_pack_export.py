@@ -162,6 +162,13 @@ class Entries(Base):
                 export.entries(self.make_config(eps={"policy": text}), self.load([]), self.state)
             self.assertIn("placeholder", str(e.exception))
 
+    def test_a_real_policy_with_angle_brackets_passes(self):   # plan 9 final review
+        c = self.make_config(eps={"policy": "Escalate when a run takes < 5 min or > 30 min; a->b is fine."})
+        self.assertTrue(export.entries(c, self.load([]), self.state))
+        for text in ("<seat policy>", "Holds <why> duties.", "TODO"):
+            with self.subTest(text), self.assertRaises(export.PackError):
+                export.entries(self.make_config(eps={"policy": text}), self.load([]), self.state)
+
     def test_colliding_names_get_a_distinguisher(self):
         c = self.make_config(eps={"runtime": "codex", "model": "model-a", "roles": ["plan"], "effort": "high"},
                              alpha={"effort": "low"})
@@ -241,6 +248,32 @@ class PackTextTests(unittest.TestCase):
         for ch in ("\u2028", "\u2029", "\u0085", "\r"):
             self.assertNotIn(ch, block)
         self.assertEqual(json.loads(lines[3].split("notes: ", 1)[1]), hostile)
+
+    def test_del_and_c1_controls_are_escaped(self):   # g20
+        value = "a\x7fb\x85c\x9bd"
+        out = export._quoted(value)
+        for ch in ("\x7f", "\x85", "\x9b"):
+            self.assertNotIn(ch, out)
+        self.assertEqual(json.loads(out), value)
+
+    def test_block_values_single_quoted_or_with_a_trailing_comment(self):   # plan 9 final review
+        block = ("  - name: 'It''s a seat'  # hand note\n  category: model-seat\n  status: preferred # why\n"
+                 '  notes: "a # b" # c\n')
+        self.assertEqual(export.parse_block(block), [{"name": "It's a seat", "status": "preferred", "notes": "a # b"}])
+        with self.assertRaises(export.PackError):
+            export.parse_block("  - name: 'open\n")
+
+    def test_markers_outside_the_catalog_value_are_refused(self):   # g18
+        text = FX.read_text()
+        inline = text.replace("catalog:\n", "catalog: []\n", 1)
+        with self.assertRaises(export.PackError) as e:
+            export.find_block(inline)
+        self.assertIn("same line", str(e.exception))
+        between = text.replace("  # bw:catalog:begin", "other: 1\n  # bw:catalog:begin", 1)
+        with self.assertRaises(export.PackError) as e:
+            export.find_block(between)
+        self.assertIn("between", str(e.exception))
+        self.assertTrue(export.find_block(text.replace("catalog:\n", "catalog: # entries\n", 1)))
 
     def test_astral_characters_are_raw_utf8_and_round_trip(self):
         emoji = "\U0001F600"
@@ -457,6 +490,27 @@ class ExportRun(Base):
             return 0, "", ""
         self.refused(self.repo, "changed during the export", git_rc=git_rc)
 
+    def test_a_refusal_after_the_bullet_deletes_it(self):   # plan 9 final review
+        def vcs(d, *a):
+            Path(d, "pack.yaml").write_text("changed\n")
+            return 0, "", ""
+        self.refused(self.repo, "changed during the export", git_rc=vcs)
+        self.assertEqual(list(Path(self.state, "packs").glob("*.md")), [])
+
+    def test_a_bom_before_name_is_read_and_kept(self):   # plan 9 final review
+        text = "\ufeffname: model-seats\n" + FX.read_text().replace("name: model-seats\n", "", 1)
+        repo = pack_repo(Path(self.tmp) / "bom", text)
+        r = export.export(self.cfg, self.data, repo, self.state)
+        self.assertTrue(r["changed"])
+        raw = Path(repo, "pack.yaml").read_bytes()
+        self.assertTrue(raw.startswith("\ufeffname: model-seats".encode()))
+        self.assertIn(b"version: 0.2.0", raw)
+
+    def test_a_stale_temp_file_never_blocks_an_export(self):   # g21
+        Path(self.repo, f".pack.yaml.{os.getpid()}.tmp").write_text("stale")
+        r = export.export(self.cfg, self.data, self.repo, self.state, git_rc=lambda d, *a: (0, "", ""))
+        self.assertTrue(r["changed"])
+
     def test_mode_is_kept(self):
         os.chmod(self.pack(), 0o600)
         export.export(self.cfg, self.data, self.repo, self.state, git_rc=lambda d, *a: (0, "", ""))
@@ -547,9 +601,34 @@ class Cli(Base):
         r = self.bw()
         self.assertEqual(r.returncode, 0, r.stderr)
         text = Path(self.repo, "pack.yaml").read_text()
-        self.assertIn("2 panels", text)
-        self.assertIn("review-required", text)
-        self.assertIn("2026-10", text)
+        self.assertIn("2 panels", text)  # p2 comes from the second log only; p1 is in both and counts once
+        self.assertNotIn("3 panels", text)
+        self.assertIn("2026-10", text)  # beta's only usage row is in the second log
+        lines = text.splitlines()
+        alpha = next(i for i, line in enumerate(lines) if "model-a" in line and "name:" in line)
+        self.assertIn("review-required", lines[alpha + 2])  # the open watch on alpha is in the second log only
+
+    def test_watches_from_two_logs_keep_one_copy_the_latest_change_wins(self):   # plan 9 final review
+        import importlib.machinery
+        import importlib.util
+        loader = importlib.machinery.SourceFileLoader("bw_cli_pack", BW)
+        mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(mod)
+        w = {"type": "watch", "id": "w1", "ts": "2026-11-01T00:00:00Z", "kind": "redundant-seat", "target": "alpha",
+             "status": "open"}
+        store.append(self.log, w)
+        store.append(self.log2, w)
+        store.append(self.log2, {"type": "watch-update", "watch_id": "w1", "status": "resolved",
+                                 "ts": "2026-11-02T00:00:00Z"})
+        data = mod._panel_data(cfg.load_config(self.config))
+        self.assertEqual([(x["id"], x["status"]) for x in data["watches"]], [("w1", "resolved")])
+
+    def test_cli_os_error_names_the_failing_path(self):   # g21
+        store.append(self.log, panel("p1", "2026-11-01T00:00:00Z", {"alpha": "model-a"}, {"alpha": (1, 0, 0, 1)}))
+        Path(self.state, "packs").write_text("a file where the dir goes")
+        r = self.bw()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(os.path.join(self.state, "packs"), r.stderr)
 
 
 if __name__ == "__main__":

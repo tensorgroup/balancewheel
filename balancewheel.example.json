@@ -87,7 +87,7 @@
         "review",
         "decision"
       ],
-      "policy": "First voice on plan, design, and decision targets and an equal peer on code review; re-demote only on logged dispute evidence.",
+      "policy": "First voice on plan and decision targets and an equal peer on review; re-demote only on logged dispute evidence.",
       "plan": "chatgpt-plan",
       "fallback": "gem"
     },

@@ -35,7 +35,7 @@ class SchemaV2(unittest.TestCase):
     def test_seat_title_must_be_one_nonempty_line(self):
         for bad in ("", "  ", "two\nlines", "cr\rline", 7):
             o = v2(); o["seats"]["beta"]["title"] = bad
-            self.rejects(o, "seats.beta.title")
+            self.rejects(o, "seats.beta.title: must be a non-empty single-line string")
 
     def test_schema_1_refuses_title(self):
         o = json.loads(V1.read_text()); seat = next(iter(o["seats"]))

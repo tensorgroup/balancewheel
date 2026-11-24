@@ -128,7 +128,11 @@ def commands():
             "file": "bin/bw",
             "_uses": uses.get(fn, uses.get(top, [])),
         }
-        if any(i["id"] == cid for i in groups.get(top, [])):
+        same = next((i for i in groups.get(top, []) if i["id"] == cid), None)
+        if same is not None:  # another form of the same command (`--interactive`, `--remark`): merge it in
+            same["usage"] += "\n" + e["usage"]
+            same["desc"] += " " + e["desc"][:1].upper() + e["desc"][1:] + "."
+            same["flags"] += [f for f in flags if f not in same["flags"]]
             continue
         groups.setdefault(top, []).append(item)
     return groups

@@ -253,6 +253,17 @@ class Cli(unittest.TestCase):
         for cid in ("cmd:seat", "cmd:seat.list", "cmd:seat.verify"):
             self.assertIn(f'"{cid}"', data)
 
+    def test_usage_map_keeps_every_form_of_a_command(self):  # g19: --interactive and --remark were dropped
+        gen = load_module("usage_map_generate", ROOT / "docs" / "usage-map" / "generate.py")
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "data.js"
+            with mock.patch.object(gen, "OUT", out), mock.patch.object(gen, "rel", str), mock.patch("sys.stdout", io.StringIO()):
+                gen.main()
+            data = out.read_text()
+        for flag in ('"--interactive"', '"--remark"'):
+            self.assertIn(flag, data)
+        self.assertEqual(data.count('"id": "cmd:guard.verify"'), 1)
+
     def test_cli_verify_all(self):
         from seats import verify
         results = {"astra": (True, "out\nbw: recorded a seat pass for codex on seat astra"),

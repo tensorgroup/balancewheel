@@ -131,6 +131,16 @@ not against the prose.
 
 ### Fixed
 
+- **`bw pack export` reads more real packs and refuses more broken ones** (`packs/export.py`, `bin/bw`).
+  A policy with `<` and `>` passes; only a token such as `<seat policy>` or `TODO` is a placeholder. A
+  block value may be single-quoted or carry a trailing `# comment`. A UTF-8 BOM before `name:` is read
+  past and kept. A `catalog:` line with a value, or a top-level key between `catalog:` and the begin
+  marker, is refused. DEL and the C1 controls are escaped in written values. A refusal after the bullet
+  is written deletes the bullet. A stale temp file never blocks an export, and a write error names the
+  path that failed. Watches read from more than one log keep one copy per id; the copy changed last wins.
+- **The usage map keeps every form of a command** (`docs/usage-map/generate.py`): `bw guard verify
+  --interactive` and `bw guard review --remark` were dropped.
+
 - **The guard gate demotes on a changed interactive-check key, and an incomplete eval has no cooldown**
   (`lead/guard/gate.py`, `offer.py`). A change of the guard client or the hook files demotes an acting
   guard (kind `key`, no cooldown); acting again needs `bw guard verify <runtime> --interactive`. An eval

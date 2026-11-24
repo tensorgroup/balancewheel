@@ -8,6 +8,7 @@ import difflib
 import json
 import os
 import re
+import tempfile
 
 from lead import handoff
 from lead import paths  # noqa: F401  (puts metrics/ on sys.path)
@@ -125,12 +126,16 @@ def lead_entries(config, data, state):
     return out
 
 
+# a template token such as <seat policy> or <why>, or TODO; a real policy may use < and > ("< 5 min")
+_PLACEHOLDER = re.compile(r"<[A-Za-z_][A-Za-z_ -]*>|\bTODO\b")
+
+
 def _check_policies(config, seats):
     policy = {s: config["seats"][s]["policy"] for s in seats}
     empty = [s for s, p in policy.items() if not p.strip()]
     if empty:
         raise PackError("seats with no policy (the pack must say why a seat holds its duties): " + ", ".join(empty))
-    stub = [s for s, p in policy.items() if "TODO" in p or ("<" in p and ">" in p)]
+    stub = [s for s, p in policy.items() if _PLACEHOLDER.search(p)]
     if stub:
         raise PackError("seats whose policy is still a placeholder: " + ", ".join(stub))
 
@@ -177,7 +182,8 @@ MARKER_HELP = (f"The pack has no bw catalog block. Put `{MARK_BEGIN}` and `{MARK
 
 _BEGIN = re.compile(r"^([ \t]*)" + re.escape(MARK_BEGIN) + r"[ \t]*\r?$", re.M)
 _END = re.compile(r"^[ \t]*" + re.escape(MARK_END) + r"[ \t]*\r?$", re.M)
-_CATALOG = re.compile(r"^catalog:", re.M)
+_CATALOG = re.compile(r"^catalog:([^\r\n]*)", re.M)
+_TOP_KEY = re.compile(r"^[^\s#-][^:\r\n]*:", re.M)  # a top-level mapping key: column 0, not a comment or item
 _NAME = re.compile(r"^name:[ \t]*(.*?)[ \t]*\r?$", re.M)
 _VERSION_LINE = re.compile(r"^version:", re.M)
 _VERSION = re.compile(r"^version:[ \t]*([\"']?)(\d+)\.(\d+)\.(\d+)\1(?:[ \t]+#.*)?[ \t]*\r?$", re.M)
@@ -209,6 +215,10 @@ def find_block(text):
     catalog = _CATALOG.search(text)
     if not catalog or catalog.start() > begin.start():
         raise PackError(f"No top-level `catalog:` line comes before `{MARK_BEGIN}`. Put the markers inside `catalog:`.")
+    if re.split(r"[ \t]+#", catalog.group(1), maxsplit=1)[0].strip():
+        raise PackError("The `catalog:` line has a value on the same line. Put the catalog entries on the lines below it.")
+    if _TOP_KEY.search(text, catalog.end(), begin.start()):
+        raise PackError(f"A top-level key comes between `catalog:` and `{MARK_BEGIN}`. Put the markers inside `catalog:`.")
     start = begin.end() + (1 if text[begin.end():begin.end() + 1] == "\n" else 0)
     return start, end.start(), begin.group(1)
 
@@ -230,9 +240,8 @@ def _newline(text, block_start):
 def _quoted(value):
     """A one-line YAML double-quoted scalar: raw UTF-8, with the YAML line breaks escaped."""
     text = json.dumps(value, ensure_ascii=False)
-    for ch in ("\u2028", "\u2029", "\u0085"):
-        text = text.replace(ch, "\\u%04x" % ord(ch))
-    return text
+    # YAML line breaks, DEL, and the C1 controls are not printable in YAML 1.2: escape them
+    return re.sub("[\u007f-\u009f\u2028\u2029]", lambda m: "\\u%04x" % ord(m.group()), text)
 
 
 def render(entries, indent, newline):
@@ -250,15 +259,26 @@ def _bad_line(n):
                      "bw owns this block — move hand-written entries outside the markers")
 
 
+_DQ = re.compile(r'("(?:[^"\\]|\\.)*")(?:[ \t]+#.*)?[ \t]*$')
+_SQ = re.compile(r"'((?:[^']|'')*)'(?:[ \t]+#.*)?[ \t]*$")
+
+
 def _value(raw, n):
+    """One scalar: double-quoted, single-quoted ('' is a quote), or plain; a trailing ` # comment` goes."""
     if raw.startswith('"'):
+        m = _DQ.match(raw)
         try:
-            return json.loads(raw)
+            return json.loads(m.group(1) if m else raw)
         except json.JSONDecodeError:
             raise _bad_line(n) from None
+    if raw.startswith("'"):
+        m = _SQ.match(raw)
+        if not m:
+            raise _bad_line(n)
+        return m.group(1).replace("''", "'")
     if raw[:1] in ("|", ">"):
         raise _bad_line(n)
-    return raw.strip()
+    return re.split(r"[ \t]+#", raw, maxsplit=1)[0].strip()
 
 
 def parse_block(block, first_line=1):
@@ -336,10 +356,10 @@ def bullet(old_version, new_version, old, new, today):
 
 
 def _write_text_atomic(path, data, mode=0o644):
-    """A temp file in the same directory, then `os.replace`. A failure leaves no temp file behind."""
-    tmp = os.path.join(os.path.dirname(path), f".{os.path.basename(path)}.{os.getpid()}.tmp")
+    """A fresh temp file in the same directory, then `os.replace`. A failure leaves no temp file behind,
+    and a stale one left by a killed run never blocks the next."""
+    fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=os.path.dirname(path) or ".")
     try:
-        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(fd, "wb") as f:
             f.write(data)
             os.fchmod(f.fileno(), mode)
@@ -403,6 +423,8 @@ def export(config, data, pack_dir, state, dry_run=False, today=None, git_rc=None
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         raise PackError(f"{path} is not valid UTF-8") from None
+    bom = "\ufeff" if text.startswith("\ufeff") else ""  # kept on write; the parse reads past it
+    text = text[len(bom):]
     name = pack_name(text)
     if name != PACK_NAME:
         raise PackError(f"{path}: name is {name}, not {PACK_NAME}")
@@ -419,17 +441,26 @@ def export(config, data, pack_dir, state, dry_run=False, today=None, git_rc=None
     result.update(changed=True, new_version=new_version, diff=diff, bullet=text_bullet)
     if dry_run:
         return result
+    # the bullet first, so a failed bullet write leaves the pack as it was; a refusal after it deletes
+    # the bullet, so no bullet names a version that was never written
     bullet_path = os.path.join(state, "packs", f"{PACK_NAME}-{new_version}.md")
     os.makedirs(os.path.dirname(bullet_path), exist_ok=True)
     _write_text_atomic(bullet_path, (text_bullet + "\n").encode("utf-8"))
-    result["bullet_path"] = bullet_path
     try:
-        again = _read_pack(path)
-    except OSError:
-        raise PackError("pack.yaml changed during the export; run it again") from None
-    if again != raw:
-        raise PackError("pack.yaml changed during the export; run it again")
-    _write_text_atomic(path, new_text.encode("utf-8"), mode=st.st_mode & 0o7777)
+        try:
+            again = _read_pack(path)
+        except OSError:
+            raise PackError("pack.yaml changed during the export; run it again") from None
+        if again != raw:
+            raise PackError("pack.yaml changed during the export; run it again")
+        _write_text_atomic(path, (bom + new_text).encode("utf-8"), mode=st.st_mode & 0o7777)
+    except BaseException:
+        try:
+            os.unlink(bullet_path)
+        except OSError:
+            pass
+        raise
+    result["bullet_path"] = bullet_path
     kind = bump_kind(old, new_entries)
     try:
         store.append(store.log_path(config), {"type": "pack_export", "pack": PACK_NAME, "from": old_version,
