@@ -184,3 +184,90 @@ class HostileHandoffInput(unittest.TestCase):
         from lead import handoff
         self.assertEqual(handoff._bounded("y" * (handoff.SECTION_BYTES + 1)), "… 1 more")
         self.assertEqual(handoff._bounded("a\nb"), "a\nb")
+
+
+CFG = {"profiles": {
+    "high": {"depth": "standard", "checkpoints": {
+        "review": {"seats": ["astra", "opus", "gem", "ox"], "required": ["astra", "opus"], "min_seats": 3},
+        "design": {"seats": ["astra", "opus", "gem"], "required": ["astra"], "min_seats": 2}}},
+    "loose": {"depth": "deep-on-stakes", "checkpoints": {
+        "debug": {"seats": ["a", "b"], "required": [], "min_seats": 2}}},
+    "bare": {"depth": "standard", "checkpoints": {}}}}
+
+
+class PanelProtocol(unittest.TestCase):
+    def test_protocol_lists_exactly_the_profile_checkpoints(self):
+        text = protocol_text(CFG, "high", "/s/handoffs/k/panel", "/s/inbox-view/k/panels")
+        self.assertIn("- design: astra, opus, gem (required: astra; at least 2)", text)
+        self.assertIn("- review: astra, opus, gem, ox (required: astra, opus; at least 3)", text)
+        self.assertLess(text.index("- design:"), text.index("- review:"))   # ROLES order, not config order
+        self.assertNotIn("- plan:", text)
+        self.assertNotIn("$", text.split("Review panels.", 1)[1])   # checkpoint.md keeps its own $BW_ASKS; panel.md has none
+
+    def test_protocol_has_literal_paths_no_variables(self):
+        text = protocol_text(CFG, "high", "/s/handoffs/k/panel", "/s/inbox-view/k/panels", "/s/inbox-view/k/panels/bw-panel-wait")
+        self.assertIn("mv /s/handoffs/k/panel/.tmp-<id> /s/handoffs/k/panel/<id>.request", text)
+        self.assertNotIn("$BW_PANEL", text)
+        self.assertIn("python3 /s/inbox-view/k/panels/bw-panel-wait — ", text)
+        self.assertIn("/s/inbox-view/k/panels/responses/<id>.json", text)
+
+    def test_wait_path_defaults_to_the_view_root(self):
+        text = protocol_text(CFG, "high", "/s/handoffs/k/panel", "/s/inbox-view/k/panels")
+        self.assertIn("python3 /s/inbox-view/k/panels/bw-panel-wait — ", text)
+
+    def test_shell_paths_quoted_for_a_space(self):
+        text = protocol_text(CFG, "high", "/s d/handoffs/k/panel", "/s d/inbox-view/k/panels", "/s d/inbox-view/k/panels/bw-panel-wait")
+        self.assertIn("mv '/s d/handoffs/k/panel'/.tmp-<id> '/s d/handoffs/k/panel'/<id>.request", text)
+        self.assertIn("python3 '/s d/inbox-view/k/panels/bw-panel-wait'", text)
+        self.assertIn("tool to /s d/handoffs/k/panel/.tmp-<id>", text)   # the file tool gets the plain path
+
+    def test_protocol_names_exit_3_relative_paths_and_the_other_seat(self):
+        text = protocol_text(CFG, "high", "/a", "/b", "/b/w")
+        self.assertIn("Exit status 3 means still working: run it again.", text)
+        self.assertIn("repo-relative", text)
+        self.assertIn("to a seat that did not raise the finding", text)
+        self.assertIn("Do not ask the user first.", text)
+        self.assertIn("Never set, export, or unset a variable whose name starts with BW_.", text)
+
+    def test_protocol_is_short(self):
+        self.assertLessEqual(len(protocol_text(CFG, "high", "/a", "/b", "/b/w").split("\n")), 40)
+
+    def test_no_checkpoints_no_panel_text(self):
+        self.assertEqual(protocol_text(CFG, "bare", "/a", "/b", "/b/w"), protocol_text())
+        self.assertEqual(protocol_text(CFG, "nope", "/a", "/b", "/b/w"), protocol_text())
+        self.assertNotIn("Review panels.", protocol_text())
+
+    def test_deep_on_stakes_line(self):
+        deep = '- Set "stakes" to "high" for a risky change: bw then runs a deep panel.'
+        text = protocol_text(CFG, "loose", "/a", "/b", "/b/w")
+        self.assertIn("- debug: a, b (at least 2)\n" + deep + "\n- At each", text)
+        plain = protocol_text(CFG, "high", "/a", "/b", "/b/w")
+        self.assertNotIn(deep, plain)
+        self.assertIn("(required: astra, opus; at least 3)\n- At each", plain)   # no empty line where $deep was
+
+    def test_protocol_follows_checkpoint_text(self):
+        text = protocol_text(CFG, "high", "/a", "/b", "/b/w")
+        self.assertTrue(text.startswith(protocol_text() + "\n\nReview panels."))
+
+
+class OpenPanels(unittest.TestCase):
+    LINE = "p1234567 design: failed (stopped after 37 min) — follow /v/p1234567/next.md, then log it"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(os.path.realpath(self.tmp.name)) / "app"
+        self.repo.mkdir()
+        git(self.repo, "init", "-q")
+        self.state = str(Path(self.tmp.name) / "state")
+
+    def test_handoff_lists_open_panels(self):
+        h = build_handoff(str(self.repo), None, self.state, "k", ["@human ask: which db?"], open_panels=[self.LINE])
+        self.assertIn("open panels (finish and log them):\n- " + self.LINE, h)
+        self.assertLess(h.index("open questions for the user:"), h.index("open panels"))
+        self.assertNotIn("open panels", build_handoff(str(self.repo), None, self.state, "k", []))
+
+    def test_open_panels_section(self):
+        from lead.handoff import open_panels_section
+        self.assertIsNone(open_panels_section([]))
+        self.assertEqual(open_panels_section([self.LINE]), "open panels (finish and log them):\n- " + self.LINE)

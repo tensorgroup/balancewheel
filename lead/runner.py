@@ -24,6 +24,11 @@ verification is checked and passed to the lead the same way, so no update of the
 between the check and the launch it allows, or under the running lead. Released only once the
 lead's group is gone. At the start bw waits for an update to finish; a mid-session switch tries for
 about a second and, while an update holds it, stays on the current lead until a later poll.
+
+Panels (panel/service.py): the lead writes panel requests in BW_PANEL and reads answers in
+BW_PANEL_VIEW (lead/protocol/panel.md, rendered with literal paths). Every drain answers them and
+schedules the worker; workers run in their own sessions and outlive a lead switch and `bw lead`
+itself. bw prints nothing about panels: a problem is one `panel` notice in the inbox.
 """
 import fcntl
 import json
@@ -40,7 +45,7 @@ import time
 import uuid
 
 from . import containment, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox, triage as triagemod
-from .handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text, write_first_prompt
+from .handoff import build_handoff, checkpoint_dir, first_prompt, open_panels_section, protocol_text, write_first_prompt
 from .guard import broker as brk, install as guard_install, launch
 from .guard.launch import GuardUnavailable
 from .guard.review import safe
@@ -153,6 +158,15 @@ class Session:
         self.proc = None
         self.markers_path = os.path.join(cp_dir, "guard-unreachable")
         self.marker_notice_sent = False
+        key = ctx.project.worktree_key
+        self.request_dir, self.view_root = pstate.request_dir(ctx.state, key), pstate.view_root(ctx.state, key)
+        self._panel_setup(ctx)
+        # Computed once, before _guard_start and _launch: the prompt and the guard's rule context
+        # (Plan 8) must name the same helper path and the same BW_* values.
+        self.wait_path = os.path.realpath(os.path.join(self.view_root, "bw-panel-wait"))
+        self.lead_env = {"BW_CHECKPOINT": os.path.join(cp_dir, "checkpoint.md"),
+                         "BW_ASKS": inboxmod.asks_dir(ctx.state, key), "BW_INBOX": inboxmod.view_path(ctx.state, key),
+                         "BW_PANEL": self.request_dir}
         try:
             inboxmod.write_view(ctx.state, ctx.project.worktree_key)
         except OSError as e:
@@ -165,23 +179,48 @@ class Session:
             self._abort(ctx)
             raise
 
+    def _panel_setup(self, ctx):
+        """The request dir (no link followed), the view root, and the wait helper copied into it
+        (a copy, not a link: the helper finds panels beside its own real path). A problem is one
+        `panel` notice; it never stops `bw lead`."""
+        notice = _panel_notice(ctx)
+        problem = panel_channel.ensure_request_dir(ctx.state, ctx.project.worktree_key)
+        if problem:
+            notice("panel", problem, key="requests")  # the drain's key: one notice, not two
+        tmp = os.path.join(self.view_root, f".bw-panel-wait.{os.getpid()}.tmp")
+        try:
+            pstate.ensure_dir(ctx.state, self.view_root)
+            if os.path.lexists(tmp):
+                os.unlink(tmp)
+            shutil.copyfile(os.path.join(ROOT, "bin", "bw-panel-wait"), tmp)
+            os.chmod(tmp, 0o444)
+            os.replace(tmp, os.path.join(self.view_root, "bw-panel-wait"))
+        except OSError as e:
+            try:
+                if os.path.lexists(tmp):
+                    os.unlink(tmp)
+            except OSError:
+                pass
+            notice("panel", f"the panel wait helper could not be installed ({type(e).__name__}); "
+                            "the lead can still read status.json", key="view")
+
     def _launch(self, ctx, lead_name, handoff, cp_dir, client_dir):
-        prompt = first_prompt(handoff, protocol_text())
+        prompt = first_prompt(handoff, protocol_text(ctx.config, ctx.project.profile, self.request_dir,
+                                                     self.view_root, self.wait_path))
         argv_prompt = prompt
         if self.adapter.prompt_mode == "file":
             path = write_first_prompt(ctx.state, ctx.project.worktree_key, prompt)
             ctx.say(f"bw: paste the first prompt from {path} into the lead")
             argv_prompt = None
         # pi/Kimi get the checkpoint dir through bw sandbox grants; self-contained runtimes whose
-        # own sandbox stops at the worktree (Codex, agy) get it as an extra writable dir.
+        # own sandbox stops at the worktree (Codex, agy) get it as an extra writable dir. The panel
+        # request dir is inside it, so it needs no grant of its own.
         argv = self.adapter.argv(self.lead, argv_prompt, [cp_dir] if self.adapter.contained_by == "self" else [],
                                  client_dir=client_dir)
         # Every BW_GUARD_* in bw's own environment is stale for this lead; only a guarded session's
         # own values (below) are real.
         env = {k: v for k, v in os.environ.items() if not k.startswith(("BW_GUARD_", "BW_TRIAGE"))}
-        env.update(BW_CHECKPOINT=os.path.join(cp_dir, "checkpoint.md"), BW_SESSION=self.id,
-                   BW_ASKS=inboxmod.asks_dir(ctx.state, ctx.project.worktree_key),
-                   BW_INBOX=inboxmod.view_path(ctx.state, ctx.project.worktree_key))
+        env.update(self.lead_env, BW_SESSION=self.id, BW_PANEL_VIEW=self.view_root)
         mode = self.triage_mode(ctx)
         if mode != "off" and self.lead["runtime"] == "claude-code":
             env.update(BW_TRIAGE_HOOK=os.path.join(ROOT, "lead", "triage_hook.py"),
@@ -337,6 +376,13 @@ class Session:
                     f"answer with bw answer {r['id']} \"…\"")
         if problem and ctx.notice("inbox", problem):
             ctx.say(f"bw: {problem}")
+        notice = _panel_notice(ctx)
+        lead = {"name": self.lead_name, "runtime": self.lead.get("runtime"), "model": self.lead.get("model"),
+                "plan": self.lead.get("plan")}
+        try:  # panel requests and the scheduler: prints nothing (Design decision 11)
+            panelsvc.drain(ctx.config, ctx.state, ctx.project, ctx.panels, lead=lead, session_id=self.id, notice=notice)
+        except Exception as e:  # drain does not raise by contract; a bug in it must not stop the lead
+            notice("panel", f"the panel drain failed ({type(e).__name__})", key=type(e).__name__)
 
     def _triage(self, ctx, rec, mode):
         """Judge one ask; True when no one needs telling that it is waiting for an answer."""
@@ -424,6 +470,7 @@ class Context:
         self.adapters, self.backend, self.out = adapters, backend, out
         self.tty = sys.stdin.fileno() if sys.stdin.isatty() else None
         self.runtime_lock = None
+        self.panels = panelsvc.Jobs()  # one per `bw lead` run: workers outlive a lead switch
         self.notice_failed = False
         self.cap_signal_failed = False
 
@@ -498,6 +545,25 @@ class Context:
                 os.tcsetpgrp(self.tty, os.getpgrp())
             except OSError:
                 pass
+
+
+def _panel_notice(ctx):
+    """A `panel` notice in the inbox that never prints and never raises (an inbox OSError is
+    dropped). Not ctx.notice: that prints a line through ctx.say when the inbox cannot be written."""
+    def notice(kind, text, key=None):
+        try:
+            inboxmod.notice(ctx.state, ctx.project.worktree_key, kind, text, key=key)
+        except OSError:
+            pass
+    return notice
+
+
+def _open_lines(state, key):
+    """The worktree's unfinished panels for a handoff; [] when they cannot be read."""
+    try:
+        return panelsvc.open_lines(state, key)
+    except Exception:  # noqa: BLE001 — a handoff never fails on panel state
+        return []
 
 
 def _link_git_identity(home):
@@ -720,6 +786,8 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
         lock.write({})
         return GUARD_UNAVAILABLE
     session, handoff, warned, orca_failed = None, None, False, False
+    # A fresh start learns of open and failed panels too, not only a lead that takes over (P6-12).
+    handoff = open_panels_section(_open_lines(state, project.worktree_key))
     current = d.lead
     while True:
         try:
@@ -821,7 +889,7 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                 if pinned and d.lead != pinned:
                     ctx.notice("pinned-capped", f"pinned lead {pinned} is capped; {d.lead} took over")
                 handoff = build_handoff(project.worktree, session.head, state, project.worktree_key,
-                                        ctx.open_item_texts())
+                                        ctx.open_item_texts(), open_panels=_open_lines(state, project.worktree_key))
                 ctx.say(f"bw: {current} is capped; handing off to {d.lead}")
                 current, switched = d.lead, True
                 break
@@ -862,3 +930,8 @@ def run(config, state, cwd, use=None, auto=False, rating=True, adapters=None, ba
                      "to": _spec(config, d.lead), "reason": "returned", "quota": _logged_quota(q)})
             ctx.say(f"bw: {d.lead} is available again — the next `bw lead` starts it")
         return 0
+
+
+# Last, not at the top: panel.service imports seats.verify, which imports lead.verify, which
+# imports _guarded from this module. Every name above is defined by the time that cycle runs.
+from panel import channel as panel_channel, service as panelsvc, state as pstate  # noqa: E402

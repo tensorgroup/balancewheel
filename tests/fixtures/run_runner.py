@@ -21,6 +21,9 @@ FAKE_OUT/orca-calls.jsonl) and reports Orca's version as 9.9.9-test; without it 
 --missing-binary RUNTIME makes that runtime's argv a binary that does not exist (Popen raises FileNotFoundError).
 --prompt-file gives every fake adapter prompt_mode "file" (bw writes the first prompt for the user to paste).
 --count-refresh appends one line to FAKE_OUT/refresh-calls.jsonl per probes.refresh call (which still runs).
+--panel-notice-raises makes every inbox notice of kind `panel` raise OSError.
+The panel worker always runs with no first-verification wait and no verify spawn (no seat version
+command, no attack), polling fast; `bw seat` is whatever BW_PANEL_SEAT_CMD names (the tests' fake seat).
 """
 import atexit, os, shutil, sys, tempfile
 from pathlib import Path
@@ -56,6 +59,30 @@ def fake(rt):
 
 
 adapters = {rt: fake(rt) for rt in ("claude-code", "codex", "agy", "pi", "kimi")}
+# "panel.run" stays on the worker's command line: the watchdog of a later `bw lead` checks for it.
+PANEL_WORKER = """
+import sys
+sys.path.insert(0, sys.argv[1])
+from unittest import mock
+import panel.run as run
+from panel import roster
+from seats import verify
+run.POLL_S = 0.05
+with mock.patch.object(roster, "pending_verify", return_value=[]), \\
+        mock.patch.object(verify, "spawn_verify", return_value=False):
+    sys.exit(run.main(sys.argv[3:]))
+"""
+from panel import service as panel_service  # noqa: E402
+panel_service.WORKER = [sys.executable, "-c", PANEL_WORKER, str(ROOT), "panel.run"]
+if "--panel-notice-raises" in args:
+    from lead import inbox
+    _notice = inbox.notice
+
+    def _raising_notice(state, project, kind, text, now=None, key=None):
+        if kind == "panel":
+            raise OSError("injected inbox failure")
+        return _notice(state, project, kind, text, now=now, key=key)
+    inbox.notice = _raising_notice
 config = load_config(cfg_path)
 if guard_rt:
     for ld in config["leads"].values():

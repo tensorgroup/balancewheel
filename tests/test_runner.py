@@ -61,7 +61,7 @@ class RunnerCase(unittest.TestCase):
         for f in self.out.glob("*.json"):
             try:
                 os.killpg(json.loads(f.read_text())["pgid"], signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, ValueError, KeyError):
+            except (ProcessLookupError, PermissionError, ValueError, KeyError, TypeError):
                 pass
         self.tmp.cleanup()
 
@@ -1144,3 +1144,255 @@ class TryRuntimeLock(unittest.TestCase):
         t.join()
         self.assertIsNone(got)
         self.assertLess(elapsed, 2)
+
+
+FAKE_SEAT = HERE / "fixtures" / "panel" / "fake_seat.py"
+
+
+class PanelRunner(RunnerCase):
+    """`bw lead` with a profile that convenes panels: the fake lead writes requests from the literal
+    paths in its first prompt, and the fake seat stands in for `bw seat`."""
+
+    def config(self, root):
+        cfg = super().config(root)
+        cfg["schema_version"] = 3
+        cfg["seats"] = {"a": {"runtime": "codex", "model": "model-a", "roles": ["design", "review"], "fallback": "g"},
+                        "o": {"runtime": "claude-code", "model": "model-o", "roles": ["design", "review"]},
+                        "g": {"runtime": "pi", "model": "router/model-g", "roles": ["design", "review"]}}
+        cfg["profiles"]["p"]["checkpoints"] = {"design": {"seats": ["a", "o", "g"], "required": ["a"]}}
+        cfg["panel"] = {"cap_min": 1}
+        return cfg
+
+    def setUp(self):
+        super().setUp()
+        self.env.update(BW_PANEL_SEAT_CMD=json.dumps([sys.executable, str(FAKE_SEAT)]), BW_STATE_DIR=str(self.state))
+        import hashlib
+        self.key = hashlib.sha1(os.path.realpath(str(self.repo)).encode()).hexdigest()[:12]
+
+    def tearDown(self):
+        pids = []  # no survivors: every panel worker, fake seat, and fake seat child
+        for f in self.state.glob(f"panels/{self.key}/p*/panel.json"):
+            try:
+                pids.append((json.loads(f.read_text()).get("job") or {}).get("pid"))
+            except ValueError:
+                pass
+        for f in self.out.glob("meta-*.json"):
+            try:
+                m = json.loads(f.read_text())
+            except ValueError:
+                continue
+            pids += [m.get("pid"), m.get("child")]
+        for pid in (p for p in pids if isinstance(p, int)):
+            for kill in (os.killpg, os.kill):
+                try:
+                    kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+        super().tearDown()
+
+    def view(self):
+        return self.state / "inbox-view" / self.key / "panels"
+
+    def prompt(self, name="a"):
+        argv = self.fake(name)["argv"]
+        return argv[2] if len(argv) > 2 else ""
+
+    def panel_result(self, name="a"):
+        f = self.out / f"{name}-panel.json"
+        return json.loads(f.read_text()) if f.exists() else None
+
+    def panel_notices(self):
+        from lead import inbox
+        return [i for i in inbox.open_items(str(self.state), self.key) if i.get("kind") == "panel"]
+
+    def run_panel(self, env=None, mode="panel"):
+        p = self.start(env={f"FAKE_MODE_a": mode, "BW_PROBE_SECONDS": "60", **(env or {})})
+        out, _ = p.communicate(timeout=60)  # read stdout once (P6-14)
+        self.assertEqual(p.returncode, 0, out)
+        result = self.panel_result()
+        self.assertNotIn("error", result or {}, result)
+        return out, result
+
+    def findings_doc(self, pid):
+        return json.loads((self.state / "panels" / self.key / pid / "findings.json").read_text())
+
+    def test_env_dirs_and_wait_helper(self):
+        p = self.start(env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        env = self.fake("a")["panel_env"]
+        self.assertEqual(env["BW_PANEL"], str(self.state / "handoffs" / self.key / "panel"))
+        self.assertEqual(env["BW_PANEL_VIEW"], str(self.view()))
+        self.assertTrue(os.path.isdir(env["BW_PANEL"]))
+        helper = Path(env["BW_PANEL_VIEW"], "bw-panel-wait")
+        self.assertFalse(helper.is_symlink())
+        self.assertEqual(os.stat(helper).st_mode & 0o777, 0o444)
+        # The installed copy finds a panel dir beside it (a link would look in the checkout instead).
+        pdir = self.view() / "p1234567"
+        pdir.mkdir()
+        (pdir / "status.json").write_text(json.dumps({"state": "ready", "busy": False}))
+        r = subprocess.run([sys.executable, str(helper), "--max", "1"], capture_output=True, text=True, timeout=10)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("p1234567 ready — follow", r.stdout)
+
+    def test_first_prompt_has_panel_protocol(self):
+        p = self.start(env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        text = self.prompt()
+        self.assertIn("Review panels.", text)
+        self.assertIn("- design: a, o, g (required: a; at least 2)", text)
+        req = self.state / "handoffs" / self.key / "panel"
+        self.assertIn(f"mv {req}/.tmp-<id> {req}/<id>.request", text)
+        self.assertNotIn("$BW_PANEL", text)
+
+    def test_wait_command_uses_session_wait_path(self):
+        real = self.state.parent / "real-state"
+        real.mkdir()
+        link = self.state.parent / "link-state"
+        link.symlink_to(real)  # as macOS /var -> /private/var
+        cfg = json.loads(self.cfg.read_text())
+        cfg["state_dir"] = str(link)
+        self.cfg.write_text(json.dumps(cfg))
+        p = self.start(env={"FAKE_MODE_a": "exit", "BW_STATE_DIR": str(link)})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        unresolved = os.path.join(str(link), "inbox-view", self.key, "panels", "bw-panel-wait")
+        expected = os.path.realpath(unresolved)
+        self.assertNotEqual(expected, unresolved)
+        self.assertIn(f"python3 {expected} — ", self.prompt())
+        # In process: wait_path and lead_env exist before _guard_start runs (Plan 8 passes them on).
+        import io
+        from lead.paths import load_config
+        from lead.projects import resolve_project
+        config = load_config(str(self.cfg))
+        config["leads"]["la"].update(autonomy="guard", autonomy_source="config")
+        project = resolve_project(str(self.repo), config)
+        ctx = runner.Context(config, str(link), project, runner.Lock(str(link), project.worktree_key),
+                             {"codex": object()}, "sandbox-exec", io.StringIO())
+        seen = {}
+
+        def guard_start(s, c):
+            seen["guard"] = (s.wait_path, dict(s.lead_env))
+
+        with mock.patch.object(runner.Session, "_guard_start", guard_start), \
+                mock.patch.object(runner.Session, "_launch", lambda s, *a: None):
+            runner.Session(ctx, "la", None)
+        os.close(ctx.lock.fd)
+        wait_path, lead_env = seen["guard"]
+        self.assertEqual(wait_path, expected)
+        self.assertEqual(sorted(lead_env), ["BW_ASKS", "BW_CHECKPOINT", "BW_INBOX", "BW_PANEL"])
+        self.assertEqual(lead_env["BW_PANEL"], os.path.join(str(link), "handoffs", self.key, "panel"))
+
+    def test_request_dir_symlink_is_a_notice_not_a_crash(self):
+        elsewhere = self.state.parent / "elsewhere"
+        elsewhere.mkdir()
+        cp = self.state / "handoffs" / self.key
+        cp.mkdir(parents=True)
+        (cp / "panel").symlink_to(elsewhere)
+        p = self.start(env={"FAKE_MODE_a": "sleep"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        time.sleep(2.5)  # a few drains
+        self.assertIsNone(p.poll(), "bw lead stopped on a planted request dir")
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        out, _ = p.communicate(timeout=15)
+        self.assertEqual(p.returncode, 0, out)
+        self.assertEqual(list(elsewhere.iterdir()), [])
+        self.assertEqual(len(self.panel_notices()), 1, self.panel_notices())
+        self.assertNotIn("panel", out.lower())
+
+    def test_drain_notice_never_prints(self):
+        cp = self.state / "handoffs" / self.key
+        cp.mkdir(parents=True)
+        (cp / "panel").symlink_to(self.state.parent)  # every drain has a panel problem to report
+        p = self.start("--panel-notice-raises", env={"FAKE_MODE_a": "sleep"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        time.sleep(2.5)
+        self.assertIsNone(p.poll(), "bw lead stopped when the inbox could not take a panel notice")
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        out, _ = p.communicate(timeout=15)
+        self.assertEqual(p.returncode, 0, out)
+        self.assertNotIn("panel", out.lower())
+        self.assertNotIn("inbox could not be written", out)
+
+    def test_request_to_logged_record(self):
+        out, result = self.run_panel()
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["summary"].startswith("Design panel"), result)
+        (rec,) = self.events("panels")
+        self.assertEqual(rec["kind"], "design")
+        self.assertEqual(rec["id"], result["panel"])
+        self.assertEqual(rec["moderator"]["lead"], "la")
+        self.assertTrue(rec["findings_detail"])
+        self.assertTrue(all(f["verdict"] == "confirmed" for f in rec["findings_detail"]))
+        self.assertEqual(len(self.events("panel_runs")), 1)
+        self.assertNotIn("panel", out.lower())  # bw prints nothing about panels while the lead runs
+
+    def test_restart_then_log(self):
+        out, first = self.run_panel(mode="panel_nolog")
+        self.assertEqual(first["state"], "ready")
+        self.assertEqual(self.events("panels"), [])
+        (self.out / "a-panel.json").unlink()
+        out, result = self.run_panel(mode="log_open")
+        self.assertIn(f"open panels (finish and log them):\n- {first['panel']} design: ready", self.prompt())
+        self.assertEqual([r["id"] for r in self.events("panels")], [first["panel"]])
+
+    def test_failed_panel_reaches_new_lead(self):
+        from lead.paths import load_config
+        from lead.projects import resolve_project
+        from panel import service
+        with mock.patch.dict(os.environ, {"BW_STATE_DIR": str(self.state)}):
+            config = load_config(str(self.cfg))
+        project = resolve_project(str(self.repo), config)
+        from panel import state as pstate
+        pid = service.open_panel(config, str(self.state), project, {"checkpoint": "design", "target": "the widget"})["id"]
+        # Failed mid-round, as the watchdog fails it: the seats were running.
+        pstate.update(str(self.state), self.key, pid, lambda p: p.update(
+            state="running", seats={s: {"status": "running"} for s in ("a", "o", "g")}))
+        service.fail(config, str(self.state), self.key, pid, "stopped after 37 min")
+        out, result = self.run_panel(mode="log_open")
+        self.assertIn(f"- {pid} design: failed (stopped after 37 min) — follow", self.prompt())
+        (rec,) = self.events("panels")
+        self.assertEqual(rec["id"], pid)
+        self.assertIn("failed", result["summary"])
+
+    def test_one_seat_times_out(self):
+        out, result = self.run_panel(env={"FAKE_SEAT_o": "timeout"})
+        (rec,) = self.events("panels")
+        self.assertEqual(rec["absent"], {"o": "timeout"})
+
+    def test_one_seat_capped(self):
+        out, result = self.run_panel(env={"FAKE_SEAT_a": "cap"})
+        (rec,) = self.events("panels")
+        self.assertEqual(rec["absent"], {"a": "usage cap"})
+        doc = self.findings_doc(result["panel"])
+        self.assertEqual(doc["seats"]["g"]["stand_in_for"], "a")
+        self.assertTrue(doc["short"])
+        self.assertIn("short", result["summary"])
+
+    def test_worker_survives_lead_exit(self):
+        from panel import state as pstate
+        seats = {"FAKE_SEAT_a": "sleep", "FAKE_SEAT_o": "sleep", "FAKE_SEAT_g": "sleep"}
+        out, result = self.run_panel(env=seats, mode="panel_exit")
+        pid = result["panel"]
+        self.assertTrue(wait_for(lambda: (pstate.load(str(self.state), self.key, pid) or {}).get("state") == "running"))
+        worker = pstate.load(str(self.state), self.key, pid)["job"]["pid"]
+        self.assertTrue(_alive(worker), "the panel worker stopped with bw lead")
+        # Past its deadline, a new bw lead's scheduler stops it and fails the panel.
+        pstate.update(str(self.state), self.key, pid, lambda p: p["job"].update(deadline=time.time() - 1))
+        p = self.start(env={"FAKE_MODE_a": "sleep", **seats})
+        self.assertTrue(wait_for(lambda: (pstate.load(str(self.state), self.key, pid) or {}).get("state") == "failed", 40))
+        self.assertTrue(wait_for(lambda: not _alive(worker)))
+        self.assertIn("stopped after", pstate.load(str(self.state), self.key, pid).get("error") or "")
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        out, _ = p.communicate(timeout=15)
+        self.assertEqual(p.returncode, 0, out)
+
+    def test_switch_handoff_lists_open_panel(self):
+        p = self.start(env={"FAKE_MODE_a": "panel_nolog", "FAKE_PANEL_STAY_a": "1", "FAKE_MODE_b": "exit"})
+        self.assertTrue(wait_for(lambda: self.panel_result(), 40))
+        pid = self.panel_result()["panel"]
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        out, _ = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 0, out)
+        b = self.prompt("b")
+        self.assertIn("@next handoff", b)
+        self.assertIn(f"open panels (finish and log them):\n- {pid} design: ready", b)

@@ -8,9 +8,16 @@ enters an embedded repo (a gitlink, whose own config and attributes would run co
 GIT_* variables cleared: nothing a lead planted in the repo runs at handoff time.
 """
 import os
+import shlex
+import string
 import subprocess
+from typing import Optional
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+OPEN_PANELS = "open panels (finish and log them):"
+# The checkpoint roles in the order the protocol lists them (metrics/config.py ROLES is a set).
+CHECKPOINT_ORDER = ("design", "plan", "review", "debug", "decision")
+DEEP_LINE = '- Set "stakes" to "high" for a risky change: bw then runs a deep panel.'
 SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
         "-c", "core.attributesFile=/dev/null", "-c", "diff.ignoreSubmodules=all", "-c", "submodule.recurse=false",
         "-c", "status.submoduleSummary=false", "-c", "diff.submodule=short", "--no-pager"]
@@ -145,7 +152,7 @@ def read_checkpoint(state_dir, worktree_key, limit=64 * 1024):
         os.close(fd)
 
 
-def build_handoff(worktree, since_head, state_dir, worktree_key, inbox_items):
+def build_handoff(worktree, since_head, state_dir, worktree_key, inbox_items, open_panels=()):
     lines = ["@next handoff",
              f"branch: {_git(worktree, 'branch', '--show-current') or '(detached)'}",
              "status:", _bounded(_git(worktree, "status", "--short")) or "(clean)"]
@@ -162,12 +169,52 @@ def build_handoff(worktree, since_head, state_dir, worktree_key, inbox_items):
         if len(section) > INBOX_LIMIT:  # the handoff can travel on argv: never unbounded
             section = section[:INBOX_LIMIT - len(INBOX_CUT)] + INBOX_CUT
         lines += ["open questions for the user:", section]
+    panels = open_panels_section(open_panels)
+    if panels:
+        lines.append(panels)
     return "\n".join(lines)
 
 
-def protocol_text():
-    with open(os.path.join(HERE, "protocol", "checkpoint.md")) as f:
+def open_panels_section(lines) -> Optional[str]:
+    """The handoff's open-panels section (lines from `panel.service.open_lines`); None for no lines.
+    A fresh `bw lead` uses it alone as the handoff, so every new lead learns of open panels."""
+    if not lines:
+        return None
+    return "\n".join([OPEN_PANELS] + [f"- {ln}" for ln in lines])
+
+
+def _checkpoint_line(name, spec):
+    seats = ", ".join(spec["seats"])
+    least = spec.get("min_seats", min(2, len(spec["seats"])))
+    required = spec.get("required") or []
+    rule = f"required: {', '.join(required)}; at least {least}" if required else f"at least {least}"
+    return f"- {name}: {seats} ({rule})"
+
+
+def _read_protocol(name):
+    with open(os.path.join(HERE, "protocol", name)) as f:
         return f.read().strip()
+
+
+def protocol_text(config=None, profile=None, request_dir=None, view_root=None, wait_path=None):
+    """checkpoint.md, then, when `profile` has checkpoints, panel.md with literal paths (Design
+    decision 7). Paths in shell commands are shell-quoted; the file-tool paths stay plain."""
+    base = _read_protocol("checkpoint.md")
+    prof = ((config or {}).get("profiles") or {}).get(profile) or {}
+    cps = prof.get("checkpoints") or {}
+    if not cps:
+        return base
+    if request_dir is None or view_root is None:
+        raise ValueError("the panel protocol needs the request dir and the view root")
+    wait_path = wait_path or os.path.join(view_root, "bw-panel-wait")
+    deep = DEEP_LINE if prof.get("depth") == "deep-on-stakes" else ""
+    # A $deep line with nothing to say is dropped, not left empty.
+    tpl = "\n".join(ln for ln in _read_protocol("panel.md").split("\n") if ln != "$deep" or deep)
+    panel = string.Template(tpl).substitute(
+        checkpoints="\n".join(_checkpoint_line(c, cps[c]) for c in CHECKPOINT_ORDER if c in cps),
+        deep=deep, request_dir=request_dir, view_root=view_root,
+        request_dir_sh=shlex.quote(request_dir), wait_sh=shlex.quote(wait_path))
+    return f"{base}\n\n{panel}"
 
 
 def first_prompt(handoff, protocol):

@@ -57,6 +57,11 @@ not against the prose.
   path; leads use request files. Exit 2 on a usage error or a refused request.
 - **`bin/bw-panel-wait`**: the lead runs it with no argument. It returns within 110 s, with exit 3
   ("still working; run this command again") while every open panel is queued or running.
+- **Leads convene panels.** `bw lead` convenes panels from request files in its poll loop. The first
+  prompt carries `lead/protocol/panel.md` with this profile's checkpoints and literal paths. The lead
+  gets `BW_PANEL` (the request dir) and `BW_PANEL_VIEW` (its read-only view, with a copy of
+  `bw-panel-wait`). The handoff lists open panels, also at a fresh `bw lead`. bw prints nothing about
+  panels; a problem is one `panel` notice in the inbox.
 
 ### Fixed
 
