@@ -251,7 +251,9 @@ class Broker:
             if self_test:
                 self._marker = None
         did = uuid.uuid4().hex[:12]
-        if d.source == "gray":  # no judge yet: a gray call keeps the rules' ask
+        # rules.decide gives source "gray" (always with decision "ask" and a gray:* rule) or "rule"; the
+        # record maps "gray" to a judge source and keeps "rule". No judge yet: a gray call keeps the ask.
+        if d.source == "gray":
             source, final, judge_reason = "judge-skipped", d.decision, "no judge"
         else:
             source, final, judge_reason = "rule", d.decision, None

@@ -183,8 +183,10 @@ not against the prose.
   `bw guard verify` facts gain `source`.
 - **The guard evidence key drops the runtime version** and gains the judge model and the prompt hash:
   `(profile, runtime, rules_version, policy_digest, judge_model, prompt_hash)`. An update of the
-  lead's CLI no longer resets the evidence. Marks from before this change count under their old key
-  only. `bw guard review` labels the key `profile= runtime= rules= policy= judge= prompt=`, and the
+  lead's CLI no longer resets the evidence. A row from before this change has no judge model and no
+  prompt hash. Its rules-only evidence and marks carry over into the new key with no judge, when the
+  rules version and the policy digest are unchanged. Evidence under a judge model starts fresh.
+  `bw guard review` labels the key `profile= runtime= rules= policy= judge= prompt=`, and the
   `guard:` lines in `bw status` drop the version column. The policy digest is unchanged.
 - **The guard allows a lead's writes into its own checkpoint dir by rule** (`lead/guard/rules.py`).
   The write tool, `>`/`>>`, `mkdir`, `touch`, `cp`, `mv`, and `tee` may write into

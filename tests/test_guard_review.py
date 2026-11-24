@@ -8,11 +8,11 @@ BW = os.path.join(ROOT, "bin", "bw")
 KEY = ("p", "agy", "r1", "d1", "test/judge", "h1")
 
 
-def dec(i, decision="ask", source="gray", key=KEY, self_test=False, call="ls"):
+def dec(i, decision="ask", source="gray", key=KEY, self_test=False, call="ls", rule_decision=None):
     return {"type": "decision", "id": i, "profile": key[0], "runtime": key[1], "runtime_version": "1.0",
             "rules_version": key[2], "policy_digest": key[3], "judge_model": key[4], "prompt_hash": key[5],
             "tool": "bash", "kind": "bash", "call": call, "source": source, "rule": "x", "decision": decision,
-            "rule_decision": decision, "reason": "why", "self_test": self_test, "mode": "shadow"}
+            "rule_decision": decision if rule_decision is None else rule_decision, "reason": "why", "self_test": self_test, "mode": "shadow"}
 
 
 def seed(state, decisions, marks=()):
@@ -169,7 +169,7 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(record.rule_decision({"decision": "ask"}), "ask")  # a legacy row has no rule_decision
 
     def test_pick_samples_judge_allows_as_allows(self):
-        seed(self.state, [dec("j1", decision="allow", source="judge") | {"rule_decision": "ask"}])
+        seed(self.state, [dec("j1", decision="allow", source="judge", rule_decision="ask")])
         got = review.pick(self.loaded(), KEY, 0, 5, random.Random(1))
         self.assertEqual([(d["id"], d.get("sampled")) for d in got], [("j1", True)])
 
@@ -178,12 +178,25 @@ class ReviewTests(unittest.TestCase):
                           dec("k", source="judge-skipped"), dec("g", source="gray"), dec("r", "block", source="rule")])
         self.assertAlmostEqual(review.summary(self.loaded(), KEY)["gray_share"], 0.8)
 
-    def test_legacy_rows_load_and_stay_out_of_the_new_key(self):
-        legacy = {"type": "decision", "id": "old", "profile": "p", "runtime": "pi", "runtime_version": "0.85",
-                  "rules_version": "r1", "policy_digest": "d1", "source": "gray", "decision": "ask"}
-        seed(self.state, [legacy, dec("new")])
+    LEGACY = {"type": "decision", "id": "old", "profile": "p", "runtime": "agy", "runtime_version": "0.85",
+              "rules_version": "r1", "policy_digest": "d1", "source": "gray", "rule": "gray:option",
+              "decision": "ask", "mode": "shadow"}  # before this change: no rule_decision, no judge fields
+
+    def test_legacy_rows_stay_out_of_a_judge_key(self):
+        seed(self.state, [self.LEGACY, dec("new")])
         self.assertEqual([d["id"] for d in review.of_key(self.loaded(), KEY)], ["new"])
         self.assertTrue(review.status_lines(self.state))  # no KeyError on the legacy row
+
+    def test_legacy_rules_only_rows_and_marks_carry_into_the_no_judge_key(self):
+        rules_only = ("p", "agy", "r1", "d1", None, None)
+        seed(self.state, [self.LEGACY, dec("new", key=rules_only)],
+             [{"decision_id": "old", "verdict": "right", "sampled": False}])
+        self.assertEqual(record.evidence_key(self.LEGACY), rules_only)
+        self.assertEqual([d["id"] for d in review.of_key(self.loaded(), rules_only)], ["old", "new"])
+        s = review.summary(self.loaded(), rules_only)
+        self.assertEqual((s["decisions"], s["reviewed"], s["stops_reviewed"]), (2, 1, 1))
+        self.assertEqual(record.rule_decision(self.loaded()[0]), "ask")
+        self.assertTrue(review.status_lines(self.state))
 
     def test_key_label_names_the_six_parts(self):
         self.assertEqual(review.key_label(KEY), "profile=p runtime=agy rules=r1 policy=d1 judge=test/judge prompt=h1")
