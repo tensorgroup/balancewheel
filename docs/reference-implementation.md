@@ -31,7 +31,8 @@ updated 2026-11-23 a fifth time after the seat review fixes: the agy seat moves 
 home (`--gemini_dir`), seats lose the agent sockets and the keychain, and the parent of each code
 name is rename-proof (see Seat runtimes under `bw seat`); updated 2026-11-23 a sixth time: the panel instructions
 now live in this repo as `bw panel` (see Panel instructions); updated 2026-11-23 a seventh time after the
-first live panel: the kimi seat runs `-p` with no `--auto` (Kimi Code 2.3.2 refuses the pair).*
+first live panel: the kimi seat runs `-p` with no `--auto` (Kimi Code 2.3.2 refuses the pair).; updated 2026-11-23 an eighth time: the
+Codex `cli` quota reading is not applicable on `codex-cli 0.164.0` (see the note under the runtime table).*
 
 ## The cast
 
@@ -364,6 +365,13 @@ returned only the usage-limit error. The kimi column is therefore "help" plus th
 | Answer (final text) | last `item.completed` with `item.type` `agent_message`, field `item.text` o | `result.result` o | last assistant `message_end`, `content[].text` o | u | `result.response` o |
 | Token counts | `turn.completed.usage` (`input_tokens`, `output_tokens`, more) o | `result.usage`, `result.total_cost_usd` o | assistant `message_end` `usage` (`input`, `output`, `cost.total`) o | u | `result.usage` (`input_tokens`, `output_tokens`, more) o |
 | Rate limits in the stream | none o | `rate_limit_event`, `rate_limit_info` o | none o | u | none o |
+
+**Codex `cli` quota: not applicable on `codex-cli 0.164.0`.** A second check on 2026-11-23 (one
+`codex exec --json` run, read-only sandbox) gave the events `thread.started`, `turn.started`,
+`item.completed`, and `turn.completed`. No event and no stderr line has a `rate_limits` field. So a
+Codex seat run writes no `cli` snapshot, and Codex plans use observed caps (`quota: "none"`). The
+passive `cli` source stays in `lead/quota.py` for a later Codex version. Re-check after each Codex
+upgrade.
 
 **Nesting.**
 

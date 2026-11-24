@@ -171,6 +171,9 @@ not against the prose.
 
 ### Changed
 
+- **No Codex `cli` reading yet.** `codex exec --json` (`codex-cli 0.164.0`) carries no `rate_limits`
+  (checked 2026-11-23). A Codex seat run writes no `quota/<plan>.cli.json`. `chatgpt-plan` in the
+  example stays at `"quota": "none"`. The passive `cli` source stays for a later Codex version.
 - **Orca is no longer the default canvas.** A schema-3 config without `canvas` keeps Orca panes when it
   has `tools.orca` or a plan with `orca_provider`. Any other config opens Terminal tabs. Set
   `"canvas": "orca"` to keep Orca, or `"canvas": "terminal"` to stop using it. A schema 1 or 2 file reads `orca`.

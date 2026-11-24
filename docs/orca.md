@@ -58,6 +58,8 @@ bw loses the canvas pane, Orca's notifications ("an agent is waiting"), the Code
   snapshot instead of reading those vendors' credential files itself. Claude stays on the
   statusline; agy keeps its documented `--print /usage` command; OpenRouter keeps its
   documented key endpoint.
+- A Codex plan has no `cli` reading: the Codex stream carries no `rate_limits` (checked 2026-11-23);
+  Codex plans use observed caps (`quota: none`).
 - **The cockpit's quota bars and countdowns, its inbox view, and macOS notifications.**
   Orca shows quota, and its notifications cover "an agent is waiting". The cockpit becomes a
   read-only scoreboard (Models, Leads, Usage and cost, Graph, History).
