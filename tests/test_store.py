@@ -31,6 +31,16 @@ class GuardEvents(unittest.TestCase):
         self.assertEqual(len(d["guards"]), 1)
         self.assertEqual(d["guards"][0]["calls"], 3)
 
+    def test_load_keeps_guard_mode_events(self):
+        ev = {"type": "guard_mode", "profile": "p", "runtime": "pi", "from": "shadow", "to": "acting",
+              "reason": "the gate held", "evidence": {"reviewed": 50, "sampled_allows": 20, "false_stop_pct": 0.0,
+                                                       "false_allows": 0}}
+        d = self.log([ev, {"type": "guard", "session_id": "s1"}])
+        self.assertEqual([(e["from"], e["to"], e["evidence"]["reviewed"]) for e in d["guard_modes"]],
+                         [("shadow", "acting", 50)])
+        self.assertEqual(len(d["guards"]), 1)
+        self.assertEqual(store.load(str(FX / "modern.jsonl"))["guard_modes"], [])
+
     def test_legacy_log_has_no_autonomy_and_no_guards(self):
         d = store.load(str(FX / "modern.jsonl"))
         self.assertEqual(d["guards"], [])

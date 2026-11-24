@@ -41,7 +41,7 @@ def load(state_dir):
         if d is None:
             orphans.append(m)
         else:
-            d["mark"] = {"verdict": m.get("verdict"), "sampled": m.get("sampled")}
+            d["mark"] = {"verdict": m.get("verdict"), "sampled": m.get("sampled"), "ts": m.get("ts")}
     orphan_outcomes = []
     for o in (e for e in events if e["type"] == "outcome"):
         d = by_id.get(o.get("decision_id"))

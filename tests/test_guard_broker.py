@@ -790,7 +790,9 @@ class TestRecord(unittest.TestCase):
             f.write(b'{"type": "decision", "id": "bbb')
         r = record.load(self.tmp)
         self.assertEqual(len(r["decisions"]), 1)
-        self.assertEqual(r["decisions"][0]["mark"], {"verdict": "wrong", "sampled": True})
+        m = r["decisions"][0]["mark"]
+        self.assertEqual((m["verdict"], m["sampled"]), ("wrong", True))
+        self.assertRegex(m["ts"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")  # store.append's ts; the gate counts marks since a demotion
         self.assertEqual(len(r["marks"]), 2)
         self.assertEqual([m["decision_id"] for m in r["orphan_marks"]], ["zzzzzzzzzzzz"])
         self.assertEqual(len(r["warnings"]), 1)

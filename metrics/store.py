@@ -220,6 +220,7 @@ def load(path):
     leads = [e for e in events if e.get("type") == "lead"]
     ratings = [e for e in events if e.get("type") == "rating"]
     guards = [e for e in events if e.get("type") == "guard"]
+    guard_modes = [e for e in events if e.get("type") == "guard_mode"]
     asks = [e for e in events if e.get("type") == "ask"]
     answers = [e for e in events if e.get("type") == "answer"]
     panel_runs, run_ids = [], set()
@@ -229,7 +230,7 @@ def load(path):
         panel_runs.append(e)
         run_ids.add(e.get("panel_id"))
     return {"usage": usage, "panels": panels, "watches": watches, "events": events, "warnings": warnings,
-            "sessions": sessions, "leads": leads, "ratings": ratings, "guards": guards, "asks": asks,
+            "sessions": sessions, "leads": leads, "ratings": ratings, "guards": guards, "guard_modes": guard_modes, "asks": asks,
             "answers": answers, "panel_runs": panel_runs}
 
 

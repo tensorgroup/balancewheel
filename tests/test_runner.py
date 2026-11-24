@@ -553,6 +553,87 @@ class GuardRunner(RunnerCase):
         self.assertEqual(out.count("bw guard install agy"), 1, "the reason should be printed once")
         self.assertEqual(self.events("leads"), [])
 
+    def test_cap_switch_onto_a_lead_the_gate_refuses_stays_put(self):  # G-q
+        self.cfg_lead_order(["la", "lb"])
+        p = self.start("--guard", "pi", "--gate-refuses", "gate says no", env={"FAKE_MODE_a": "sleep"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        time.sleep(1.5)
+        self.assertIsNone(p.poll(), "the current lead was stopped")
+        self.assertTrue(_alive(self.fake("a")["pid"]))
+        self.assertIsNone(self.fake("b"))
+        os.killpg(self.fake("a")["pgid"], signal.SIGTERM)
+        self.assertEqual(p.wait(10), 0)
+        out = p.stdout.read()
+        self.assertEqual(out.count("lb cannot start: gate says no (staying on la)"), 1, out)
+        self.assertEqual(self.events("leads"), [])
+
+    def in_process(self):
+        """A Context and a guarded pi lead `lb`, for a Session built in this process."""
+        import io
+        from lead.paths import load_config
+        from lead.projects import resolve_project
+        config = load_config(str(self.cfg))
+        config["leads"]["lb"].update(autonomy="guard", autonomy_source="config")
+        project = resolve_project(str(self.repo), config)
+        self.state.mkdir(parents=True, exist_ok=True)
+        ctx = runner.Context(config, str(self.state), project, runner.Lock(str(self.state), project.worktree_key),
+                             {"pi": runner.ADAPTERS["pi"]}, "sandbox-exec", io.StringIO())
+        self.addCleanup(os.close, ctx.lock.fd)
+        return ctx
+
+    def build_until_bind(self, ctx, decide):
+        class Stop(Exception):
+            pass
+        seen = {}
+
+        def bind(b):
+            seen["broker"] = b
+            raise Stop()
+        with mock.patch.object(runner.containment, "_first_line", lambda argv, *a: "pi 0.0.0"), \
+                mock.patch.object(runner.gate, "decide", decide), \
+                mock.patch.object(runner.brk.Broker, "bind", bind), self.assertRaises(Stop):
+            runner.Session(ctx, "lb", None)
+        return seen["broker"]
+
+    def test_gate_runs_before_the_broker_is_built(self):  # G-n
+        ctx = self.in_process()
+        calls = []
+
+        def decide(config, state, profile, runtime, verify_key, now):
+            calls.append((profile, runtime, verify_key))
+            return runner.gate.Outcome("acting", False, "bw: gate line", {"type": "guard_mode", "to": "acting"})
+        broker = self.build_until_bind(ctx, decide)
+        ((profile, rt, vkey),) = calls
+        self.assertEqual((profile, rt), ("p", "pi"))
+        self.assertEqual((vkey["runtime"], vkey["runtime_version"]), ("pi", "pi 0.0.0"))  # the guard key, first
+        self.assertIn("guard_version", vkey)
+        self.assertEqual(broker.mode, "acting")
+        self.assertIn("bw: gate line", ctx.out.getvalue())
+        self.assertEqual([e["to"] for e in self.events("guard_modes")], ["acting"])
+
+    def test_shadow_profile_runs_shadow_through_the_gate(self):
+        ctx = self.in_process()
+        real = runner.gate.decide
+        outcomes = []
+
+        def decide(*a):
+            outcomes.append(real(*a))
+            return outcomes[-1]
+        broker = self.build_until_bind(ctx, decide)
+        self.assertEqual(outcomes, [runner.gate.Outcome("shadow", False, None, None)])
+        self.assertEqual(broker.mode, "shadow")
+        self.assertFalse(os.path.exists(runner.gate.path(str(self.state))))
+
+    def test_a_failing_gate_runs_shadow_and_says_so_once(self):
+        ctx = self.in_process()
+
+        def decide(*a):
+            raise ValueError("bad state")
+        broker = self.build_until_bind(ctx, decide)
+        self.assertEqual(broker.mode, "shadow")
+        self.assertEqual(ctx.out.getvalue().count("the guard gate failed"), 1)
+
     def cfg_lead_order(self, order):
         c = json.loads(self.cfg.read_text())
         c["profiles"]["p"]["lead_order"] = order
@@ -1354,7 +1435,7 @@ class PanelRunner(RunnerCase):
             seen["broker"] = b
             raise Stop()
 
-        with mock.patch.object(runner.containment, "_first_line", lambda argv: "pi 0.0.0"), \
+        with mock.patch.object(runner.containment, "_first_line", lambda argv, *a: "pi 0.0.0"), \
                 mock.patch.object(runner.brk.Broker, "bind", bind), self.assertRaises(Stop):
             runner.Session(ctx, "lb", None)
         os.close(ctx.lock.fd)

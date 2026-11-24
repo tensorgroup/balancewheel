@@ -46,7 +46,7 @@ import uuid
 
 from . import containment, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox, triage as triagemod
 from .handoff import build_handoff, checkpoint_dir, first_prompt, open_panels_section, protocol_text, write_first_prompt
-from .guard import broker as brk, install as guard_install, judging, launch
+from .guard import broker as brk, gate, install as guard_install, judging, launch
 from .guard.launch import GuardUnavailable
 from .guard.review import safe
 from .locks import RuntimeLock
@@ -286,7 +286,8 @@ class Session:
             launch.clear_markers(self.markers_path)
         rt = self.lead["runtime"]
         profile = ctx.project.profile
-        mode = ctx.config.get("guard", {}).get("mode", {}).get(profile, "shadow")
+        key = _guard_key(ctx, rt)  # before the broker: the gate's mode is the broker's (G-n)
+        mode, gate_said = self._guard_mode(ctx, profile, rt, key)
         version = containment._first_line(self.adapter.version_argv)
         session = {"session_id": self.id, "project": ctx.project.worktree_key, "profile": profile,
                    "lead": self.lead_name, "runtime": rt, "runtime_version": version}
@@ -312,9 +313,7 @@ class Session:
         if err:
             raise GuardUnavailable(f"{err}; refusing to start {self.lead_name}")
         self.broker.pause()
-        key = containment.guard_key(rt, self.adapter.version_argv, ctx.backend, self.adapter.guard_hook_files(),
-                                    ports=sandbox.denied_ports(ctx.config))
-        if not containment.is_verified(ctx.state, rt, key, store="guard-verify.json"):
+        if not gate_said and not containment.is_verified(ctx.state, rt, key, store=gate.VERIFY_STORE):
             ctx.say(f"bw: the {rt} guard is not verified on this version; run `bw guard verify {rt}`")
         if rt == "agy":
             others = guard_install.other_pretooluse_entries(guard_install.hooks_path())
@@ -322,6 +321,22 @@ class Session:
                 ctx.say(f"bw: other agy PreToolUse hooks are installed ({', '.join(others)}); "
                         "the guard does not cover what they allow")
         return gdir
+
+    def _guard_mode(self, ctx, profile, rt, key):
+        """(mode, said) from the gate, before the fork: its line through ctx.say, its event through
+        ctx.log. A refusal raises GuardUnavailable (exit 7). A gate failure runs shadow and says so."""
+        try:
+            o = gate.decide(ctx.config, ctx.state, profile, rt, key, time.time())
+        except Exception as e:
+            ctx.say(f"bw: the guard gate failed ({type(e).__name__}: {safe(e)}); the guard runs shadow")
+            return "shadow", False
+        if o.refuse:
+            raise GuardUnavailable(f"{o.line}; refusing to start {self.lead_name}")
+        if o.line:
+            ctx.say(o.line)
+        if o.event:
+            ctx.log(o.event)
+        return o.mode, bool(o.line) and gate.pin(ctx.config, profile) != "shadow"  # a pinned-shadow line never names the key
 
     def _abort(self, ctx):
         """A failure while starting: once the lead exists it must stop too (the broker going away
@@ -654,7 +669,14 @@ def _guard_ready(ctx, lead_name):
     n = len(os.fsencode(sock))
     if n > brk.MAX_PATH:
         return f"guard socket path is {n} bytes, over the {brk.MAX_PATH}-byte limit: {sock}"
-    return None
+    # a pinned-acting profile on an unverified guard key: refused here, so a cap switch stays put (G-q)
+    return gate.refuses(ctx.config, ctx.state, ctx.project.profile, lead["runtime"], _guard_key(ctx, lead["runtime"]))
+
+
+def _guard_key(ctx, runtime):
+    ad = ctx.adapters[runtime]
+    return containment.guard_key(runtime, ad.version_argv, ctx.backend, ad.guard_hook_files(),
+                                 ports=sandbox.denied_ports(ctx.config))
 
 
 def _take_cap_signal(ctx, state, key):

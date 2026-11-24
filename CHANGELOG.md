@@ -15,6 +15,22 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **The guard gate (`lead/guard/gate.py`).** At lead start, bw decides the guard's mode before it builds the
+  broker. A profile pinned `auto` or `acting` goes to acting when all gate conditions hold: at least 50 reviewed
+  decisions, at least 20 sampled allows (at least 5 of them judge allows when `guard.model` is set), under 10% false
+  stops, no false allow, a judge model, an eval pass, an attack pass on the guard key, the interactive check, and
+  the cooldown. bw steps back to shadow by itself on a wrong sampled allow, a changed evidence key, an unverified
+  guard key, a failed eval, or false stops at 10% or more. After an evidence demotion, acting needs 7 days and 5
+  new marks. A pinned `acting` profile on an unverified guard key exits 7, and a cap switch onto it stays on the
+  current lead. A profile pinned `shadow` resets a stored `acting`. The config still accepts only `shadow`, so
+  every real profile stays shadow until the config change.
+- **`state_dir/guard-mode.json`**: `{profile: {runtime: {mode, key: {evidence, verify}, since, reason,
+  demotions}}}`, written only by bw under an flock. It keeps the last 10 demotions.
+- **The `guard_mode` metrics event**: `{profile, runtime, from, to, reason, evidence: {reviewed, sampled_allows,
+  false_stop_pct, false_allows}}`. `store.load()` returns these events as `guard_modes`.
+- **`bw guard review`** samples judge allows first: at least half of each sample, when there are some.
+  A mark row's `ts` is kept on the folded mark. `bw status` shows the gate's conditions per evidence key, the last
+  demotion's reason and what acting needs again, and "no judge: gray calls ask" when no judge model is set.
 - **`bw guard verify <runtime> --interactive`.** The user answers two real approval prompts in pi, No and then Yes. bw
   proves what ran from the check's own broker log and a witness socket the lead cannot write. The pass goes to
   `state_dir/guard-interactive.json`, keyed on the guard version, the client file, and the hook files (no runtime

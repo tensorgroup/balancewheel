@@ -6,6 +6,9 @@ from lead.guard import record, review  # noqa: E402
 
 BW = os.path.join(ROOT, "bin", "bw")
 KEY = ("p", "agy", "r1", "d1", "test/judge", "h1")
+CFG = {"profiles": {"p": {"lead_order": [], "protected_branches": ["main"], "deploy_commands": []}},
+       "guard": {"mode": {"p": "auto"}}}
+NOW = 1_800_000_000.0
 
 
 def dec(i, decision="ask", source="gray", key=KEY, self_test=False, call="ls", rule_decision=None):
@@ -112,7 +115,7 @@ class ReviewTests(unittest.TestCase):
     def test_status_lines_escape_control_characters(self):
         d = dec("s1"); d.update(runtime="a\x1b[2J", mode="sh\rm")
         seed(self.state, [d])
-        text = "\n".join(review.status_lines(self.state))
+        text = "\n".join(review.status_lines(CFG, self.state, NOW))
         self.assertNotIn("\x1b", text)
         self.assertNotIn("\r", text)
 
@@ -173,6 +176,64 @@ class ReviewTests(unittest.TestCase):
         got = review.pick(self.loaded(), KEY, 0, 5, random.Random(1))
         self.assertEqual([(d["id"], d.get("sampled")) for d in got], [("j1", True)])
 
+    def test_pick_stratifies_judge_allows_so_the_gate_can_be_met(self):
+        seed(self.state, [dec(f"j{n}", "allow", source="judge") for n in range(10)] +
+             [dec(f"r{n}", "allow", source="rule") for n in range(100)])
+        for seed_n in range(20):
+            got = review.pick(self.loaded(), KEY, 0, 5, random.Random(seed_n))
+            self.assertEqual(len(got), 5)
+            self.assertGreaterEqual(sum(d["source"] == "judge" for d in got), 3)
+            self.assertTrue(all(d["sampled"] for d in got))
+
+    def test_pick_fills_from_either_side_when_one_is_short(self):
+        seed(self.state, [dec("j0", "allow", source="judge")] + [dec(f"r{n}", "allow", source="rule") for n in range(9)])
+        got = review.pick(self.loaded(), KEY, 0, 5, random.Random(0))
+        self.assertEqual(sorted(d["source"] for d in got), ["judge", "rule", "rule", "rule", "rule"])
+        other = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, other, ignore_errors=True)
+        seed(other, [dec(f"j{n}", "allow", source="judge") for n in range(9)] + [dec("r0", "allow", source="rule")])
+        got = review.pick(record.load(other)["decisions"], KEY, 0, 5, random.Random(0))
+        self.assertEqual(sorted(d["source"] for d in got), ["judge"] * 4 + ["rule"])
+
+    def test_promotion_line_names_all_six_conditions(self):
+        from lead.guard import gate
+        conds = [gate.Condition(n, ok, f"{n} detail") for n, ok in
+                 (("mode", True), ("marks", False), ("judge", True), ("eval", None), ("attack", True),
+                  ("interactive", False), ("cooldown", True))]
+        s = review.summary([], KEY)
+        line = review.promotion_line(s, conds)
+        for name in ("marks", "judge", "eval", "attack", "interactive", "cooldown"):
+            self.assertIn(f"{name} ", line)
+        self.assertIn("marks open (marks detail)", line)
+        self.assertIn("eval unknown (eval detail)", line)
+        self.assertIn("cooldown ok (cooldown detail)", line)
+        self.assertIn("≥50 reviewed", review.promotion_line(s))  # without conditions: as before
+
+    def test_status_says_no_judge_when_model_unset(self):
+        seed(self.state, [dec("s1")])
+        self.assertIn("  no judge: gray calls ask; the guard stays shadow", review.status_lines(CFG, self.state, NOW))
+        with_model = dict(CFG, guard={"mode": {"p": "auto"}, "model": "test/judge"})
+        self.assertFalse(any("no judge" in l for l in review.status_lines(with_model, self.state, NOW)))
+
+    def test_status_lists_the_gate_conditions_for_the_current_key(self):
+        from lead.guard import gate
+        key = gate.current_key(CFG, "p", "pi")
+        seed(self.state, [dec("s1", key=key)])
+        text = "\n".join(review.status_lines(CFG, self.state, NOW))
+        self.assertIn("judge open (no judge: stays shadow)", text)
+        self.assertIn("attack unknown", text)
+
+    def test_status_after_a_demotion_says_why_and_what_is_needed(self):  # G-m
+        from lead.guard import gate
+        since = 1_796_040_000.0  # 2026-11-30 12:00 UTC
+        entry = {"mode": "shadow", "since": since, "reason": "a sampled allow was marked wrong",
+                 "key": {"evidence": [], "verify": ""},
+                 "demotions": [{"key": [], "ts": since, "reason": "a sampled allow was marked wrong", "kind": "evidence"}]}
+        with open(gate.path(self.state), "w") as f:
+            json.dump({"p": {"pi": entry}}, f)
+        self.assertIn("  guard shadow for profile p (pi) since 2026-11-30: a sampled allow was marked wrong; "
+                      "acting again after 2026-12-07 and 5 new marks", review.status_lines(CFG, self.state, NOW))
+
     def test_gray_share_counts_every_non_rule_source(self):  # judge, judge-failed, judge-skipped, legacy gray
         seed(self.state, [dec("j", "allow", source="judge"), dec("f", source="judge-failed"),
                           dec("k", source="judge-skipped"), dec("g", source="gray"), dec("r", "block", source="rule")])
@@ -185,7 +246,7 @@ class ReviewTests(unittest.TestCase):
     def test_legacy_rows_stay_out_of_a_judge_key(self):
         seed(self.state, [self.LEGACY, dec("new")])
         self.assertEqual([d["id"] for d in review.of_key(self.loaded(), KEY)], ["new"])
-        self.assertTrue(review.status_lines(self.state))  # no KeyError on the legacy row
+        self.assertTrue(review.status_lines(CFG, self.state, NOW))  # no KeyError on the legacy row
 
     def test_legacy_rules_only_rows_and_marks_carry_into_the_no_judge_key(self):
         rules_only = ("p", "agy", "r1", "d1", None, None)
@@ -196,7 +257,7 @@ class ReviewTests(unittest.TestCase):
         s = review.summary(self.loaded(), rules_only)
         self.assertEqual((s["decisions"], s["reviewed"], s["stops_reviewed"]), (2, 1, 1))
         self.assertEqual(record.rule_decision(self.loaded()[0]), "ask")
-        self.assertTrue(review.status_lines(self.state))
+        self.assertTrue(review.status_lines(CFG, self.state, NOW))
 
     def test_key_label_names_the_six_parts(self):
         self.assertEqual(review.key_label(KEY), "profile=p runtime=agy rules=r1 policy=d1 judge=test/judge prompt=h1")

@@ -127,6 +127,15 @@ class StatusCase(unittest.TestCase):
         self.assertIn("leads:", lines)
         self.assertTrue(any("bw cap <plan>" in ln for ln in lines))
 
+    def test_status_passes_config_and_now_to_guard_lines(self):  # G-g
+        from unittest import mock
+        seen = []
+        with mock.patch.object(status.guard_review, "status_lines",
+                               lambda *a: seen.append(a) or ["  guard line"]):
+            f = status.facts(self.config, self.state, 1234.5, run=fake_run(""))
+        self.assertEqual(seen, [(self.config, self.state, 1234.5)])
+        self.assertEqual(f["guard"], ["  guard line"])
+
     def test_last_start_rendered(self):
         os.makedirs(self.state)
         with open(os.path.join(self.state, "start.json"), "w") as fh:

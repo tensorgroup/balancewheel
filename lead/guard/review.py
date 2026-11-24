@@ -5,14 +5,17 @@ judge model, prompt hash); marks made under another key count nowhere. Review re
 decision: a judge allow is sampled as an allow. Self-test decisions are
 never evidence. Pure functions plus run(), which reads verdicts line by line from a stream.
 """
+import calendar
 import json
 import os
 import random
 import sys
 import textwrap
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 from lead.guard import record  # noqa: E402
+from lead.paths import read_json  # noqa: E402
 
 MIN_REVIEWED, MIN_SAMPLED, MAX_FALSE_STOP = 50, 20, 0.10
 # whole words only: "really not sure" must not become "right", nor "what?" "wrong"
@@ -46,9 +49,14 @@ def of_key(decisions, key):
 def pick(decisions, key, recent, sample, rng):
     mine = [d for d in of_key(decisions, key) if "mark" not in d]
     stops = [d for d in mine if d.get("decision") != "allow"]
-    allows = [d for d in mine if d.get("decision") == "allow"]
+    judged = [d for d in mine if d.get("decision") == "allow" and d.get("source") == "judge"]
+    others = [d for d in mine if d.get("decision") == "allow" and d.get("source") != "judge"]
+    # stratified: at least half the sample is judge allows when there are some, so the gate's
+    # judge-allow condition can be met; the rest are the other allows, then judge allows again
+    n_judge = min(len(judged), max((sample + 1) // 2, sample - len(others)))
+    n_other = min(len(others), sample - n_judge)
     out = [dict(d) for d in (stops[-recent:] if recent > 0 else [])]
-    out += [dict(d, sampled=True) for d in rng.sample(allows, min(sample, len(allows)))]
+    out += [dict(d, sampled=True) for d in rng.sample(judged, n_judge) + rng.sample(others, n_other)]
     return out
 
 
@@ -60,7 +68,19 @@ def _split(items):
     return by
 
 
-def summary(decisions, key):
+def epoch(ts):
+    """A row's ts in epoch seconds: store.append writes `YYYY-MM-DDTHH:MM:SSZ`; a number passes through.
+    Anything else is 0 (never after a demotion)."""
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        return float(ts)
+    try:
+        return calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def summary(decisions, key, since=None):
+    """Counts under one evidence key. `since` (epoch seconds) adds `marked_since`: decisions marked after it."""
     ds = of_key(decisions, key)
     marked = [d for d in ds if "mark" in d]
     stops = [d for d in marked if d.get("decision") != "allow"]
@@ -72,12 +92,18 @@ def summary(decisions, key):
               "stops_reviewed": stops, "false_allows": false_allows}
     out = {k: len(v) for k, v in groups.items()}
     out["by_source"] = {k: _split(v) for k, v in groups.items()}
+    out["judge_sampled_allows"] = sum(1 for d in sampled if d.get("source") == "judge")
+    out["marked_since"] = sum(1 for d in marked if epoch(d["mark"].get("ts")) > since) if since is not None else 0
     out["decisions"] = len(ds)
     out["gray_share"] = gray / len(ds) if ds else 0.0
     return out
 
 
-def promotion_line(s):
+def promotion_line(s, conditions=None):
+    """What acting needs. Given the gate's conditions, it names each one and whether it holds."""
+    if conditions is not None:
+        word = {True: "ok", False: "open", None: "unknown"}
+        return "acting needs " + "; ".join(f"{c.name} {word[c.ok]} ({c.detail})" for c in conditions)
     rate = s["false_stops"] / s["stops_reviewed"] * 100 if s["stops_reviewed"] else 0.0
     return (f"acting needs ≥{MIN_REVIEWED} reviewed ({s['reviewed']}), ≥{MIN_SAMPLED} sampled allows "
             f"({s['sampled_allows']}), <{int(MAX_FALSE_STOP * 100)}% false stops ({rate:.0f}%), "
@@ -170,12 +196,35 @@ def run(state_dir, profile=None, recent=20, sample=5, list_only=False, stdin=Non
     return 0
 
 
-def status_lines(state_dir):
+def status_lines(config, state_dir, now):
+    """`bw status`'s guard lines: each evidence key with the gate's conditions, each stored mode with
+    the last demotion's reason and what re-promotion needs, and a note when no judge is set."""
+    from lead.guard import gate  # lazy: gate imports this module
     decisions = record.load(state_dir)["decisions"]
+    profiles = config.get("profiles") or {}
     lines = []
     for key in keys(decisions):
         ds = of_key(decisions, key)
         s = summary(decisions, key)
+        conds = None
+        if key[0] in profiles and tuple(key) == gate.current_key(config, key[0], key[1]):
+            conds = gate.conditions(config, state_dir, key[0], key[1], None, now)
         lines.append(safe(f"  {key[1]} (profile {key[0]}) · {ds[-1].get('mode')} · {s['decisions']} decisions · "
-                          f"gray {s['gray_share'] * 100:.0f}% · {promotion_line(s)}"))
+                          f"gray {s['gray_share'] * 100:.0f}% · {promotion_line(s, conds)}"))
+    modes = read_json(gate.path(state_dir), {})
+    for pname, by_rt in sorted((modes if isinstance(modes, dict) else {}).items()):
+        for rt, entry in sorted((by_rt if isinstance(by_rt, dict) else {}).items()):
+            if not isinstance(entry, dict) or entry.get("mode") not in ("acting", "shadow"):
+                continue
+            head = f"  guard {entry['mode']} for profile {pname} ({rt}) since {gate.day(entry.get('since') or 0)}"
+            dem = (entry.get("demotions") or [None])[-1]
+            if entry["mode"] == "shadow" and dem and dem.get("kind") == "evidence" and dem.get("ts") == entry.get("since"):
+                head += (f": {dem.get('reason')}; acting again after {gate.day(dem['ts'] + gate.COOLDOWN_S)} "
+                         f"and {gate.MIN_NEW_MARKS} new marks")
+            elif entry.get("reason"):
+                head += f": {entry['reason']}"
+            lines.append(safe(head))
+    pinned = any(m in ("auto", "acting") for m in ((config.get("guard") or {}).get("mode") or {}).values())
+    if (lines or pinned) and not (config.get("guard") or {}).get("model"):
+        lines.append("  no judge: gray calls ask; the guard stays shadow")
     return lines

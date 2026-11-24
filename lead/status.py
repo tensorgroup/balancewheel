@@ -123,7 +123,7 @@ def facts(config, state, now, run=proc.run):
     return {"plans": plan_facts(config, state, now),
             **worktree_facts(state),
             "leads": _leads(config),
-            "guard": guard_review.status_lines(state),
+            "guard": guard_review.status_lines(config, state, now),
             "checks": {**({"orca": orca_checks(state, run)} if orca.in_use(config) else {}),
                        "cc-switch": ccswitch.check_settings()},
             "last_start": read_json(os.path.join(state, "start.json"), None)}
