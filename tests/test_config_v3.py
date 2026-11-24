@@ -26,6 +26,11 @@ class SchemaV3(unittest.TestCase):
         for n in needles:
             self.assertIn(n, str(e.exception))
 
+    def test_cli_fresh_min_default_and_minimum(self):
+        self.assertEqual(load_obj(v3())["rotation"]["cli_fresh_min"], 120)
+        o = v3(); o["rotation"] = {"cli_fresh_min": 0}
+        self.rejects(o, "rotation.cli_fresh_min: must be at least 1")
+
     def test_defaults_per_runtime_and_source(self):
         c = cfg.load_config(str(V3))
         self.assertEqual(c["schema_version"], 3)
@@ -182,6 +187,9 @@ class PlanOrcaAndProbeKeys(unittest.TestCase):
         o = v3()
         o["plans"]["plan-b"].update(kw)
         return o
+
+    def test_cli_quota_source_accepted(self):
+        self.assertEqual(load_obj(self.plan(quota="cli"))["plans"]["plan-b"]["quota"], "cli")
 
     def test_defaults(self):
         p = cfg.load_config(str(V3))["plans"]["plan-a"]

@@ -11,10 +11,13 @@ Each quota source writes its own snapshot: the statusline `quota/<plan>.json`, t
 known, fresh source in the plan's precedence order, and takes pools (windows that cover only
 some leads) from a fresh Orca snapshot whichever source won. An unknown snapshot carries
 `last_known_at`, copied forward, so "no reading since <t>" survives repeated failures.
+The `cli` source records what a Codex seat run prints (`rate_limits`); a reading that breaks
+a rule of `parse_cli_rate_limits` writes nothing.
 
     python3 -m lead.quota --statusline <plan>     # reads the statusline JSON on stdin, prints a summary
 """
 import json
+import math
 import os
 import sys
 import time
@@ -24,8 +27,10 @@ from . import rotation
 from .rotation import cap_record
 
 WINDOWS = ("five_hour", "seven_day")
-SOURCES = ("statusline", "probe", "orca")
-ORDER = {"statusline": ["statusline"], "probe": ["probe", "orca"], "orca": ["orca"], "none": []}
+SOURCES = ("statusline", "probe", "orca", "cli")
+ORDER = {"statusline": ["statusline"], "probe": ["probe", "orca"], "orca": ["orca"], "cli": ["cli", "orca"], "none": []}
+CLI_WINDOWS = {300: "five_hour", 10080: "seven_day"}
+CLI_MAX_HORIZON_S = 400 * 86400
 FUTURE_SLACK_S = 300
 
 
@@ -117,7 +122,7 @@ def _windows_ok(windows):
         and (w.get("resets_at") is None or _num(w.get("resets_at"))) for w in windows)
 
 
-def _observation_stale(src, snap, now, probe_every_min):
+def _observation_stale(src, snap, now, probe_every_min, cli_fresh_min=120):
     """None when the snapshot is a known, dated, current observation (its windows not judged);
     else the reason it is not."""
     if not snap or not isinstance(snap, dict):
@@ -129,14 +134,15 @@ def _observation_stale(src, snap, now, probe_every_min):
         return "no observed_at"
     if t > now + FUTURE_SLACK_S:
         return "observed in the future"
-    if src != "statusline" and now - t > 2 * probe_every_min * 60:
+    limit = cli_fresh_min * 60 if src == "cli" else 2 * probe_every_min * 60
+    if src != "statusline" and now - t > limit:
         return f"stale: observed {(now - t) / 60:.0f} min ago"
     return None
 
 
-def _fresh(src, snap, now, probe_every_min):
+def _fresh(src, snap, now, probe_every_min, cli_fresh_min=120):
     """None when the snapshot is a usable, current reading; else the reason it is not."""
-    why = _observation_stale(src, snap, now, probe_every_min)
+    why = _observation_stale(src, snap, now, probe_every_min, cli_fresh_min)
     if why:
         return why
     if not _windows_ok(snap.get("windows")):
@@ -146,7 +152,7 @@ def _fresh(src, snap, now, probe_every_min):
     return None
 
 
-def arbitrate(sources, plan_cfg, now, probe_every_min):
+def arbitrate(sources, plan_cfg, now, probe_every_min, cli_fresh_min=120):
     """The plan's windows from the first fresh known source in its precedence order (plus
     `source`, `age_s`), or unknown with every source's reason; `pools` from a fresh Orca
     snapshot whichever source won; Orca's reading on a statusline plan only as `cross_check`."""
@@ -165,7 +171,7 @@ def arbitrate(sources, plan_cfg, now, probe_every_min):
         snap = snap if isinstance(snap, dict) else {}
         lk = _last_known(snap, now)
         last_known = max(filter(None, [last_known, lk]), default=None)
-        why = _fresh(src, snap, now, probe_every_min)
+        why = _fresh(src, snap, now, probe_every_min, cli_fresh_min)
         if why:
             reasons.append(f"{src}: {why}")
             continue
@@ -248,9 +254,64 @@ def read_quota(state, config=None, now=None):
     if config is None:
         return _read_dir(state, "quota")
     now = time.time() if now is None else now
-    every = (config.get("rotation") or {}).get("probe_every_min", 15)
+    rot = config.get("rotation") or {}
+    every = rot.get("probe_every_min", 15)
+    cli_min = rot.get("cli_fresh_min", 120)
     sources = read_sources(state)
-    return {name: arbitrate(sources.get(name, {}), pcfg, now, every) for name, pcfg in config["plans"].items()}
+    return {name: arbitrate(sources.get(name, {}), pcfg, now, every, cli_min) for name, pcfg in config["plans"].items()}
+
+
+def _finite(v):
+    return _num(v) and math.isfinite(v)
+
+
+def _cli_window(w, now):
+    """One window of a CLI's `rate_limits` as a snapshot window, or None when it breaks a rule."""
+    if not isinstance(w, dict):
+        return None
+    minutes = w.get("window_minutes")
+    if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes not in CLI_WINDOWS:
+        return None
+    used = w.get("used_percent")
+    if not _finite(used) or not 0 <= used <= 100:
+        return None
+    resets = None
+    if "resets_at" in w:
+        at = w["resets_at"]
+        if not _finite(at) or not now < at <= now + CLI_MAX_HORIZON_S:
+            return None
+        resets = at
+    elif "resets_in_seconds" in w:
+        rel = w["resets_in_seconds"]
+        if not _finite(rel) or not 0 < rel <= CLI_MAX_HORIZON_S:
+            return None
+        resets = now + rel
+    return {"name": CLI_WINDOWS[minutes], "used_pct": float(used), "resets_at": resets}
+
+
+def parse_cli_rate_limits(rate_limits, now):
+    """A snapshot from the `rate_limits` object a CLI reports (Codex: `primary`, `secondary`), or
+    None when any rule breaks. It never keeps part of a reading."""
+    if not isinstance(rate_limits, dict) or "primary" not in rate_limits:
+        return None
+    windows = []
+    for key in ("primary", "secondary"):
+        if key not in rate_limits:
+            continue
+        w = _cli_window(rate_limits[key], now)
+        if w is None or any(w["name"] == o["name"] for o in windows):
+            return None
+        windows.append(w)
+    return {"windows": windows, "observed_at": now}
+
+
+def record_cli(state, plan, rate_limits, now):
+    """Write the plan's `cli` snapshot from a CLI's `rate_limits`. A reading that fails the parse
+    writes nothing, so an earlier good snapshot stays as it is. It never records or clears a cap."""
+    snap = parse_cli_rate_limits(rate_limits, now)
+    if snap is None:
+        return None
+    return write_snapshot(state, plan, "cli", snap, now)
 
 
 def read_caps(state, now, expiry_hours=5, include_expired=False):

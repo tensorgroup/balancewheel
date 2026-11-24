@@ -15,6 +15,7 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **Quota source `cli`** and **`rotation.cli_fresh_min`** (default 120), schema 3 only.
 - **`canvas`**: `terminal` or `orca`.
 - **`panel`**: `cap_min`, `deep_cap_min`, `max_rounds`, `max_parallel`, each an integer of at least 1
   (defaults 12, 30, 2, 4).

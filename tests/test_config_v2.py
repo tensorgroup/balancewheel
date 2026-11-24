@@ -58,8 +58,17 @@ class SchemaV2(unittest.TestCase):
 
     def test_rotation_defaults_and_override(self):
         c = cfg.load_config(str(V2))
-        self.assertEqual(c["rotation"], {"return_above_pct": 60, "cap_expiry_hours": 5, "probe_every_min": 15})
+        self.assertEqual(c["rotation"], {"return_above_pct": 60, "cap_expiry_hours": 5, "probe_every_min": 15,
+                                        "cli_fresh_min": 120})
         self.assertEqual(c["updates"], {"min_interval_hours": 0})
+
+    def test_cli_quota_needs_schema_3(self):
+        o = v2(); o["plans"]["plan-a"]["quota"] = "cli"
+        self.rejects(o, 'plans.plan-a.quota: "cli" needs schema_version 3')
+
+    def test_cli_fresh_min_needs_schema_3(self):
+        o = v2(); o["rotation"]["cli_fresh_min"] = 120
+        self.rejects(o, "rotation.cli_fresh_min: needs schema_version 3")
 
     def test_unknown_plan_billing_rejected(self):
         o = v2(); o["plans"]["plan-a"]["billing"] = "barter"

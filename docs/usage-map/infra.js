@@ -123,7 +123,7 @@ window.USAGE_MAP_INFRA = {
         { id: 'runner', title: 'bw lead', sub: 'One locked lead session per worktree', usage: 'bw lead [--use <lead> | --auto]', files: ['lead/runner.py', 'lead/locks.py'] },
         { id: 'worktree', title: 'Worktree', sub: 'Where the lead writes; one lead at a time', desc: 'A git worktree resolves to its repository and profile. A lock the lead holds keeps a second writable agent out.', files: ['lead/projects.py'] },
         { id: 'rotation', title: 'Rotation', sub: 'Pure choice from quota, caps and time', files: ['lead/rotation.py'] },
-        { id: 'quota', title: 'Quota sources', sub: 'statusline · probe · Orca', usage: 'bw probe [plan...]\nbw cap <plan> [--resets-at <epoch>]',
+        { id: 'quota', title: 'Quota sources', sub: 'statusline · probe · cli · Orca', usage: 'bw probe [plan...]\nbw cap <plan> [--resets-at <epoch>]',
           desc: 'Each plan names where its numbers come from. Claude Code reports through bin/bw-statusline; OpenRouter through its key endpoint; others through bw cap (or Orca\'s cache, when a plan maps it).', files: ['lead/quota.py', 'lead/probes.py', 'bin/bw-statusline'] },
         { id: 'handoff', title: 'Handoff', sub: 'Git facts + the last checkpoint', desc: 'The lead keeps a checkpoint (goal, done, next, open) at every task boundary; the handoff carries it to the next lead.', files: ['lead/handoff.py', 'lead/protocol/checkpoint.md'] },
       ],

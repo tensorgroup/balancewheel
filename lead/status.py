@@ -40,7 +40,8 @@ def plan_facts(config, state, now):
     every = rot.get("probe_every_min", 15)
     caps = quota.read_caps(state, now, rot["cap_expiry_hours"])
     sources = quota.read_sources(state)
-    arbitrated = {name: quota.arbitrate(sources.get(name, {}), pcfg, now, every)
+    arbitrated = {name: quota.arbitrate(sources.get(name, {}), pcfg, now, every,
+                                  cli_fresh_min=rot.get("cli_fresh_min", 120))
                   for name, pcfg in config["plans"].items()}
     out = []
     for name, plan in sorted(config["plans"].items()):

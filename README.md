@@ -484,13 +484,19 @@ once for each bw-contained lead runtime.
   come from: `statusline` (Claude Code reports them; `bin/bw-statusline`), `probe` (a
   documented vendor surface, chosen by `plans.*.probe`, which defaults from the plan's
   `vendor`: `openrouter` reads OpenRouter's key endpoint, `google` is agy's `/usage`), `orca`
-  (an opt-in source: Orca's cached poll of that provider, named by `orca_provider`), or `none`. Every source
+  (an opt-in source: Orca's cached poll of that provider, named by `orca_provider`), `cli`
+  (what a Codex seat run prints: its `rate_limits`; schema 3 only), or `none`. Every source
   writes its own snapshot under the state dir's `quota/`, and bw picks per plan by precedence:
   a `statusline` plan reads the statusline only, a `probe` plan its probe and then Orca (when
-  `orca_provider` is set), an `orca` plan Orca; the first source whose reading is known and
+  `orca_provider` is set), an `orca` plan Orca, a `cli` plan its `cli` reading and then Orca
+  (when `orca_provider` is set); the first source whose reading is known and
   fresh wins, and a plan with none reads `unknown` with every source's reason (a notice after a
   probe interval without one). Readings from `probe` and `orca` older than twice
-  `probe_every_min`, dated in the future, or malformed are `unknown`. `bw probe [plan...]`
+  `probe_every_min`, dated in the future, or malformed are `unknown`. A `cli` reading is fresh
+  for `rotation.cli_fresh_min` minutes (default 120, schema 3 only), and `unknown` after its
+  window's reset. The `cli` reading updates only when a real Codex seat runs. A seat attack
+  (`bw seat verify`, `bw start`) runs in its own state dir and feeds no quota. bw does not read
+  the output of a Codex lead's TUI. Between seat runs, rotation uses observed caps. `bw probe [plan...]`
   reads now and prints one line per plan; `bw start` and `bw lead` (at its start and each
   session boundary) do the same, and no network probe ever runs mid-session. In the poll loop
   `bw lead` re-reads Orca's local cache only, for display and freshness, and a failing re-read

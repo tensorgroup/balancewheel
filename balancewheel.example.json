@@ -226,7 +226,8 @@
   "rotation": {
     "return_above_pct": 50,
     "cap_expiry_hours": 5,
-    "probe_every_min": 15
+    "probe_every_min": 15,
+    "cli_fresh_min": 120
   },
   "updates": {
     "min_interval_hours": 0

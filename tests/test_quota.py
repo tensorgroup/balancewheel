@@ -8,6 +8,7 @@ from lead import quota  # noqa: E402
 from lead.rotation import decide  # noqa: E402
 
 FX = HERE / "fixtures" / "statusline"
+QFX = HERE / "fixtures" / "quota"
 NOW = 1_899_990_000.0
 LEADS2 = {"a": {"plan": "pa"}, "b": {"plan": "pb"}}
 PROFILE2 = {"lead_order": ["a", "b"]}
@@ -15,6 +16,10 @@ PROFILE2 = {"lead_order": ["a", "b"]}
 
 def fx(name):
     return json.loads((FX / name).read_text())
+
+
+def qfx(name):
+    return json.loads((QFX / name).read_text())
 
 
 class Quota(unittest.TestCase):
@@ -437,6 +442,93 @@ class StatuslineScript(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr.decode())
             self.assertEqual(r.stdout.decode().strip(), "chained-output")
             self.assertEqual(out.read_bytes(), (FX / "with_limits.json").read_bytes())
+
+
+def win(used=42.0, minutes=300, **reset):
+    return dict({"used_percent": used, "window_minutes": minutes}, **(reset or {"resets_at": NOW + 3600}))
+
+
+BAD = [
+    {}, [], "x", {"primary": "full"},
+    {"secondary": win(minutes=10080)},                                   # missing required window
+    {"primary": win(used=True)}, {"primary": win(used="42")},
+    {"primary": win(used=float("nan"))}, {"primary": win(used=float("inf"))},
+    {"primary": win(used=-1)}, {"primary": win(used=100.5)},
+    {"primary": win(minutes=60)}, {"primary": win(minutes="300")},      # unknown units
+    {"primary": win(resets_at=NOW)}, {"primary": win(resets_at=NOW - 60)},  # past reset
+    {"primary": win(resets_at=(NOW + 3600) * 1000)},                     # epoch milliseconds
+    {"primary": win(resets_in_seconds=0)}, {"primary": win(resets_in_seconds=-5)},
+    {"primary": win(), "secondary": win(minutes=300)},                   # the same name twice
+    {"primary": win(), "secondary": win(used=None, minutes=10080)},      # one bad window rejects all
+]
+
+
+class CliSource(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_parse_maps_windows_and_both_reset_spellings(self):
+        s = quota.parse_cli_rate_limits(qfx("codex_rate_limits_ok.json"), NOW)
+        self.assertEqual([w["name"] for w in s["windows"]], ["five_hour", "seven_day"])
+        self.assertEqual((s["windows"][0]["used_pct"], s["windows"][0]["resets_at"]), (42.0, 1_900_000_000))
+        self.assertEqual(s["observed_at"], NOW)
+        r = quota.parse_cli_rate_limits(qfx("codex_rate_limits_relative.json"), NOW)
+        self.assertEqual(r["windows"][1]["resets_at"], NOW + 86400)
+
+    def test_primary_alone_is_enough_and_no_reset_is_none(self):
+        s = quota.parse_cli_rate_limits({"primary": {"used_percent": 5, "window_minutes": 300}}, NOW)
+        self.assertEqual(s["windows"], [{"name": "five_hour", "used_pct": 5.0, "resets_at": None}])
+
+    def test_record_cli_writes_the_cli_snapshot_file(self):
+        quota.record_cli(self.state, "chatgpt-plan", qfx("codex_rate_limits_ok.json"), NOW)
+        self.assertTrue(os.path.exists(os.path.join(self.state, "quota", "chatgpt-plan.cli.json")))
+        self.assertIn("cli", quota.read_sources(self.state)["chatgpt-plan"])
+
+    def test_no_rate_limits_writes_nothing(self):
+        self.assertIsNone(quota.record_cli(self.state, "p", None, NOW))
+        self.assertFalse(os.path.exists(os.path.join(self.state, "quota", "p.cli.json")))
+
+    def test_malformed_rate_limits_write_nothing(self):
+        for bad in BAD:
+            self.assertIsNone(quota.parse_cli_rate_limits(bad, NOW), bad)
+            self.assertIsNone(quota.record_cli(self.state, "p", bad, NOW), bad)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "quota", "p.cli.json")))
+
+    def test_bad_input_never_overwrites_a_good_snapshot(self):
+        quota.record_cli(self.state, "p", qfx("codex_rate_limits_ok.json"), NOW)
+        path = os.path.join(self.state, "quota", "p.cli.json")
+        before = open(path, "rb").read()
+        for bad in BAD:
+            quota.record_cli(self.state, "p", bad, NOW + 60)
+        self.assertEqual(open(path, "rb").read(), before)
+
+    def test_record_cli_never_writes_a_cap(self):
+        full = {"primary": {"used_percent": 100.0, "window_minutes": 300, "resets_at": NOW + 600}}
+        quota.record_cli(self.state, "p", full, NOW)
+        self.assertEqual(quota.read_caps(self.state, NOW), {})
+
+    def test_cli_freshness_uses_cli_fresh_min_not_probe_interval(self):
+        cfg = plan_cfg("cli")
+        fresh = quota.arbitrate({"cli": known(10, NOW - 40 * M)}, cfg, NOW, 15, cli_fresh_min=120)
+        self.assertEqual(fresh["source"], "cli")
+        stale = quota.arbitrate({"cli": known(10, NOW - 121 * M)}, cfg, NOW, 15, cli_fresh_min=120)
+        self.assertTrue(stale["unknown"])
+        self.assertIn("cli: stale", stale["reason"])
+
+    def test_cli_past_its_reset_reads_unknown(self):
+        a = quota.arbitrate({"cli": known(10, NOW - 60, resets_in=-1)}, plan_cfg("cli"), NOW, 15)
+        self.assertTrue(a["unknown"])
+
+    def test_cli_order_falls_to_orca_only_with_a_provider(self):
+        stale = known(10, NOW - 121 * M)
+        a = quota.arbitrate({"cli": stale, "orca": known(90, NOW - 60)}, plan_cfg("cli", "codex"), NOW, 15)
+        self.assertEqual(a["source"], "orca")
+        b = quota.arbitrate({"cli": stale, "orca": known(90, NOW - 60)}, plan_cfg("cli"), NOW, 15)
+        self.assertTrue(b["unknown"])
 
 
 if __name__ == "__main__":

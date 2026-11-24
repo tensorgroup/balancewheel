@@ -57,7 +57,7 @@ V2_SEAT_KEYS = {"plan", "fallback", "tier"}
 SEAT_TIERS = frozenset({"default", "reserved"})
 RESERVED_SEAT_NAMES = {"verify", "list"}
 BILLING = {"plan", "metered"}
-QUOTA_SOURCES = {"statusline", "probe", "orca", "none"}
+QUOTA_SOURCES = {"statusline", "probe", "orca", "cli", "none"}
 PROBES = {"agy", "openrouter"}
 PROBE_FOR_VENDOR = {"google": "agy", "openrouter": "openrouter"}
 ORCA_PROVIDER = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
@@ -66,7 +66,7 @@ ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 DEFAULT_KEY_ENV = "OPENROUTER_API_KEY"
 DEPTHS = {"standard", "deep", "deep-on-stakes"}
 ROUTER_MODES = {"off", "shadow", "acting"}
-ROTATION_DEFAULTS = {"return_above_pct": 50, "cap_expiry_hours": 5, "probe_every_min": 15}
+ROTATION_DEFAULTS = {"return_above_pct": 50, "cap_expiry_hours": 5, "probe_every_min": 15, "cli_fresh_min": 120}
 UPDATES_DEFAULTS = {"min_interval_hours": 0}
 PANEL_DEFAULTS = {"cap_min": 12, "deep_cap_min": 30, "max_rounds": 2, "max_parallel": 4}
 WATCH_DEFAULTS = {
@@ -138,7 +138,7 @@ def _name_ok(kp, name):
     _expect(isinstance(name, str) and SEAT_NAME.fullmatch(name), f"{kp}: name must match [a-z0-9-]+")
 
 
-def _validate_plans(obj):
+def _validate_plans(obj, version):
     plans = obj.get("plans", {})
     _expect(isinstance(plans, dict), "plans: must be an object")
     out = {}
@@ -154,6 +154,7 @@ def _validate_plans(obj):
         _expect(p.get("billing") in BILLING, f"{kp}.billing: must be one of {sorted(BILLING)}")
         quota = p.get("quota", "none")
         _expect(quota in QUOTA_SOURCES, f"{kp}.quota: must be one of {sorted(QUOTA_SOURCES)}")
+        _expect(quota != "cli" or version >= 3, f'{kp}.quota: "cli" needs schema_version 3')
         if "budget_usd_month" in p:
             _expect(p["billing"] == "metered", f"{kp}.budget_usd_month: only on metered plans")
             b = p["budget_usd_month"]
@@ -455,7 +456,7 @@ def load_config(path=None):
     seats_in = obj.get("seats")
     _expect(isinstance(seats_in, dict) and seats_in, "seats: required non-empty object")
     seats = {name: _validate_seat(name, s, version) for name, s in seats_in.items()}
-    plans = _validate_plans(obj)
+    plans = _validate_plans(obj, version)
     for name, s in seats.items():
         if s["plan"] is not None:
             _expect(s["plan"] in plans, f"seats.{name}.plan: must name a plan, got {s['plan']!r}")
@@ -483,7 +484,11 @@ def load_config(path=None):
     guard = _validate_guard(obj, profiles, leads, version)
     triage = _validate_triage(obj, profiles)
     improve = _validate_improve(obj)
+    given_rotation = obj.get("rotation")
+    _expect(version >= 3 or not isinstance(given_rotation, dict) or "cli_fresh_min" not in given_rotation,
+            "rotation.cli_fresh_min: needs schema_version 3")
     rotation = _validate_defaults(obj, "rotation", ROTATION_DEFAULTS)
+    _expect(rotation["cli_fresh_min"] >= 1, "rotation.cli_fresh_min: must be at least 1")
     updates = _validate_defaults(obj, "updates", UPDATES_DEFAULTS)
     panel = _validate_defaults(obj, "panel", PANEL_DEFAULTS, minimum=1)
     cockpit = _validate_cockpit(obj, warnings)
