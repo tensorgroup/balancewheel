@@ -20,7 +20,7 @@ import sys
 import time
 from typing import Optional
 
-from lead import paths, quota
+from lead import paths, proc, quota
 from lead.guard.review import safe
 from panel import channel, record, render, roster, run
 from panel import state as pstate
@@ -35,6 +35,8 @@ SPAWN_GRACE_S = 30
 STOP_MARGIN_S = 300
 MAX_REQUESTS = 20
 MAX_OPEN_LINES = 10
+MAX_SPAWNS = 3
+NOT_OURS = "stale pid not ours"
 FOLLOW_UP_SAMPLE = 3
 AMEND_KEYS = ("verdicts", "groups", "severity", "added", "notes")
 WORKER = [sys.executable, "-m", "panel.run"]  # the worker argv prefix; tests replace it
@@ -131,14 +133,14 @@ def open_panel(config, state, project, req, lead=None, session_id=None, now=None
     tier = roster.tier(profile, stakes, bool(req.get("deep")))
     names = roster.roster(config, profile, checkpoint, tier)
     originals, fallbacks = roster.run_counts(config, names, tier)
-    open_now = pstate.open_panels(state, key)
-    if len(open_now) >= pstate.MAX_OPEN:
-        raise ValueError(_open_refusal(open_now))
+    def check(open_now):
+        if len(open_now) >= pstate.MAX_OPEN:
+            raise ValueError(_open_refusal(open_now))
     return pstate.create(state, key, {
         "worktree": project.worktree, "profile": project.profile, "checkpoint": checkpoint,
         "target": req.get("target"), "focus": req.get("focus", ""), "stakes": stakes, "paths": rel, "tier": tier,
         "roster": names, "originals": originals, "fallbacks": fallbacks, "created": now, "session_id": session_id,
-        "lead": (lead or {}).get("name"), "seats": {}})
+        "lead": (lead or {}).get("name"), "seats": {}}, check=check)
 
 
 def _new_ask(p, seat, claim, dispute, session_id, max_rounds, now) -> dict:
@@ -260,14 +262,19 @@ def log_panel(config, state, project, pid, req, lead=None, out=None) -> dict:
     rec, ignored = record.build(doc, body, config, moderator_for(config, state, lead), rounds=_rounds(panel))
     full = metrics_log.validate_panel(rec, config, False, panel_id=pid)
     path = store.log_path(config)
+    judged = record.judged(body)
+
+    def logged(p):
+        p.update(state="logged", judged=p.get("judged") or judged, record_id=pid)
     with store.locked(path):  # the log has no duplicate-id check of its own
         if any(p["id"] == pid for p in store.load(path)["panels"]):
+            # the record is in the log, but its state write was lost: mark the panel logged, so amend works
+            pstate.update(state, key, pid, logged)
             raise ValueError(f"panel {pid} is already logged; send an amend")
         store.append(path, full)
+    pstate.update(state, key, pid, logged)  # before the watches: a failure there leaves the panel amendable
     sink = io.StringIO()
     new, _ = metrics_log.run_check(path, config, only_panel=pid, out=sink)
-    judged = record.judged(body)
-    pstate.update(state, key, pid, lambda p: p.update(state="logged", judged=judged, record_id=pid))
     return _response(state, key, pid, rec, doc, new, sink, ignored, out)
 
 
@@ -321,7 +328,67 @@ def _num(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
-def _stop(state, key, pid, job, why, now, **extra) -> None:
+def _command(pid) -> str:
+    """The command line of a live process, or "" (gone, a zombie's is "<defunct>", or ps failed)."""
+    r = proc.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], timeout=5)
+    return r.out.strip() if r.rc == 0 else ""
+
+
+def _is_worker(cmd, panel_id, owner) -> bool:
+    if owner == "foreground":
+        return "bw panel" in cmd
+    return "panel.run" in cmd and panel_id in cmd
+
+
+def _is_seat(cmd) -> bool:
+    if "bw seat" in cmd:
+        return True
+    try:
+        tail = run.seat_cmd()[1:]
+    except ValueError:
+        return False
+    return bool(tail) and all(part in cmd for part in tail)
+
+
+def _trusted(job, panel_id, jobs) -> tuple:
+    """(the job with only the groups bw may signal, the pids left out). A worker this bw started is
+    trusted; any other pid, and every recorded seat group, must still run a panel worker or a seat."""
+    j, skipped = dict(job), []
+    wpid = j.get("pid")
+    if isinstance(wpid, int) and not j.get("worker_exited") and jobs.alive(wpid) is None:
+        if not _is_worker(_command(wpid), panel_id, j.get("owner")):
+            skipped.append(wpid)
+            j["pid"] = None
+    seats = []
+    for g in j.get("seat_pgids") or []:
+        if not isinstance(g, int) or isinstance(g, bool):
+            continue
+        (seats if _is_seat(_command(g)) else skipped).append(g)
+    j["seat_pgids"] = seats
+    return j, skipped
+
+
+def _signal(state, key, pid, job, jobs, sig) -> None:
+    """Signal the job's tree, never a pid that now runs something else (pid reuse)."""
+    trusted, skipped = _trusted(job, pid, jobs)
+    stop_tree(trusted, sig)
+    if not skipped:
+        return
+    notes = [f"{g}: {NOT_OURS}" for g in skipped]
+    try:
+        with open(os.path.join(pstate.work_dir(state, key, pid), "log.txt"), "a", encoding="utf-8") as f:
+            f.write("".join(f"panel.service: not signalled {n}\n" for n in notes))
+    except OSError:
+        pass
+
+    def fn(p):
+        j = p.get("job")
+        if isinstance(j, dict):
+            j["skipped"] = sorted(set(j.get("skipped") or []) | set(notes))
+    pstate.update(state, key, pid, fn)
+
+
+def _stop(state, key, pid, job, why, now, jobs, **extra) -> None:
     """Record why and when, then SIGTERM the tree. The worker reads `job.stop` as its reason."""
     stopped = {}
 
@@ -332,14 +399,14 @@ def _stop(state, key, pid, job, why, now, **extra) -> None:
             stopped.update(j)
     pstate.update(state, key, pid, fn)
     if stopped:
-        stop_tree(stopped, signal.SIGTERM)
+        _signal(state, key, pid, stopped, jobs, signal.SIGTERM)
 
 
 def _watch(config, state, key, panel, jobs, now) -> None:
     pid, job = panel["id"], panel["job"]
     if _num(job.get("kill_at")):
         if now >= job["kill_at"] + KILL_GRACE_S:
-            stop_tree(job, signal.SIGKILL)
+            _signal(state, key, pid, job, jobs, signal.SIGKILL)
             jobs.reap()
             fail(config, state, key, pid, job.get("stop") or "panel worker stopped", now)
             pstate.release_job(state, key, pid)
@@ -353,13 +420,13 @@ def _watch(config, state, key, panel, jobs, now) -> None:
     alive = jobs.alive(wpid)
     beat = job.get("beat") if _num(job.get("beat")) else 0.0
     if alive is None and now - beat > BEAT_STALE_S:
-        _stop(state, key, pid, job, "panel worker stopped", now)
+        _stop(state, key, pid, job, "panel worker stopped", now, jobs)
     elif alive is False:
         jobs.reap()
-        _stop(state, key, pid, job, "panel worker exited", now, worker_exited=True)
+        _stop(state, key, pid, job, "panel worker exited", now, jobs, worker_exited=True)
     elif _num(job.get("deadline")) and now > job["deadline"]:
         started = job.get("started") if _num(job.get("started")) else job["deadline"]
-        _stop(state, key, pid, job, f"stopped after {round((job['deadline'] - started) / 60)} min", now)
+        _stop(state, key, pid, job, f"stopped after {round((job['deadline'] - started) / 60)} min", now, jobs)
 
 
 def _count(v) -> int:
@@ -402,10 +469,18 @@ def start_job(config, state, key, panel, kind, ask_id, jobs, now, notice, owner=
     """Reserve the worktree's job, then spawn the worker for this panel. False when the slot is taken
     or the spawn failed. `bw panel --background` calls it too."""
     pid = panel["id"]
+    if kind == "round1":
+        current = pstate.load(state, key, pid) or {}
+        if current.get("state") == "queued" and not current.get("job") and _count(current.get("spawns")) >= MAX_SPAWNS:
+            fail(config, state, key, pid, "worker did not start", now)
+            notice("panel", f"panel {pid}: the worker did not start {MAX_SPAWNS} times; the panel failed", key=pid)
+            return False
     job = {"kind": kind, "ask": ask_id, "pid": None, "owner": owner, "started": now,
            "deadline": now + _budget(config, panel, kind), "beat": now, "seat_pgids": []}
     if not pstate.reserve_job(state, key, pid, job):
         return False
+    if kind == "round1":  # a worker that reaches `running` is never started again, so this counts failed starts
+        pstate.update(state, key, pid, lambda p: p.update(spawns=_count(p.get("spawns")) + 1))
     argv = list(WORKER) + [kind, "--state", state, "--key", key, "--panel", pid] + (["--ask", ask_id] if ask_id else [])
     try:
         work = pstate.ensure_dir(state, pstate.work_dir(state, key, pid))
@@ -462,6 +537,8 @@ def _answer(config, state, project, req, lead, session_id, rid, notice) -> dict:
         if kind == "log":
             return log_panel(config, state, project, pid, req, lead=lead)
         if kind == "amend":
+            if "patch" not in req:
+                raise ValueError("amend needs a patch")
             r = amend(config, state, project, pid, req["patch"])
             return dict(r, ignored=[k for k in req if k not in channel.ENVELOPE + ("patch",)] + r["ignored"])
         raise ValueError("type must be one of " + ", ".join(channel.TYPES))

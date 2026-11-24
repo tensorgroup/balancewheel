@@ -178,8 +178,9 @@ def _write(state, key, panel) -> None:
     paths.write_json_atomic(os.path.join(view, "status.json"), status_view(panel, view))
 
 
-def create(state, key, panel: dict) -> dict:
-    """A new panel in state `queued`, with its `panel.json` and derived `status.json`."""
+def create(state, key, panel: dict, check: Optional[Callable[[list], None]] = None) -> dict:
+    """A new panel in state `queued`, with its `panel.json` and derived `status.json`. `check` gets the
+    open panels under the worktree lock and may raise to refuse the create."""
     created = panel.get("created")
     p = {"v": 1, "id": None, "project": _key(key)}
     for k in INPUT_KEYS:
@@ -189,6 +190,8 @@ def create(state, key, panel: dict) -> dict:
               "seats": dict(panel.get("seats") or {}), "state": "queued", "error": None, "short": None,
               "job": None, "asks": [], "judged": None, "record_id": None, "run_logged": False})
     with _lock(state, key):
+        if check is not None:
+            check([q for q in _panels(state, key) if q.get("state") in OPEN])
         while True:
             pid = new_id(state, key)
             try:

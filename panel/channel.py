@@ -143,6 +143,8 @@ def parse(data: bytes) -> dict:
     elif kind == "log":
         if not isinstance(req.get("verdicts"), dict):
             raise ValueError("verdicts must be an object")
+    elif "patch" not in req:
+        raise ValueError("amend needs a patch")
     elif not isinstance(req.get("patch"), dict):
         raise ValueError("patch must be an object")
     return req

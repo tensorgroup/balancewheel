@@ -308,9 +308,56 @@ class ServiceTest(unittest.TestCase):
     def test_log_refuses_a_duplicate_record(self):
         pid = self.ready()
         self.assertTrue(self.log(pid, "l1")["ok"])
-        state.update(self.S, K, pid, lambda p: p.update(state="ready"))   # as if the state write was lost
+        state.update(self.S, K, pid, lambda p: p.update(state="ready", record_id=None))   # the state write was lost
         self.assertEqual(self.log(pid, "l2")["error"], f"panel {pid} is already logged; send an amend")
         self.assertEqual(len(store.load(self.LOG)["panels"]), 1)
+        self.assertEqual((self.panel(pid)["state"], self.panel(pid)["record_id"]), ("logged", pid))   # recovered
+        self.assertTrue(self.amend(pid, "a1", {"verdicts": {"f1": "refuted"}})["ok"])
+
+    def test_crash_between_append_and_state_write(self):
+        pid = self.ready()
+        def lost(*a, **kw):   # the first write after the append is lost, as in a crash
+            raise OSError("lost")
+        with mock.patch.object(service.pstate, "update", side_effect=lost):
+            r = self.log(pid, "l1")
+        self.assertFalse(r["ok"])
+        self.assertEqual(len(store.load(self.LOG)["panels"]), 1)
+        self.assertEqual(self.panel(pid)["state"], "ready")
+        self.assertEqual(self.log(pid, "l2")["error"], f"panel {pid} is already logged; send an amend")
+        self.assertEqual(self.panel(pid)["state"], "logged")
+        r = self.amend(pid, "a1", {"verdicts": {"f1": "refuted"}})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self.panel(pid)["judged"]["verdicts"]["f1"], "refuted")
+
+    def test_watch_failure_after_append_leaves_panel_amendable(self):
+        pid = self.ready()
+        with mock.patch.object(service.metrics_log, "run_check", side_effect=RuntimeError("watches")):
+            r = self.log(pid, "l1")
+        self.assertFalse(r["ok"])
+        self.assertEqual((self.panel(pid)["state"], self.panel(pid)["record_id"]), ("logged", pid))
+        self.assertIsNotNone(self.panel(pid)["judged"])
+        self.assertTrue(self.amend(pid, "a1", {"verdicts": {"f1": "refuted"}})["ok"])
+
+    def test_open_limit_checked_under_the_lock(self):
+        for _ in range(3):
+            self.open()
+        seen = []
+
+        def check(open_now):   # called under the worktree lock, before the id is taken
+            seen.append(len(open_now))
+            raise ValueError(service._open_refusal(open_now))
+        with self.assertRaisesRegex(ValueError, "^3 panels are open"):
+            state.create(self.S, K, {"checkpoint": "design"}, check=check)
+        self.assertEqual((seen, len(state.panels(self.S, K))), ([3], 3))
+
+    def test_amend_needs_a_patch(self):
+        pid = self.ready()
+        self.publish("a1", {"v": 1, "type": "amend", "panel": pid})
+        self.drain(FakeJobs())
+        self.assertEqual(self.response("a1")["error"], "amend needs a patch")
+        r = service._answer(self.CFG, self.S, self.project, {"type": "amend", "panel": pid}, None, None, "a2",
+                            self.notice)
+        self.assertEqual(r, {"ok": False, "error": "amend needs a patch"})
 
     def test_missing_verdict_refused(self):
         pid = self.ready()
@@ -480,11 +527,17 @@ class ServiceTest(unittest.TestCase):
             self.jobs._procs[child].wait()
             return child
         with mock.patch.object(service, "WORKER", [sys.executable, "-c", RELEASE_SRC, str(ROOT)]), \
-                mock.patch.object(self.jobs, "spawn", side_effect=slow_spawn):
-            service.schedule(self.CFG, self.S, K, self.jobs, notice=self.notice)
+                mock.patch.object(self.jobs, "spawn", side_effect=slow_spawn) as spawn:
+            for n in range(1, service.MAX_SPAWNS + 1):
+                service.schedule(self.CFG, self.S, K, self.jobs, notice=self.notice)
+                p = self.panel(pid)
+                self.assertEqual((p["job"], p["state"], p["spawns"]), (None, "queued", n))
+            self.assertEqual(self.notices, [])
+            service.schedule(self.CFG, self.S, K, self.jobs, notice=self.notice)   # 3 starts never reached running
+            self.assertEqual(spawn.call_count, service.MAX_SPAWNS)
         p = self.panel(pid)
-        self.assertEqual((p["job"], p["state"]), (None, "queued"))
-        self.assertEqual(self.notices, [])
+        self.assertEqual((p["state"], p["error"], p["job"]), ("failed", "worker did not start", None))
+        self.assertEqual([(k, key) for k, _, key in self.notices], [("panel", pid)])
 
     def test_failed_spawn_releases_and_notices(self):
         pid = self.open()
@@ -534,8 +587,12 @@ class ServiceTest(unittest.TestCase):
         minutes = round((job["deadline"] - job["started"]) / 60)
         t = job["deadline"] + 1
         service.schedule(self.CFG, self.S, K, self.jobs, now=t, notice=self.notice)
-        p = self.panel(pid)
-        self.assertEqual((p["state"], p["job"]["stop"], p["job"]["kill_at"]), ("running", f"stopped after {minutes} min", t))
+        p = self.panel(pid)   # the worker may already have failed the panel and cleared its job
+        self.assertIn(p["state"], ("running", "failed"))
+        if p["job"] is not None:
+            self.assertEqual((p["job"]["stop"], p["job"]["kill_at"]), (f"stopped after {minutes} min", t))
+        else:
+            self.assertEqual(p["error"], f"stopped after {minutes} min")
         # alive() first: it reaps the worker, and a zombie's group still reads as existing
         self.assertTrue(wait_for(lambda: self.jobs.alive(job["pid"]) is False and not service.tree_alive(job)))
         return pid, job, t, minutes
@@ -584,6 +641,38 @@ class ServiceTest(unittest.TestCase):
         self.assertNotIn(other.pid, [c.args[0] for c in kill.call_args_list])
         p = self.panel(pid)
         self.assertEqual((p["state"], p["error"], p["job"]), ("failed", "panel worker stopped", None))
+
+    def test_reused_pids_that_lead_groups_are_never_signalled(self):
+        pid = self.open()
+        sleep = [sys.executable, "-c", "import time; time.sleep(30)"]
+        leaders = [subprocess.Popen(sleep, start_new_session=True) for _ in range(2)]   # pids reused by others
+        for proc in leaders:
+            self.addCleanup(proc.wait)
+            self.addCleanup(proc.kill)
+        now = 5000.0
+        job = {"kind": "round1", "ask": None, "pid": leaders[0].pid, "owner": "scheduler", "started": now - 200,
+               "deadline": 1e12, "beat": now - service.BEAT_STALE_S - 1, "seat_pgids": [leaders[1].pid]}
+        self.assertTrue(state.reserve_job(self.S, K, pid, job))
+        jobs = service.Jobs()
+        with mock.patch.object(os, "killpg", wraps=os.killpg) as killpg:
+            service.schedule(self.CFG, self.S, K, jobs, now=now)
+            self.assertEqual(self.job(pid)["skipped"], sorted(f"{p.pid}: stale pid not ours" for p in leaders))
+            service.schedule(self.CFG, self.S, K, jobs, now=now + service.KILL_GRACE_S + 1)
+        signalled = [c.args[0] for c in killpg.call_args_list if c.args[1] != 0]
+        self.assertEqual(signalled, [])
+        self.assertEqual([p.poll() for p in leaders], [None, None])
+        self.assertIn("stale pid not ours", Path(state.work_dir(self.S, K, pid), "log.txt").read_text())
+        self.assertEqual(self.panel(pid)["state"], "failed")
+
+    def test_worker_and_seat_commands_are_recognised(self):
+        self.assertTrue(service._is_worker("python3 -m panel.run round1 --panel p1234567", "p1234567", "scheduler"))
+        self.assertFalse(service._is_worker("python3 -m panel.run round1 --panel p7654321", "p1234567", "scheduler"))
+        self.assertFalse(service._is_worker("sleep 30", "p1234567", "scheduler"))
+        self.assertTrue(service._is_worker("python3 /x/bin/bw panel design t", "p1234567", "foreground"))
+        self.assertTrue(service._is_seat("python3 /x/bin/bw seat a --no-fallback"))
+        self.assertTrue(service._is_seat(f"{sys.executable} {FAKE} a --no-fallback"))
+        self.assertFalse(service._is_seat("sleep 30"))
+        self.assertEqual(service._command(999999999), "")
 
     def test_dead_worker_kills_seat_groups(self):
         with mock.patch.dict(os.environ, {"FAKE_SEAT_o": "sleep", "FAKE_SEAT_g": "sleep"}):
