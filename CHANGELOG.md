@@ -163,6 +163,9 @@ not against the prose.
   agy-runtime seat runs per panel.
 - **Panel state** (`panel/state.py`): panel state in `state_dir/panels/`, the lead's read-only view in
   `state_dir/inbox-view/<key>/panels/`, and the `panel_run` event.
+- **Panel requests as files** (`panel/channel.py`): a lead publishes `<id>.request` in `$BW_PANEL` by
+  rename. bw writes each response in `$BW_PANEL_VIEW/responses/`. The inbox gains the notice kind `panel`,
+  and `inbox.notice` takes a `key`: one open notice per kind and key.
 - **`bw improve`** (`lead/improve.py`, `bin/bw`): suggestions from how the user works, each with its
   evidence, a minimum sample, and no effect until the user acts. `bw improve note "…"` adds a note,
   `bw improve done <key>` marks one dealt with (`improve.json` in the state dir, added to `setup/paths.txt`). An

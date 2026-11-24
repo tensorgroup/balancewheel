@@ -175,7 +175,30 @@ class Records(InboxCase):
         with self.assertRaises(ValueError):
             inbox.notice(self.state, KEY, "made-up", "x")
         self.assertEqual(inbox.NOTICE_KINDS,
-                         {"all-capped", "pinned-capped", "router-shadow", "guard-unreachable", "inbox", "triage"})
+                         {"all-capped", "pinned-capped", "router-shadow", "guard-unreachable", "inbox", "triage",
+                          "panel"})
+
+    def test_notice_dedupes_per_key(self):
+        a = inbox.notice(self.state, KEY, "panel", "a", key="p1111111")
+        self.assertIsNotNone(a)
+        self.assertEqual(a["key"], "p1111111")
+        self.assertIsNotNone(inbox.notice(self.state, KEY, "panel", "b", key="p2222222"))
+        self.assertIsNone(inbox.notice(self.state, KEY, "panel", "c", key="p1111111"))
+        self.assertIsNotNone(inbox.notice(self.state, KEY, "panel", "d"))
+        self.assertIsNone(inbox.notice(self.state, KEY, "panel", "e"))
+        n = inbox.notice(self.state, KEY, "inbox", "d")
+        self.assertIsNotNone(n)
+        self.assertNotIn("key", n)
+        self.assertIsNone(inbox.notice(self.state, KEY, "inbox", "e"))
+
+    def test_read_at_is_public(self):
+        (self.asks / "x.ask").write_bytes(b"hello")
+        dfd = os.open(self.asks, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            self.assertEqual(inbox.read_at(dfd, "x.ask"), b"hello")
+        finally:
+            os.close(dfd)
+        self.assertFalse(hasattr(inbox, "_read"))
 
     def test_view_holds_answers_and_ask_ids_never_ask_text(self):
         self.publish("a", "ASK-TEXT-secret question")

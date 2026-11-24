@@ -35,7 +35,8 @@ import store  # noqa: E402
 
 FILE = "inbox.jsonl"
 VIEW_DIR = "inbox-view"
-NOTICE_KINDS = frozenset({"all-capped", "pinned-capped", "router-shadow", "guard-unreachable", "inbox", "triage"})
+NOTICE_KINDS = frozenset({"all-capped", "pinned-capped", "router-shadow", "guard-unreachable", "inbox", "triage",
+                          "panel"})
 READ_LIMIT = 64 * 1024
 TEXT_LIMIT = 2000
 MAX_ASKS_PER_SESSION = 50
@@ -166,17 +167,20 @@ def ask(state, project, worktree, frm, session_id, text, item_id, now=None, **ex
         return rec
 
 
-def notice(state, project, kind, text, now=None) -> Optional[dict]:
-    """Record a notice from bw; None when one of this kind is already open for the project."""
+def notice(state, project, kind, text, now=None, key=None) -> Optional[dict]:
+    """Record a notice from bw; None when one of this kind and `key` is already open for the project.
+    A `key` (such as a panel id) is stored on the record; without one, one notice per kind is open."""
     if kind not in NOTICE_KINDS:
         raise ValueError(f"unknown notice kind {kind!r}")
     with store.locked(path(state)):
         items = load(state)["items"]
-        if any(i["type"] == "notice" and i.get("kind") == kind and i.get("project") == project
-               and i["status"] == "open" for i in items):
+        if any(i["type"] == "notice" and i.get("kind") == kind and i.get("key") == key
+               and i.get("project") == project and i["status"] == "open" for i in items):
             return None
         rec = {"type": "notice", "id": _new_id(items), "ts": time.time() if now is None else now,
                "project": project, "kind": kind, "from": "bw", "text": text, "status": "open"}
+        if key is not None:
+            rec["key"] = key
         _append(state, rec)
         return rec
 
@@ -253,15 +257,16 @@ def write_view(state, worktree_key):
                 os.unlink(tmp)
 
 
-def _read(dfd, name):
-    """At most READ_LIMIT bytes of a regular file, never following a link or blocking on a FIFO."""
+def read_at(dfd, name, limit=READ_LIMIT):
+    """At most `limit` bytes of a regular file (None when it is not one), never following a link or
+    blocking on a FIFO. `panel/channel.py` reads its requests with it too."""
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             return None
         chunks, n = [], 0
-        while n < READ_LIMIT:
-            b = os.read(fd, READ_LIMIT - n)
+        while n < limit:
+            b = os.read(fd, limit - n)
             if not b:
                 break
             chunks.append(b)
@@ -347,7 +352,7 @@ def ingest(state, worktree_key, worktree, frm, session_id, receipts=False):
                     os.unlink(name, dir_fd=dfd)
                     dropped += 1
                     continue
-                data = _read(dfd, name)
+                data = read_at(dfd, name)
                 if data is not None and data.lstrip().startswith(NOTE_HEADER.encode()):
                     text = data.decode("utf-8", errors="replace").strip()[len(NOTE_HEADER):].strip()[:TEXT_LIMIT]
                     if text:

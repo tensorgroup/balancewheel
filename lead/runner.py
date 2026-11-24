@@ -466,10 +466,10 @@ class Context:
     def say(self, msg):
         print(msg, file=self.out, flush=True)
 
-    def notice(self, kind, text):
+    def notice(self, kind, text, key=None):
         """A bw notice in the inbox; the record, or None when one is already open. Never raises."""
         try:
-            return inboxmod.notice(self.state, self.project.worktree_key, kind, text)
+            return inboxmod.notice(self.state, self.project.worktree_key, kind, text, key=key)
         except OSError as e:
             if not self.notice_failed:
                 self.say(f"bw: the inbox could not be written ({type(e).__name__}); notices go only here")
