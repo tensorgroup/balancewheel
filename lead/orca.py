@@ -45,7 +45,7 @@ def in_use(config):
 
 
 def active_tools(config):
-    """The configured tools, without `orca` on the terminal canvas (bw makes no Orca call there)."""
+    """The configured tools, without `orca` on the terminal canvas (bw does not update or version-check Orca there)."""
     tools = dict(config.get("tools") or {})
     if canvas(config) == "terminal":
         tools.pop("orca", None)

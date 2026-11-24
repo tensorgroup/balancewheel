@@ -191,6 +191,12 @@ class PlanOrcaAndProbeKeys(unittest.TestCase):
     def test_cli_quota_source_accepted(self):
         self.assertEqual(load_obj(self.plan(quota="cli"))["plans"]["plan-b"]["quota"], "cli")
 
+    def test_cli_quota_warns_that_no_cli_feeds_it(self):
+        c = load_obj(self.plan(quota="cli"))
+        self.assertEqual(len(c["warnings"]), 1)
+        self.assertIn("plans.plan-b.quota", c["warnings"][0])
+        self.assertIn("no feeding CLI", c["warnings"][0])
+
     def test_defaults(self):
         p = cfg.load_config(str(V3))["plans"]["plan-a"]
         self.assertEqual((p["orca_provider"], p["orca_windows"], p["probe"], p["key_env"]),

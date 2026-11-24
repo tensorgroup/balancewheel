@@ -47,7 +47,7 @@
 ~/.local/state/balancewheel/inbox.jsonl
 ~/.local/state/balancewheel/improve.json
 
-# Orca, the recommended (optional) canvas, writes status hooks into each vendor's user-level
+# Orca, one optional canvas, writes status hooks into each vendor's user-level
 # config on its first launch: the Claude Code settings and Codex config.toml above, plus
 # these. Take a backup before installing it (docs/orca.md). restore.sh leaves a file that
 # was absent at backup time in place, so it will not delete a hooks file Orca created;

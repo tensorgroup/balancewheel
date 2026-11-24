@@ -464,6 +464,9 @@ def load_config(path=None):
             _expect(s["fallback"] in seats and s["fallback"] != name, f"seats.{name}.fallback: must name another seat")
     warnings = []
     tools = _validate_tools(obj, warnings)
+    for pname, plan in plans.items():
+        if plan["quota"] == "cli":
+            warnings.append(f'plans.{pname}.quota: "cli" has no feeding CLI yet (reads unknown until one does)')
     canvas = _resolve_canvas(obj, plans, tools, version)
     leads = _validate_leads(obj, plans, version)
     for pname, plan in plans.items():

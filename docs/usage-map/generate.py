@@ -150,7 +150,7 @@ def roster():
     items = []
     for name, p in plans.items():
         items.append({"id": f"plan:{name}", "name": name, "tone": VENDOR_TONE.get(p.get("vendor"), "data"), "detail": f"{p.get('billing', '')} · quota: {p.get('quota', '')}",
-                      "kindLabel": "Plan (who pays)", "desc": f"Vendor {p.get('vendor', '?')}, billing {p.get('billing', '?')}, quota read from {p.get('quota', '?')}.",
+                      "kindLabel": "Plan (who pays)", "desc": f"Vendor {p.get('vendor', '?')}, billing {p.get('billing', '?')}, " + ("no quota source." if p.get('quota') == "none" else f"quota read from {p.get('quota', '?')}."),
                       "chips": [f"{k}: {json.dumps(v)}" for k, v in p.items()], "chipsLabel": "Example config", "file": "balancewheel.example.json"})
     groups.append({"id": "rgrp:plans", "title": "Plans", "items": items})
 
