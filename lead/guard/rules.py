@@ -372,24 +372,39 @@ def _in_order(want, args):
 
 # The names bw sets for the lead session. Expansion of lead_env is sound only while the lead cannot
 # change them, so changing one is a rule ask the judge cannot lift. Other BW_* names stay gray.
+# The rules assume bash semantics (pi's shell): zsh differs (`$X:h` modifiers, no word splitting),
+# and only pi is judged today. Limits: a change inside text the rules cannot parse (`source`, a
+# heredoc) stays gray, and so does an IFS change, which would split an unquoted expansion.
 _BW_NAME = r"BW_(?:CHECKPOINT|ASKS|INBOX|SESSION|STATE_DIR|PANEL[A-Za-z0-9_]*|GUARD_[A-Za-z0-9_]*)"
-_BW_SET = re.compile(rf"(?<![A-Za-z0-9_$]){_BW_NAME}(?:\+=|=|\[)")  # X=, X+=, X[..]=
+_BW_SET = re.compile(rf"{_BW_NAME}(?:\+=|=|\[)")  # X=, X+=, X[..]= at the start of a word
 _BW_DEFAULT = re.compile(rf"\$\{{{_BW_NAME}:?=")  # ${X=..} and ${X:=..} assign when X is unset
-_BW_EXACT = re.compile(_BW_NAME)
+_BW_FD = re.compile(rf"\{{{_BW_NAME}\}}")  # {X}>file stores an fd number in X
+_BW_ANY = re.compile(_BW_NAME)
+_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=")
+_RESERVED = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
 _VAR_CMDS = {"export", "unset", "declare", "typeset", "readonly", "local", "read", "getopts", "mapfile",
-             "readarray", "for", "select", "let", "env", "eval", "builtin", "command"}
+             "readarray", "let", "env", "eval", "builtin", "command", "wait"}
 
 
 def _bw_env(w):
-    """True if the segment may assign, export, unset, or declare a name bw sets for the lead. An
-    assignment starts its word (after `{`, `then`, `time`, ... too); a bare name, a nameref target,
-    or an assignment inside an operand counts next to a builtin that changes variables."""
-    if any(_BW_SET.match(x.text) or (x.unexpanded and _BW_DEFAULT.search(x.text)) for x in w):
+    """True if the segment may assign, export, unset, or declare a name bw sets for the lead.
+    Checked: the leading assignments (after `{`, `then`, `time`, ...), `${X:=..}`, `{X}>`, and,
+    when the command changes variables, every operand: a protected name anywhere in it (`-vX`,
+    `-aX`, `r=X` too) or any unexpanded operand (`BW_{A,B}`, `$x=`)."""
+    if any(_BW_FD.fullmatch(x.text) or (x.unexpanded and _BW_DEFAULT.search(x.text)) for x in w):
         return True
-    names = {os.path.basename(x.text) for x in w}
-    if names & _VAR_CMDS or ("printf" in names and "-v" in names):
-        return any(_BW_SET.search(x.text) or _BW_EXACT.fullmatch(c)
-                   for x in w for c in (x.text, x.text.partition("=")[2]))
+    i = 0
+    while i < len(w) and (w[i].text in _RESERVED or _ASSIGN.match(w[i].text)):
+        if _BW_SET.match(w[i].text):
+            return True
+        i += 1
+    if i == len(w):
+        return False
+    cmd, ops = os.path.basename(w[i].text), w[i + 1:]
+    if cmd in ("for", "select"):  # only the loop variable is assigned
+        return bool(ops) and (bool(ops[0].unexpanded) or bool(_BW_ANY.search(ops[0].text)))
+    if cmd in _VAR_CMDS or (cmd == "printf" and any(x.text.startswith("-v") for x in ops)):
+        return any(x.unexpanded or _BW_ANY.search(x.text) for x in ops)
     return False
 
 

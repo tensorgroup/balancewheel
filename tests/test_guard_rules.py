@@ -576,7 +576,12 @@ class CheckpointDirTests(unittest.TestCase):
                     "for BW_PANEL in a; do true; done", "declare -n r=BW_PANEL", "BW_PANEL+=x true",
                     "echo ${BW_PANEL:=x}", "eval BW_PANEL=/tmp", "{ BW_PANEL=x; }",
                     "if true; then unset BW_PANEL; fi", "time BW_PANEL=x true", 'export "BW_PANEL=/tmp/x"',
-                    "BW_PANEL=\"/tmp/x\" true", "X=1 export BW_PANEL"):
+                    "BW_PANEL=\"/tmp/x\" true", "X=1 export BW_PANEL",
+                    # review fix round 1
+                    "printf -vBW_PANEL %s .git/hooks; echo x > $BW_PANEL/pre-commit",
+                    "export BW_{PANEL,Q}=/tmp", "read -aBW_PANEL <<< /tmp", "wait -p BW_PANEL",
+                    "exec {BW_PANEL}>/tmp/f", "true {BW_PANEL}>/tmp/f", "export $x=/tmp", "unset $x",
+                    "declare -n r=BW_PANEL", "for $x in a; do true; done", "command export BW_PANEL=/tmp"):
             d = decide(shell(cmd), self.ctx(lead_env=env))
             self.assertEqual((d.decision, d.source, d.rule), ("ask", "rule", "ask:bw-env"), cmd)
 
@@ -596,7 +601,9 @@ class CheckpointDirTests(unittest.TestCase):
     def test_reading_a_bw_variable_is_not_a_rule_ask(self):
         env = {"BW_PANEL": os.path.join(self.cp, "panel")}
         for cmd in ("echo $BW_PANEL", "grep BW_PANEL README", "echo $BW_PANEL=x", "printf '%s' BW_PANEL",
-                    "git commit -m 'tests set BW_STATE_DIR=x now'"):
+                    "git commit -m 'tests set BW_STATE_DIR=x now'", "echo BW_PANEL=x",
+                    "git commit -m 'BW_STATE_DIR=x in tests'", "for f in a b; do echo $f; done",
+                    "printf '%s' -- BW_PANEL"):
             self.assertNotEqual(decide(shell(cmd), self.ctx(lead_env=env)).rule, "ask:bw-env", cmd)
 
     def test_inbox_write_expands_then_stays_outside(self):
