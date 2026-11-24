@@ -24,7 +24,7 @@
 - `canvas` ∈ {`terminal`, `orca`} (schema 3, in `V3_TOP_KEYS`). When a schema-3 file has no `canvas` key, it resolves to `orca` if the file has `tools.orca` or any plan with `orca_provider` (the user runs Orca today), else `terminal`. A schema 1 or 2 file resolves to `orca`. The example sets `canvas` explicitly (moderator's call, plan panel: O-a).
 - With `canvas: terminal` and no plan that sets `orca_provider`, bw makes **zero** `orca` calls. That includes a configured `tools.orca` update or version command (moderator's call, plan panel: O-b).
 - With `canvas: orca`, behaviour is today's.
-- The sandbox's Orca denies (`CANVAS_CONTROL_DIRS`) stay on in every case. Do not touch `lead/sandbox.py`.
+- The sandbox's Orca denies (`CANVAS_CONTROL_DIRS`) stay on in every case. Do not touch `lead/sandbox.py`. Plans 5 and 6 already changed it (`a9c9c2a`, `92d8b5f`, `658f6dc`), but no plan 7 task needs it, so plan 7 resets no lead key. Only Task 6 resets seat keys (build ruling, 2026-11-23, as-built).
 - Quota source `cli`: `QUOTA_SOURCES` gains `"cli"`; `lead/quota.py` `SOURCES` gains `"cli"`; `ORDER["cli"] = ["cli", "orca"]`; `orca` applies only when the plan sets `orca_provider`.
 - `rotation.cli_fresh_min`, default `120`. A `cli` reading older than that, or past its own window's reset, reads unknown.
 - `quota: "cli"` and `rotation.cli_fresh_min` are accepted at schema 3 only (moderator's call, plan panel: O-h).
@@ -56,7 +56,7 @@
 | `lead/updates.py`, `lead/registry.py` | a configured `tools.orca` is skipped on the Terminal canvas (Task 2) |
 | `bin/bw` | docstring: Terminal first, Orca optional (Task 2) |
 | `seats/run.py` | step 8: a real Codex seat run records its `cli` snapshot before any stand-in (Task 6; file made by plan 5) |
-| `balancewheel.example.json` | Terminal canvas, no Orca (Task 3); `chatgpt-plan` → `cli` (Task 5) |
+| `balancewheel.example.json` | Terminal canvas, no Orca (Task 3); `chatgpt-plan` → `cli` (Task 6, only if the live check passes) |
 | `README.md`, `docs/orca.md`, `docs/stack.md`, `docs/architecture.md`, `CLAUDE.md`, `docs/usage-map/infra.js` | Orca as a possibility (Task 4); the `cli` source (Tasks 5, 6) |
 
 ---
@@ -175,11 +175,11 @@ git commit -m "feat: a canvas key that gates every orca call"
 ### Task 2: Zero `orca` calls on the Terminal canvas
 
 **Files:**
-- Modify: `lead/start.py:1-20` (docstring: steps 4, 6, 7 and the `--dry-run` line), `:129` (tools), `:179-184` (`app_version`), `:205-207` (checks), `:226-251` (`_workspace`), `:254-282` (`_dry_run`)
+- Modify: `lead/start.py:1-20` (docstring: steps 4, 6, 8 and the `--dry-run` line), `:132` (tools), `:180` (`app_version`), `:212` (`orca_checks`, step 8), `:246-272` (`_workspace`), `:275-302` (`_dry_run`) (build ruling, 2026-11-23, as-built): plan 5 Task 14 made 8 steps. Step 7 is the seats in the background. Leave step 7 as it is.
 - Modify: `lead/status.py:121-127` (`facts`), `:166-168` (`render`)
 - Modify: `lead/probes.py:219` (the Orca thread)
-- Modify: `lead/updates.py:129` (`update_all` tools), `lead/registry.py:145` (tools for `tool_node`)
-- Modify: `lead/runner.py:765-773` (comment only)
+- Modify: `lead/updates.py:129` (`update_all` tools), `lead/registry.py:143` (`tools_cfg = _dict(config.get("tools"))`, for `tool_node`) (build ruling, 2026-11-23, as-built)
+- Modify: `lead/runner.py:831` (comment only, at `orcamod.refresh(state, config, time.time(), run=run)`) (build ruling, 2026-11-23, as-built)
 - Modify: `bin/bw:1-25` (docstring: the `bw start`, `bw status`, `bw probe` lines; the usage map reads it)
 - Modify: `docs/usage-map/data.generated.js` (regenerated)
 - Test: `tests/test_start.py`, `tests/test_status.py`, `tests/test_probes.py`, `tests/test_runner.py`, `tests/test_updates.py`, `tests/test_registry.py`
@@ -190,6 +190,8 @@ git commit -m "feat: a canvas key that gates every orca call"
   - `start._workspace(state, project, run, bw, env, say, canvas: str) -> int` — new last parameter.
   - `status.facts(...)["checks"]` has the key `"orca"` only when `orca.in_use(config)`. `status.render` prints the check titles that are present, in the order `orca`, `cc-switch`.
   - `updates.update_all`, `registry.build`, and `start.start` (its tool list and its dry-run tool lines) iterate `orca.active_tools(config)`, not `config["tools"]` (moderator's call, plan panel: O-b).
+
+`lead/locks.py` `runtime_tools(config)` (`:31`) also iterates `config.get("tools")`. It maps tools to runtimes and runs nothing. Add no gate there (build ruling, 2026-11-23, as-built).
 
 **Existing tests that need `canvas: "orca"`.** They use raw config dicts with no `canvas` key, so they read `terminal` after this task. Set `self.config["canvas"] = "orca"` (or `"canvas": "orca"` in the test's config) first. Do not delete them: they prove `canvas: orca` is today's path (moderator's call, plan panel: O-d).
 - `tests/test_start.py`: `test_orca_running_opens_pane_with_exact_argv`, `test_orca_absent_writes_command_file_and_opens_terminal`, `test_relative_config_and_state_paths_are_forwarded_absolute`, `test_orca_create_failure_falls_back_to_terminal`, `test_neither_orca_nor_terminal_prints_the_command_and_exits_1`, `test_dry_run_runs_nothing_but_git_and_orca_status`, and `test_start_json_written` if it asserts the `orca_version` value.
@@ -286,21 +288,22 @@ Run: `python3 -m unittest tests.test_start tests.test_status tests.test_probes t
 Expected:
 - The new `test_start`, `test_status`, `test_updates`, and `test_registry` tests FAIL (an `orca` argv; an `orca:` line).
 - The `test_probes` test FAILS too. The `bw-probe-orca` thread starts at `lead/probes.py:219`, the mock raises, and the note `orca read failed (AssertionError)` appears.
-- The `test_runner` test can already PASS, because `orca.refresh` returns early with no mapped plan (`lead/orca.py:367-369`). Keep it as a pin.
+- The `test_runner` test can already PASS, because `orca.refresh` returns early with no mapped plan (`lead/orca.py:387-389`). Keep it as a pin.
 
 - [ ] **Step 3: Gate the call sites**
 
 - `lead/start.py`:
-  - Tools (`:129`) and the dry-run tool lines (`:258`): iterate `orca.active_tools(config)`.
+  - Tools (`:132`) and the dry-run tool lines: iterate `orca.active_tools(config)`.
   - Step 4: `orca_version` is `None` unless `orca.in_use(config)`. Never call `orca.app_version()` otherwise.
   - Step 6: pass `orca.canvas(config)` to `_workspace`. With `"terminal"`, skip `orca.running` and the `orca:` line, and go straight to the command file and `open -a Terminal`.
-  - Step 7: print the `orca` check lines only when `orca.in_use(config)`.
+  - Step 8: gate the Orca check lines (`orca_checks(state, run)`, `:212`) with `orca.in_use(config)`. Step 7 (the seats) stays as it is (build ruling, 2026-11-23, as-built). Keep `verify=False` in the new start tests, so no seat-check child starts: with `verify=False` step 7 only says `seats: not checked (--no-verify)`.
+  - `_dry_run` needs no new gate for the seats line. It prints `would check seats in the background` and runs nothing for seats (build ruling, 2026-11-23, as-built).
   - `_dry_run`: with `"terminal"`, skip `orca.running` and print `would write {path}:` without the `orca: {why};` prefix.
-  - Docstring (moderator's call, plan panel: O-e). Step 4: "OpenRouter's key, one Orca read when a plan maps Orca". Step 6: "a Terminal tab through a `.command` file in the state dir; with `canvas: orca`, an Orca pane when Orca runs, else the Terminal tab". Step 7: "the cc-switch checks, and the Orca checks when Orca is in use". The last line: "`--dry-run` runs only git (and `orca status` when the canvas is Orca)".
+  - Docstring (moderator's call, plan panel: O-e). Step 4: "OpenRouter's key, one Orca read when a plan maps Orca". Step 6: "a Terminal tab through a `.command` file in the state dir; with `canvas: orca`, an Orca pane when Orca runs, else the Terminal tab". Step 8: "the cc-switch checks, and the Orca checks when Orca is in use". (build ruling, 2026-11-23, as-built) The last line: "`--dry-run` runs only git (and `orca status` when the canvas is Orca)".
 - `lead/status.py`: `facts` adds `"orca"` to `checks` only when `orca.in_use(config)`. `render` loops over `[t for t in ("orca", "cc-switch") if t in f["checks"]]`.
 - `lead/probes.py`: start the `bw-probe-orca` thread only when a chosen plan sets `orca_provider`.
-- `lead/updates.py:129` and `lead/registry.py:145`: read `orca.active_tools(config)`.
-- `lead/runner.py:765`: no behaviour change; `orcamod.refresh` already returns before any call. Add one comment line that says so.
+- `lead/updates.py:129` and `lead/registry.py:143`: read `orca.active_tools(config)`. (build ruling, 2026-11-23, as-built)
+- `lead/runner.py:831`: no behaviour change; `orcamod.refresh` already returns before any call (its early return is at `lead/orca.py:387-389`). Add one comment line that says so.
 - `bin/bw` docstring (O-e): `bw start` — "open it in a Terminal tab (an Orca pane with `canvas: orca`)"; `bw status` — "cc-switch checks, and Orca checks when Orca is in use"; `bw probe` — "read quota now (OpenRouter key; Orca for mapped plans; agy awaits its shape)".
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -337,7 +340,7 @@ The example changes:
 - Add `"canvas": "terminal"` at the top level. The key is explicit, so the Task 1 inference never applies to the example (moderator's call, plan panel: O-a).
 - Remove `tools.orca`.
 - Remove `orca_provider` and `orca_windows` from **every** plan. The spec names only `chatgpt-plan` and `kimi-plan`. But `claude-plan` (`orca_provider: claude`, the `fableWeekly` pool) and `google-plan` (`orca_provider: antigravity`) also make Orca calls, which breaks the zero-calls rule for the example.
-- `chatgpt-plan`: `"quota": "none"` in this task. Task 5 changes it to `"cli"`, when that source exists.
+- `chatgpt-plan`: `"quota": "none"` in this task. It stays `"none"` unless Task 6's live Codex check finds `rate_limits` in the stream; then Task 6 changes it to `"cli"` (build ruling, 2026-11-23, as-built) (ruling D7-codex).
 - `kimi-plan`: `"quota": "none"`.
 - `claude-plan` stays `statusline`. `google-plan` stays `probe`; its agy probe reads unknown until its shape is known, so the plan runs on observed caps.
 
@@ -446,10 +449,10 @@ git commit -m "docs: orca is one possible canvas, terminal tabs are the default"
 ### Task 5: The `cli` quota source
 
 **Files:**
-- Modify: `metrics/config.py:57` (`QUOTA_SOURCES`), `:66` (`ROTATION_DEFAULTS`), `_validate_plans` (`:134-183`, gains `version`), `load_config` (the schema and minimum checks)
-- Modify: `lead/quota.py:26-28`, `:120-146` (`_observation_stale`, `_fresh`), `:148-175` (`arbitrate`), `:234-241` (`read_quota`), plus two new functions
+- Modify: `metrics/config.py:60` (`QUOTA_SOURCES`), `:69` (`ROTATION_DEFAULTS`), `_validate_plans(obj)` (from `:141`, gains `version`), `load_config` (from `:437`; the schema and minimum checks) (build ruling, 2026-11-23, as-built)
+- Modify: `lead/quota.py:27-28` (`SOURCES`, `ORDER`), `:120` (`_observation_stale`), `:137` (`_fresh`), `:149` (`arbitrate(sources, plan_cfg, now, probe_every_min)`), `:246` (`read_quota`), plus two new functions. Leave `read_model` (`:261`) and `lead_model` (`:266`) as they are (build ruling, 2026-11-23, as-built)
 - Modify: `lead/status.py:40-44` (the direct `arbitrate` call)
-- Modify: `balancewheel.example.json` (`chatgpt-plan` → `"quota": "cli"`, `"rotation"` gains `"cli_fresh_min": 120`)
+- Modify: `balancewheel.example.json` (`"rotation"` gains `"cli_fresh_min": 120`). Do not set `chatgpt-plan` to `cli` in this task: Task 6's live check decides that (build ruling, 2026-11-23, as-built) (ruling D7-codex)
 - Modify: `README.md` (quota sources, `:458-476`), `docs/usage-map/infra.js:126-127`, `CHANGELOG.md`, `docs/usage-map/data.generated.js`
 - Create: `tests/fixtures/quota/codex_rate_limits_ok.json`, `tests/fixtures/quota/codex_rate_limits_relative.json` (synthetic)
 - Test: `tests/test_quota.py`, `tests/test_config_v2.py:52-55`, `tests/test_config_v3.py` (`PlanOrcaAndProbeKeys`, `SchemaV3`)
@@ -582,6 +585,8 @@ def test_cli_fresh_min_default_and_minimum(self):
     self.rejects(o, "rotation.cli_fresh_min: must be at least 1")
 
 def test_example_chatgpt_plan_reads_cli(self):
+    # Build ruling, 2026-11-23, as-built (ruling D7-codex): add this test in Task 6, and only if the live check passes.
+    # In Task 5 the example keeps chatgpt-plan at "none", so do not add it here.
     c = cfg.load_config(str(HERE.parent / "balancewheel.example.json"))
     self.assertEqual(c["plans"]["chatgpt-plan"]["quota"], "cli")
 ```
@@ -610,7 +615,7 @@ Expected: FAIL — `AttributeError: ... 'parse_cli_rate_limits'`, `plans.plan-b.
 - `metrics/config.py`: add `"cli"` to `QUOTA_SOURCES`; add `"cli_fresh_min": 120` to `ROTATION_DEFAULTS`. `_validate_plans(obj, version)`: `_expect(quota != "cli" or version >= 3, f'{kp}.quota: "cli" needs schema_version 3')`. Before `_validate_defaults(obj, "rotation", ...)`: `_expect(version >= 3 or "cli_fresh_min" not in (obj.get("rotation") or {}), "rotation.cli_fresh_min: needs schema_version 3")` (guard a non-dict `rotation` the way `_validate_defaults` reports it). After it: `_expect(rotation["cli_fresh_min"] >= 1, "rotation.cli_fresh_min: must be at least 1")`.
 - `lead/quota.py`: `SOURCES` and `ORDER` as the Interfaces block says. `parse_cli_rate_limits` follows the rules above, with `math.isfinite`. `_observation_stale` and `_fresh` gain `cli_fresh_min=120`; for `src == "cli"` the age limit is `cli_fresh_min * 60`, for the other non-statusline sources it stays `2 * probe_every_min * 60`. `arbitrate` passes `cli_fresh_min` through. `read_quota` reads `rotation.cli_fresh_min` (default 120) and passes it. Add `parse_cli_rate_limits` and `record_cli` (`record_cli` calls `write_snapshot(state, plan, "cli", snap, now)`). Update the module docstring: the `cli` source records what a Codex seat run prints.
 - `lead/status.py:43`: pass `cli_fresh_min=rot.get("cli_fresh_min", 120)`.
-- `balancewheel.example.json`: `chatgpt-plan` `"quota": "cli"`; `"rotation"` gains `"cli_fresh_min": 120`.
+- `balancewheel.example.json`: `"rotation"` gains `"cli_fresh_min": 120`. `chatgpt-plan` stays `"quota": "none"` until Task 6's live check passes (build ruling, 2026-11-23, as-built) (ruling D7-codex).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -621,7 +626,7 @@ Expected: PASS, every test.
 
 - `README.md` quota sources: add `cli` — "what a Codex seat run prints (`rate_limits`); fresh for `rotation.cli_fresh_min` minutes (120); a `cli` plan reads `cli`, then Orca when `orca_provider` is set". Say plainly: the reading updates only when a real Codex seat runs; a seat attack (`bw seat verify`, `bw start`) runs in its own state dir and feeds no quota; a Codex lead's TUI output is not read; between seat runs rotation uses observed caps. The source needs schema 3.
 - `infra.js:126`: `sub: 'statusline · probe · cli · Orca'`.
-- `CHANGELOG.md` `[Unreleased]`, `### Added`: "**Quota source `cli`** and **`rotation.cli_fresh_min`** (default 120), schema 3 only." `### Changed`: "`chatgpt-plan` in the example reads `cli`."
+- `CHANGELOG.md` `[Unreleased]`, `### Added`: "**Quota source `cli`** and **`rotation.cli_fresh_min`** (default 120), schema 3 only." (No `### Changed` line for `chatgpt-plan` here; Task 6 adds it only if its live check passes (build ruling, 2026-11-23, as-built).)
 - Run `python3 docs/usage-map/generate.py`.
 
 - [ ] **Step 6: Commit**
@@ -635,23 +640,29 @@ git commit -m "feat: a passive cli quota source for codex plans"
 
 ### Task 6: A Codex seat run records its `cli` reading
 
-**Depends on Project 1 (plan 5).** Start this task only after plan 5 has landed `seats/run.py` (its Task 11), `seats/adapters.py`, and `tests/fixtures/seats/codex/`. The contract this task consumes is plan 5's "(P2 contract)" blocks (moderator's call, plan panel: O-g):
+**Step 0: one live check first** (build ruling, 2026-11-23, as-built) (ruling D7-codex). Before any other step, run ONE live `codex exec --json` call (cheap) and look for `rate_limits` in the stream.
+- The plan-5 adapter reads only `turn.completed.usage` (`_codex_usage`, `seats/adapters.py:240-246`). It returns `tokens_in` and `tokens_out`, never `rate_limits`. The rebuild guide records "Rate limits in the stream: none (observed)" (`docs/reference-implementation.md:366`). No codex fixture holds `rate_limits`.
+- If the stream carries no `rate_limits`: stop Task 6 as "not applicable". Write one line in `docs/orca.md` ("What we stopped building"): "A Codex plan has no `cli` reading: the Codex stream carries no `rate_limits` (checked 2026-11-23); Codex plans use observed caps (`quota: none`)." Keep Task 5's passive `cli` source for later. Leave `chatgpt-plan` at `"none"` in the example. Add a `CHANGELOG.md` `[Unreleased]` line. Make no code change. Skip Steps 1-6.
+- If the stream carries `rate_limits`: Task 6 also edits `_codex_usage` in `seats/adapters.py` to return `rate_limits`. Then set `chatgpt-plan` to `"quota": "cli"` in the example, add `test_example_chatgpt_plan_reads_cli` (Task 5's test text), and add the `### Changed` CHANGELOG line "`chatgpt-plan` in the example reads `cli`."
+- Every edit in this task resets every seat key. `seats/run.py` is in `SEAT_CODE` (`seats/verify.py:32`) and `seats/adapters.py` is `seat_adapter_sha` (`seats/verify.py:171-187`). Say so in the commit body and the CHANGELOG: "this commit resets every seat key; run `bw seat verify --all` after deploy." `bw start` re-attacks every reachable seat in the background and spends quota.
+
+**Depends on Project 1 (plan 5).** Start this task (after Step 0) only after plan 5 has landed `seats/run.py` (its Task 11), `seats/adapters.py`, and `tests/fixtures/seats/codex/`. The contract this task consumes is plan 5's "(P2 contract)" blocks (moderator's call, plan panel: O-g):
 
 - `run_seat(config, state, seat, prompt, *, target=None, brief=False, brief_file=None, resume=False, session_id=None, deep=False, fallback=True, out=None, transcript=None, attack=False, run=proc.run, now=time.time, say=None, _standin_for=None) -> SeatResult`. `now` is a **callable**; call `now()`. `say` takes one line; `None` means stderr. stdout carries only the seat's answer, so this task never prints.
-- `SeatResult` has the field `rate_limits` (plan 5, design decision 11: "Codex `rate_limits` are parsed, not stored ... Writing the `cli` quota snapshot is Project 3").
+- `SeatResult.rate_limits` is whatever `usage()` returns, for any runtime (Claude's `rate_limit_info` for claude-code seats, `seats/run.py:181-185`). Keep the runtime gate `self.runtime == "codex"`; never parse another runtime's `rate_limits` as `cli` (build ruling, 2026-11-23, as-built). `SeatResult` has the field `rate_limits` (plan 5, design decision 11: "Codex `rate_limits` are parsed, not stored ... Writing the `cli` quota snapshot is Project 3").
 - The Codex adapter's `usage(stdout_lines) -> dict` returns keys among `tokens_in`, `tokens_out`, `cost_usd`, `rate_limits`. This plan assumes `rate_limits` is the raw object from the last Codex token-count event (Task 5's shape block).
 - The usage event row does **not** carry `rate_limits`. This task does not add it.
 - Step 8 of `run_seat`: on a usage-limit error, the run arms the seat cap, appends its own `ran: true` row, and, when `fallback` and `_standin_for is None`, re-enters step 2 once for the stand-in.
-- Attack isolation (plan 5, design decision 5): an attack run (`attack=True`) runs with an isolated state dir `<run>/state/`, never the user's `state_dir`.
+- Attack isolation (build ruling, 2026-11-23, as-built): `run_seat` does not isolate state itself. It uses the `state` it gets. The attack caller passes its own `<run>/state` (`BW_STATE_DIR`). `attack=True` with a valid token in `state` skips only the key check (`seats/run.py:203-206`). Without a token the run goes on as a normal verified run, and `opts["attack"]` stays true. So skip `record_cli` whenever `opts["attack"]` is true, token or not.
 
-Where the call goes. Record the reading for **each run that produced it**, in step 8, right after the adapter's `usage()` parse and before any stand-in re-entry. A capped Codex run then keeps its own reading (likely at or near 100 %), and the stand-in, which has its own runtime, never writes over it. Skip the call when `attack` is true (moderator's call, plan panel: O-f). Only real seat runs feed the `cli` source; a seat attack's reading stays in its isolated state dir, and bw never copies it across state dirs.
+Where the call goes. Record the reading for **each run that produced it**. Put the call in `_Run.parse` (steps 8 and 9, `seats/run.py:300-332`), right after `usage = self.adapter.usage(out_l) or {}` (`:313`) (build ruling, 2026-11-23, as-built). Use `self.opts["attack"]`, `self.runtime`, `self.s.get("plan")`, `self.now()`, and `self.say`. That point is before any stand-in. The stand-in after a cap is in `run_seat`, after `attempt.locked()` returns `reason == "usage cap"` (`:368-371`). A capped Codex run then keeps its own reading (likely at or near 100 %), and the stand-in, which has its own runtime, never writes over it. Skip the call whenever `attack` is true, token or not (moderator's call, plan panel: O-f; build ruling, 2026-11-23, as-built). Only real seat runs feed the `cli` source; a seat attack's reading stays in its isolated state dir, and bw never copies it across state dirs.
 
 If plan 5 shipped another shape, adapt only the call site in Step 3. `quota.parse_cli_rate_limits` stays the one parser.
 
 **Files:**
-- Modify: `seats/run.py` (step 8, the parse)
-- Create: `tests/fixtures/seats/codex/ok_rate_limits.{stdout,stderr}` and `tests/fixtures/seats/codex/usage_limit_rate_limits.{stdout,stderr}` (synthetic; in plan 5's per-runtime layout). The first is plan 5's `codex/ok` with one token-count event that carries Task 5's `codex_rate_limits_ok.json` object. The second is `codex/usage_limit` plus that event with `used_percent: 100` on `primary`. Do not assume plan 5's `codex/ok` carries `rate_limits` or lacks it; this task's "without" test uses a copy, `codex/ok_no_rate_limits.{stdout,stderr}`, with the event's `rate_limits` key removed.
-- Test: `tests/test_seat_run.py` (plan 5's module)
+- Modify: `seats/run.py` (`_Run.parse`, after `:313`); `seats/adapters.py` only if Step 0 finds `rate_limits` (build ruling, 2026-11-23, as-built)
+- Create (after Step 0 passes): `tests/fixtures/seats/codex/ok_rate_limits.{stdout,stderr}` and `tests/fixtures/seats/codex/usage_limit_rate_limits.{stdout,stderr}` (synthetic; in plan 5's per-runtime layout). The first is plan 5's `codex/ok` with one token-count event that carries Task 5's `codex_rate_limits_ok.json` object. The second is `codex/usage_limit` plus that event with `used_percent: 100` on `primary`. Do not assume plan 5's `codex/ok` carries `rate_limits` or lacks it; this task's "without" test uses a copy, `codex/ok_no_rate_limits.{stdout,stderr}`, with the event's `rate_limits` key removed.
+- Test: `tests/test_seat_run.py` (plan 5's module). `FakeRun` gives rc 0 only for names in `OK_FIXTURES = ("ok", "resume")` (`:15`, `:55-57`). Add `"ok_rate_limits"` and `"ok_no_rate_limits"` to `OK_FIXTURES`; keep `usage_limit_rate_limits` at rc 1 (build ruling, 2026-11-23, as-built).
 - Modify: `docs/orca.md` ("What we stopped building"), `README.md` (one line in the `bw seat` section), `CHANGELOG.md`, `docs/usage-map/data.generated.js`
 
 **Interfaces:**
@@ -660,49 +671,56 @@ If plan 5 shipped another shape, adapt only the call site in Step 3. `quota.pars
 
 - [ ] **Step 1: Write the failing tests**
 
-With plan 5's `FakeRun` (it returns a fixture `Result` per argv), its config helper, and a fixed clock `now=lambda: NOW`, where `NOW` lies before the fixtures' resets. A codex seat `astra` on plan `chatgpt-plan`, with `fallback` seat `gem` on another runtime, as in plan 5's tests.
+With plan 5's `FakeRun` (one `self.fake`; `self.fake.queue(cli, name)` queues a fixture for a runtime, `tests/test_seat_run.py:26-27`), the helper `self.seat(seat="astra", prompt=..., **kw)` (`:146-149`), and a fixed clock `now=lambda: NOW`, where `NOW` lies before the fixtures' resets. A codex seat `astra` on plan `chatgpt-plan`, with `fallback: gem` (agy, `google-plan`). `setUp` already records passes for `astra`, `gem`, and `opus` (`:107-108`) (build ruling, 2026-11-23, as-built). The tests below use these helpers.
 
 ```python
 def test_codex_run_with_rate_limits_writes_the_cli_snapshot(self):
-    r = run_seat(self.config, self.state, "astra", "review", run=self.fake("codex/ok_rate_limits"),
-                 now=lambda: NOW, say=self.lines.append)
+    self.fake.queue("codex", "ok_rate_limits")
+    r = self.seat(now=lambda: NOW, say=self.lines.append)
     self.assertEqual(r.exit_code, 0)
     snap = read_json(os.path.join(self.state, "quota", "chatgpt-plan.cli.json"))
     self.assertEqual([w["name"] for w in snap["windows"]], ["five_hour", "seven_day"])
     self.assertEqual(snap["observed_at"], NOW)
 
 def test_codex_run_without_rate_limits_writes_nothing(self):
-    run_seat(self.config, self.state, "astra", "review", run=self.fake("codex/ok_no_rate_limits"), now=lambda: NOW)
+    self.fake.queue("codex", "ok_no_rate_limits")
+    self.seat(now=lambda: NOW)
     self.assertFalse(os.path.exists(os.path.join(self.state, "quota", "chatgpt-plan.cli.json")))
 
 def test_seat_without_a_plan_writes_nothing(self):
     self.config["seats"]["astra"]["plan"] = None
-    run_seat(self.config, self.state, "astra", "review", run=self.fake("codex/ok_rate_limits"), now=lambda: NOW)
+    self.fake.queue("codex", "ok_rate_limits")
+    self.seat(now=lambda: NOW)
     self.assertFalse(os.path.isdir(os.path.join(self.state, "quota")))
 
 def test_a_capped_codex_run_records_its_reading_before_the_stand_in(self):
-    r = run_seat(self.config, self.state, "astra", "review", now=lambda: NOW,
-                 run=self.fake({"codex": "codex/usage_limit_rate_limits", "<gem runtime>": "<gem ok fixture>"}))
+    self.fake.queue("codex", "usage_limit_rate_limits")   # gem gets the default agy "ok" fixture; queue nothing for it
+    r = self.seat(now=lambda: NOW)
     self.assertEqual((r.seat, r.stand_in_for), ("gem", "astra"))
     snap = read_json(os.path.join(self.state, "quota", "chatgpt-plan.cli.json"))
     self.assertEqual(snap["windows"][0]["used_pct"], 100.0)
 
 def test_an_attack_run_records_nothing(self):
-    # through plan 5's attack path (attack=True with a valid token in the run's state dir)
-    self.run_attack_seat("astra", fixture="codex/ok_rate_limits")
+    verify.issue_token(self.state, "astra", time.time(), 600)
+    self.fake.queue("codex", "ok_rate_limits")
+    self.seat(attack=True, now=lambda: NOW)
     self.assertFalse(os.path.exists(os.path.join(self.state, "quota", "chatgpt-plan.cli.json")))
-    self.assertFalse(os.path.exists(os.path.join(self.attack_state, "quota", "chatgpt-plan.cli.json")))
+
+def test_an_attack_run_without_a_token_records_nothing(self):
+    self.fake.queue("codex", "ok_rate_limits")
+    self.seat(attack=True, now=lambda: NOW)
+    self.assertFalse(os.path.exists(os.path.join(self.state, "quota", "chatgpt-plan.cli.json")))
 
 def test_a_bad_quota_write_never_fails_the_run(self):
+    self.fake.queue("codex", "ok_rate_limits")
     with mock.patch.object(run_mod.quota, "record_cli", side_effect=OSError("disk")):
-        r = run_seat(self.config, self.state, "astra", "review", run=self.fake("codex/ok_rate_limits"),
-                     now=lambda: NOW, say=self.lines.append)
+        r = self.seat(now=lambda: NOW, say=self.lines.append)
     self.assertEqual(r.exit_code, 0)
     self.assertIn("bw seat: cli quota not written (OSError)", self.lines)
     self.assertNotIn("disk", " ".join(self.lines))
 ```
 
-Use plan 5's helper names for `self.fake(...)`, the per-runtime fixture map, the attack-token setup (`self.run_attack_seat`, `self.attack_state`), and the stand-in seat's fixture. The names above show the intent; the assertions are fixed.
+The helper names above are the real ones in `tests/test_seat_run.py` (build ruling, 2026-11-23, as-built). The assertions are fixed. The tests run only if Step 0 passes.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -711,7 +729,7 @@ Expected: `test_codex_run_with_rate_limits_writes_the_cli_snapshot`, `test_a_cap
 
 - [ ] **Step 3: Implement the call in `seats/run.py`**
 
-In step 8, right after the adapter's `usage()` result is known for this run, and before the step-2 re-entry: when `not attack`, the seat's runtime is `codex`, the seat has a `plan`, and `usage.get("rate_limits")` is present, call `quota.record_cli(state, seat_cfg["plan"], usage["rate_limits"], now())`. Catch `OSError` and `ValueError`, and send one line through `say` (`bw seat: cli quota not written (<type name>)`), never the exception text. Keep the run's exit status and reason.
+In `_Run.parse`, right after `usage = self.adapter.usage(out_l) or {}` (`:313`) (build ruling, 2026-11-23, as-built): when `not self.opts["attack"]`, the seat's runtime is `codex`, the seat has a `plan`, and `usage.get("rate_limits")` is present, call `quota.record_cli(state, seat_cfg["plan"], usage["rate_limits"], now())`. Catch `OSError` and `ValueError`, and send one line through `say` (`bw seat: cli quota not written (<type name>)`), never the exception text. Keep the run's exit status and reason.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -723,6 +741,7 @@ Expected: PASS, every test.
 - `docs/orca.md`, "What we stopped building": "Without Orca, a Codex plan reads the `cli` source: what a real Codex seat run prints. Its numbers are only as fresh as the last Codex seat run. A seat attack runs in its own state dir and feeds no quota."
 - `README.md`, `bw seat` section: one line that a real Codex seat run records the plan's `cli` quota, and a seat attack does not.
 - `CHANGELOG.md` `[Unreleased]`: "A Codex seat run writes `quota/<plan>.cli.json` when its output carries valid `rate_limits`; attack runs write none."
+- Add the seat-key reset line from Step 0 to the CHANGELOG and to the commit body.
 - Run `python3 docs/usage-map/generate.py`.
 
 - [ ] **Step 6: Commit**

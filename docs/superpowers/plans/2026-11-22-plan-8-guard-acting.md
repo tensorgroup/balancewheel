@@ -45,14 +45,15 @@ reads the spec in a way the spec does not force, the task says "planner's readin
   `balancewheel.example.json` also adds a CHANGELOG `[Unreleased]` line and runs
   `python3 docs/usage-map/generate.py` in the same commit. `bin/bw`'s docstring is its help text and
   lists every subcommand.
+- Keys (build ruling, 2026-11-23, as-built): plan 8 resets the guard key and the evidence key only. Lead containment and seat passes hold, because no task edits `lead/sandbox.py`, `lead/runtimes.py`, `lead/codepaths.py`, or `seats/`. Say so in each commit body. `guard_version()` hashes only files directly in `lead/guard/` (`lead/guard/__init__.py:31-35`), not `lead/guard/eval/`. Edits to the eval json files change only the eval key. The lead containment key hashes `lead/sandbox.py`, `lead/runtimes.py`, and `lead/codepaths.py` (`lead/containment.py:43-53`).
 - Every edit under `lead/guard/` changes `guard_version()` (`lead/guard/__init__.py:32`), so the guard
   verification key changes and the pi guard needs a new attack pass (`bw start` runs it; it spends
   quota). Edits to `lexer.py`, `rules.py`, `normalise.py`, or `redact.py` also change `rules_version()`
   and start a fresh evidence key. Both are expected; say so in each commit body.
 - The broker never writes to the terminal while a lead runs: no `print`, no `ctx.say`, no stderr from
   a broker thread or a judge child. Failures go to `guard.jsonl` as `error` records.
-- No thread and no child of the broker is alive when the runner forks a lead (`lead/runner.py:232-234`,
-  the `pause()` rule). Every new thread starts in `serve()` and is joined in `pause()` and `stop()`.
+- No thread and no child of the broker is alive when the runner forks a lead (`lead/runner.py:251-255`
+  and `:306`, the `pause()` rule: `_guard_start` calls `self.broker.pause()` at `:306`, and `broker.serve()` runs again only after `Popen`) (build ruling, 2026-11-23, as-built). Every new thread starts in `serve()` and is joined in `pause()` and `stop()`.
   `proc.run` cannot be cancelled, so a join waits for an in-flight judge child; that wait is bounded
   by the child's own timeout (at most one acting budget, about 1.35 s), never unbounded.
 - `on_judge_failure` is **inert** (moderator's call, plan panel, G-f): shadow records the acting floor
@@ -75,7 +76,7 @@ reads the spec in a way the spec does not force, the task says "planner's readin
   `review.MIN_REVIEWED`, `MIN_SAMPLED`, `MAX_FALSE_STOP` (`lead/guard/review.py:16`); reuse them.
 - Only bw writes `state_dir/guard-mode.json`, `guard-eval.json`, `guard-interactive.json`, and
   `guard-offer.json`. They sit in the state dir root, which is in no lead's write grant
-  (`lead/sandbox.py:87-92`). Write each with `write_json_atomic` under an flock, as
+  (`lead/sandbox.py:102-110`, the state-dir refusal in `lead_grants`, `:102-150`; plan 6 added read denies for `inbox-view`, `panels/`, `sealed/`, and `inbox.jsonl`) (build ruling, 2026-11-23, as-built). Write each with `write_json_atomic` under an flock, as
   `containment.record_pass` does (`lead/containment.py:112-124`).
 - The mode is decided at lead start only. A lead never changes mode mid-session.
 - Model ids are config data. No model id in a name, an interface, or a test assertion other than a
@@ -114,7 +115,7 @@ checkpoint, ask, and panel request.
 - Modify: `lead/guard/rules.py:22` (`RuleContext`), `:118-165` (`_Env`), `:532-556` (`_h_write`),
   `:597-603` (`_HANDLERS`: a new `tee` handler), `:605-636` (`_s_grammar` redirection check),
   `:693-719` (`_other` write paths)
-- Modify: `lead/guard/launch.py:47-61` (`rule_context`), `lead/runner.py:260` (the `rule_context` call),
+- Modify: `lead/guard/launch.py:47-61` (`rule_context`), `lead/runner.py:295` (the `rule_context` call in `_guard_start`, `:267-317`) (build ruling, 2026-11-23, as-built),
   `lead/guard/broker.py:274-298` (standalone `serve`)
 - Test: `tests/test_guard_rules.py`, `tests/test_guard_launch.py`
 
@@ -148,9 +149,9 @@ path check. A word expands only when that variable is its only unexpanded part
 Because the expansion is sound only while the lead cannot change those variables, any segment that
 assigns, exports, unsets, or declares one of the four names (`BW_PANEL=...`, `export`, `unset`,
 `declare`, `typeset`, `readonly`, `env BW_...=`, `set --`-free forms included) is a rule `ask` with
-rule `ask:bw-env`, which the judge cannot lift. The rule covers every name that starts with `BW_`, not
-only the names in `ctx.lead_env`: the lead protocol tells the lead never to set any `BW_` variable
-(build ruling, 2026-11-23).
+rule `ask:bw-env`, which the judge cannot lift. The rule covers the names bw sets for the lead session (build ruling D8-bw, 2026-11-23, as-built; narrows build ruling R13): the `lead_env` keys
+(`BW_CHECKPOINT`, `BW_ASKS`, `BW_INBOX`, `BW_PANEL`), every name that starts with `BW_PANEL` (this holds `BW_PANEL_VIEW`), `BW_SESSION`, every name that starts with `BW_GUARD_`, and `BW_STATE_DIR`. It does not cover every `BW_*` name. Another `BW_*` assignment is gray, and the judge decides it. The lead protocol tells the lead never to set a `BW_` variable. Move the line "Never set, export, or unset a variable whose name starts with BW_." into `lead/protocol/checkpoint.md`, so every lead gets it. Keep it in `lead/protocol/panel.md` or drop the copy there. As built, only `panel.md` has the line, and `protocol_text` renders `panel.md` only for a profile with checkpoints (`lead/handoff.py:204-206`). `checkpoint.md` tells the lead to use `$BW_ASKS/...` in shell.
+The lead's env is `os.environ` minus `BW_GUARD_*` and `BW_TRIAGE*`, plus `lead_env`, `BW_SESSION`, `BW_PANEL_VIEW`, and (guarded) `BW_GUARD_SOCKET/TOKEN/MODE/DIR/MARKERS` and (claude-code triage) `BW_TRIAGE_HOOK/CONFIG` (`lead/runner.py:223-231`). bw's own `BW_STATE_DIR`, `BW_PROBE_SECONDS`, `BW_STOP_GRACE`, `BW_ORCA_SUPPORT`, `BW_AGY_HOOKS`, and `BW_PI_AGENT_DIR` pass through when set. Of these, only `BW_STATE_DIR` is in the ask set. Add one CHANGELOG note: a lead that works on balancewheel itself (its tests set `BW_STATE_DIR=...`) gets a rule ask that the judge cannot lift.
 
 Also (moderator's call, for Plan 6): `RuleContext` gains `panel_wait` (the realpath of the lead's own
 `inbox-view/<key>/panels/bw-panel-wait`, or None). The exact command `python3 <that path>` with no
@@ -158,11 +159,17 @@ other words is `allow` by rule: bw writes the file and the lead cannot write tha
 argument, pipe, or redirection keeps the normal rules. The tests `test_panel_wait_helper_allowed` and
 `test_panel_wait_with_extra_args_is_gray` are in the Step 1 block (build ruling, 2026-11-23).
 
-Wiring (build ruling, 2026-11-23): Plan 6 Task 11 computes `Session.wait_path` and `Session.lead_env`
-(the `BW_CHECKPOINT`, `BW_ASKS`, `BW_INBOX`, `BW_PANEL` dict) in `Session.__init__`, before
-`_guard_start` runs. This task passes both from `_guard_start`: `launch.rule_context(...,
-checkpoint_dir=..., lead_env=self.lead_env, panel_wait=self.wait_path)`. This task owns
-`test_wait_command_matches_guard_path`.
+Wiring (build ruling, 2026-11-23, as-built): Plan 6 Task 11 computes `Session.wait_path` (`lead/runner.py:167`) and `Session.lead_env` (`:168-170`; the `BW_CHECKPOINT`, `BW_ASKS`, `BW_INBOX`, `BW_PANEL` dict) in `Session.__init__`, before
+`_guard_start` (`:177`) runs. The only runner wiring left is one line. Change the call at `:295` to `launch.rule_context(ctx.project, ctx.config["profiles"][profile], self.head, checkpoint_dir=checkpoint_dir(ctx.state, ctx.project.worktree_key), lead_env=self.lead_env, panel_wait=self.wait_path)`. Build no second dict. This task owns the broker assertions of the wait-command test (see Step 1).
+
+Paths and variables, as built (build ruling, 2026-11-23, as-built):
+- `lead_env` values use the state path as given, not realpaths. The existing test expects `BW_PANEL == <symlinked state>/handoffs/<key>/panel` (`tests/test_runner.py:1296`). Only `wait_path` is a realpath. So `_Env.expand` must realpath the expanded word before `in_checkpoint`. Do not compare raw strings.
+- `BW_INBOX = <state>/inbox-view/<key>/answers.md` (`lead/inbox.py:63-64`). It is outside the checkpoint dir. A write to `$BW_INBOX/...` expands and then stays `gray:outside-write`.
+- `BW_PANEL_VIEW` (the view root) is set for the lead too (`lead/runner.py:224`), but it is not in `lead_env`. It is deliberately not expanded. A read such as `cat $BW_PANEL_VIEW/<pid>/status.json` stays `gray:unexpanded`. The panel protocol says "Use these literal paths. Do not use shell variables in them."
+- `bw-panel-wait` is a regular file that `_panel_setup` COPIES into `<state>/inbox-view/<key>/panels/` (mode 0444, temp file then `os.replace`, `lead/runner.py:183-206`). It is not a link. `wait_path = realpath(view_root/bw-panel-wait)` (`:167`). `lead_grants` gives `inbox-view/<key>` as a read grant only (`lead/sandbox.py:116-150`). The rule needs no change.
+- The lead runs exactly `python3 <path>`. `lead/protocol/panel.md` renders it alone on a line as `` `python3 $wait_sh` `` with `wait_sh = shlex.quote(wait_path)` (`lead/handoff.py:216`). The backticks are markdown, not shell: test without them. Keep "exactly two words". The helper also takes `--max S` (`bin/bw-panel-wait:5`). `--max` stays gray, because the protocol never tells the lead to pass it.
+- Request ids as built: `ask|log|amend-<pid>-<n>` (`panel/render.py:47-50`), `<pid>` = `p` + 7 hex. Requests match `REQ_ID = [A-Za-z0-9_-]{1,64}` (`panel/channel.py:33`). No rule change: the allow is by path.
+- `ask:bw-env` goes in `_s_ask` (`lead/guard/rules.py:333`). It runs before `_s_grammar` (`:640`), which turns a leading assignment into `gray:assignment` (`:614-615`). So `BW_X=1 cmd` reaches `ask:bw-env` first. Keep the rule in `_s_ask`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_guard_rules.py`, class `CheckpointDirTests`.
   `setUp` makes a fake home, a worktree, and `cp = <tmp>/state/handoffs/k` outside the worktree, with
@@ -215,11 +222,30 @@ def test_changing_a_lead_env_variable_is_a_rule_ask(self):            # G-h
         d = decide(shell(cmd), self.ctx(lead_env=env))
         self.assertEqual((d.decision, d.source, d.rule), ("ask", "rule", "ask:bw-env"))
 
-def test_setting_any_bw_name_is_a_rule_ask(self):                     # build ruling, 2026-11-23
+def test_setting_a_name_bw_sets_for_the_lead_is_a_rule_ask(self):    # build ruling D8-bw, 2026-11-23, as-built
     env = {"BW_PANEL": os.path.join(self.cp, "panel")}
-    for cmd in ("export BW_PANEL_VIEW=/tmp/x", "BW_OTHER=1 true", "unset BW_STATE_DIR"):   # names not in lead_env
+    for cmd in ("export BW_PANEL_VIEW=/tmp/x", "unset BW_STATE_DIR", "BW_SESSION=x true", "export BW_GUARD_TOKEN=x"):
         d = decide(shell(cmd), self.ctx(lead_env=env))
         self.assertEqual((d.decision, d.source, d.rule), ("ask", "rule", "ask:bw-env"))
+
+def test_setting_another_bw_name_is_not_a_rule_ask(self):            # build ruling D8-bw, 2026-11-23, as-built
+    env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+    for cmd in ("BW_OTHER=1 true", "export BW_OTHER=1"):             # gray: the judge decides
+        d = decide(shell(cmd), self.ctx(lead_env=env))
+        self.assertNotEqual(d.rule, "ask:bw-env")
+        self.assertNotEqual(d.decision, "allow")
+
+def test_inbox_write_expands_then_stays_outside(self):               # build ruling, 2026-11-23, as-built
+    env = {"BW_INBOX": os.path.join(os.path.dirname(self.cp), "inbox-view", "k", "answers.md")}
+    self.assertEqual(decide(shell("echo x > $BW_INBOX/a"), self.ctx(lead_env=env)).rule, "gray:outside-write")
+
+def test_panel_view_is_not_expanded(self):                           # build ruling, 2026-11-23, as-built
+    env = {"BW_PANEL": os.path.join(self.cp, "panel")}
+    self.assertEqual(decide(shell("cat $BW_PANEL_VIEW/p1a2b3c4/status.json"), self.ctx(lead_env=env)).rule, "gray:unexpanded")
+
+def test_panel_request_rename_is_allowed(self):                      # build ruling, 2026-11-23, as-built
+    d = decide(shell(f"mv {self.cp}/panel/.tmp-log-p1a2b3c4-1 {self.cp}/panel/log-p1a2b3c4-1.request"), self.ctx())
+    self.assertEqual(d.decision, "allow")
 
 def test_quoted_panel_commands_from_plan_6(self):                     # build ruling, 2026-11-23
     # the protocol renders shell paths with shlex.quote; test a checkpoint dir with a space
@@ -233,11 +259,12 @@ def test_quoted_panel_commands_from_plan_6(self):                     # build ru
 
 def test_panel_wait_helper_allowed(self):                             # build ruling, 2026-11-23
     w = os.path.realpath(self.wait)             # setUp writes <tmp>/state/inbox-view/k/panels/bw-panel-wait
-    self.assertEqual(decide(shell(f"python3 {w}"), self.ctx(panel_wait=w)).decision, "allow")
+    self.assertEqual(decide(shell(f"python3 {w}"), self.ctx(panel_wait=w)).decision, "allow")   # no backticks: they are markdown
+    self.assertFalse(os.path.islink(self.wait))   # a regular copy, so realpath equals the path under a real state dir (as built)
 
 def test_panel_wait_with_extra_args_is_gray(self):                    # build ruling, 2026-11-23
     w = os.path.realpath(self.wait)
-    for cmd in (f"python3 {w} x", f"python3 {w} | cat", f"python3 {w} > /tmp/o"):
+    for cmd in (f"python3 {w} x", f"python3 {w} --max 5", f"python3 {w} | cat", f"python3 {w} > /tmp/o"):   # --max stays gray (as built)
         self.assertNotEqual(decide(shell(cmd), self.ctx(panel_wait=w)).decision, "allow")
 
 def test_bw_owned_files_are_not_allowed(self):                        # G-i
@@ -264,9 +291,11 @@ def test_without_checkpoint_dir_today_s_decision(self):
 
 ```python
     def test_wait_command_matches_guard_path(self):
-        # a guarded lead (lb, pi) with the real broker: the prompt's "python3 <path>" path ==
-        # broker rules_ctx.panel_wait == session.wait_path == realpath(<state>/inbox-view/<key>/panels/bw-panel-wait),
-        # and broker rules_ctx.lead_env == session.lead_env; the state dir is behind a symlink
+        # build ruling, 2026-11-23, as-built: tests/test_runner.py:1261 already has
+        # test_wait_command_uses_session_wait_path (prompt path == session.wait_path, the four lead_env keys,
+        # before _guard_start; :1275-1296). Extend that test, or add this one beside it, with the broker
+        # assertions only: rules_ctx.panel_wait == session.wait_path and rules_ctx.lead_env == session.lead_env.
+        # A guarded lead (lb, pi) with the real broker; the state dir is behind a symlink
         # (macOS /var -> /private/var); the real rule_context call raises nothing (P6-8)
 ```
 
@@ -277,10 +306,10 @@ def test_without_checkpoint_dir_today_s_decision(self):
 
 - [ ] **Step 3: Implement** the fields, `_Env.in_checkpoint`, the expansion (one helper,
   `_Env.expand(word) -> Word`, called before every path test), the `ask:bw-env` rule in `_s_ask`, the
-  `tee` handler, the five call sites, the `rule_context` parameters, `Session._guard_start` passing
+  `tee` handler (the `bw-env` set is the list above, not a `BW_` prefix test), the five call sites, the `rule_context` parameters, `Session._guard_start` passing
   `checkpoint_dir(ctx.state, ctx.project.worktree_key)`, `lead_env=self.lead_env`, and
   `panel_wait=self.wait_path` (both set in `Session.__init__` by Plan 6 Task 11; do not build a second
-  dict) (build ruling, 2026-11-23), and the standalone `--checkpoint-dir` flag (default none).
+  dict; one edit at `lead/runner.py:295`) (build ruling, 2026-11-23, as-built), and the standalone `--checkpoint-dir` flag (default none).
 
 - [ ] **Step 4: Run the guard suites to verify they pass**
 
@@ -538,14 +567,15 @@ thread, and the record follows. This is the first task with real network traffic
 **Files:**
 - Create: `lead/guard/judging.py`
 - Modify: `lead/guard/broker.py` (`Broker.__init__`, `serve`, `pause`, `stop`, `counts`, `_finish`),
-  `lead/runner.py:232-281` and `:381-395` (`_guard_start`, `finish_guard`), `lead/inbox.py:38`
-  (`NOTICE_KINDS` gains `"guard-judge-down"`), `metrics/config.py:23` and `:333-359` (`GUARD_KEYS`
-  gains `key_env`; validated like `triage.key_env`, default `"OPENROUTER_API_KEY"`)
+  `lead/runner.py:267-317` and `:423-438` (`_guard_start`, `finish_guard`) (build ruling, 2026-11-23, as-built), `lead/inbox.py:38`
+  (`NOTICE_KINDS` gains `"guard-judge-down"`), `metrics/config.py:24` and `_validate_guard` from `:340` (`GUARD_KEYS`
+  gains `key_env`; plan 7 Task 1 added `CANVASES` at `:21` (build ruling, 2026-11-23, as-built); validated like `triage.key_env`, default `"OPENROUTER_API_KEY"`)
 - Test: `tests/test_guard_judging.py`, `tests/test_guard_broker.py`, `tests/test_config_v3.py`,
   `tests/test_runner.py`
 
 **Interfaces:**
 - Consumes: Task 3 `judge.prepare`, `judge.prompt_hash`, `judge.main` (as the child); `proc.run`.
+  As built (build ruling, 2026-11-23, as-built): `proc.run(argv, timeout, cwd=None, env=None, stdin=..., out_dir=None, reap=False)` (`lead/proc.py:14-47`). Pass `reap=True`, so a judge child's group dies after exit. A fake `run` in tests accepts `**kw`, because it must accept `reap=`. `lead/runner.py:606-619` already has `judge_child` (the triage judge) with the same pattern: temp-file stdin, `[sys.executable, "-I", ...]`, timeout gives `failed`. Copy that pattern for `JudgeRunner`. Do not route the guard judge through `judge_child`: its shape differs.
 - Produces: `JudgeResult = namedtuple("JudgeResult", "source decision reason ms attempts")`, `source`
   ∈ `judge`, `judge-failed`, `judge-skipped`; `decision` is `allow`/`ask` only when `source == "judge"`.
 - Produces: `class JudgeRunner(cfg, worktree, home, run=proc.run, clock=time.monotonic, notice=None)`,
@@ -827,8 +857,8 @@ git commit -m "feat: acting guards judge inside the hook's remaining budget and 
 - Create: `lead/guard/evaluate.py`, `lead/guard/eval/benign.json`, `eval/dangerous.json`,
   `eval/obfuscated.json`, `eval/injected.json`
 - Modify: `bin/bw` (docstring line, `gds.add_parser("eval")`, `cmd_guard`, and the `_dispatch` check
-  at `bin/bw:429`: `a.sub not in ("review", "verify", "eval")`, so `eval` loads the config; G-u),
-  `lead/start.py` (re-run on a changed key, after the verify pool)
+  at `bin/bw:452` (build ruling, 2026-11-23, as-built): `a.sub not in ("review", "verify", "eval")`, so `eval` loads the config; G-u),
+  `lead/start.py` (re-run on a changed key, after the verify pool, step 3; update the docstring numbering to steps 1-8, not 1-7; plan 5 Task 14 made 8 steps: step 6 `_workspace` `:204-205`, step 7 seats in the background `:207-208`, step 8 checks `:210-216`) (build ruling, 2026-11-23, as-built)
 - Test: `tests/test_guard_eval.py`, `tests/test_start.py`
 
 **Interfaces:**
@@ -945,7 +975,7 @@ spike passes. (Moderator's call, plan panel, G-a and G-k.)
 **Files:**
 - Create: `lead/guard/interactive.py`
 - Modify: `bin/bw` (`--interactive` on `guard verify`, docstring), `lead/verify.py` (dispatch),
-  `lead/start.py` (the offer when the check is missing)
+  `lead/start.py` (the offer when the check is missing, before step 6; docstring numbering 1-8) (build ruling, 2026-11-23, as-built)
 - Test: `tests/test_guard_interactive.py`, `tests/test_start.py`
 
 **Interfaces:**
@@ -964,7 +994,7 @@ spike passes. (Moderator's call, plan panel, G-a and G-k.)
 - Produces: a run dir `tempfile.mkdtemp(dir="/tmp", prefix="bw-gi-")` (socket paths stay under 103
   bytes; B10). It holds the broker's guard dir, the broker's **own** state dir (its `guard.jsonl`;
   never the real `state_dir/guard.jsonl`, G-k), the fake `gh` bin dir, a throwaway git worktree, and a
-  **witness** dir. The bin dir is added to the grants' read list, as `guard_attack.sh:57` does (B10).
+  **witness** dir. The bin dir is added to the grants' read list, as `guard_attack.sh:57` does (B10). `Grants = namedtuple("Grants", "rules read deny_read reread tool_read extra")` (`lead/sandbox.py:26-31`), so use `grants._replace(read=list(grants.read) + [bin_dir])` (build ruling, 2026-11-23, as-built). `lead_grants` also `makedirs` `<state>/handoffs/<key>` and `<state>/inbox-view/<key>` (0700) and read-denies the panel and view dirs (`lead/sandbox.py:113-150`). Pass the check's own `<run>` state dir to `lead_grants`, never the real `state_dir`, so the throwaway worktree key makes no dirs in the user's state (build ruling, 2026-11-23, as-built).
   Neither the witness dir nor the run dir's evidence files are in any write grant.
 - Produces: the witness. bw listens on `<run>/witness/sock` (0600, in no write grant). The fake `gh`
   connects and sends its argv as one line; bw records each line in memory and in
@@ -1041,9 +1071,9 @@ git commit -m "feat: bw guard verify --interactive proves the yes and the no pat
 
 **Files:**
 - Create: `lead/guard/gate.py`
-- Modify: `lead/runner.py:254-274` (`_guard_start`: compute the guard verification key and the
+- Modify: `lead/runner.py:267-317` (`_guard_start` (build ruling, 2026-11-23, as-built): compute the guard verification key and the
   gate's outcome **before** building the broker, then build it with the effective mode; G-n),
-  `lead/runner.py:561-579` (`_guard_ready`: the pinned-`acting` refusal, so a cap switch checks it
+  `lead/runner.py:622-642` (`_guard_ready`; its callers are `:782` and `:865`, so both get `gate.refuses`) (build ruling, 2026-11-23, as-built) (`_guard_ready`: the pinned-`acting` refusal, so a cap switch checks it
   before it stops the old lead; G-q), `lead/guard/review.py:62-83` (`summary` counts,
   `promotion_line`), `lead/guard/review.py:172-180` (`status_lines(config, state, now)`: open
   conditions, the last demotion's reason and what re-promotion needs, and "no judge: gray calls ask";
@@ -1095,7 +1125,7 @@ git commit -m "feat: bw guard verify --interactive proves the yes and the no pat
   acting again after 2026-12-07 and 5 new marks` (G-m).
 - Produces: `gate.refuses(config, state, profile, runtime, verify_key) -> str|None` — the exit-7
   reason for a pinned `acting` profile with an unverified guard key. `_guard_ready` calls it, so the
-  cap-switch path (`lead/runner.py:802-808`) stays on the current lead and says why, as it does for
+  cap-switch path (`lead/runner.py:782` and `:865`) stays on the current lead and says why, as it does for
   other guard refusals (G-q).
 - Produces: `state_dir/guard-mode.json` = `{profile: {runtime: {"mode", "key": {"evidence": [...],
   "verify": <sha of the guard key>}, "since", "reason", "demotions": [{"key", "ts", "reason", "kind":
@@ -1201,7 +1231,7 @@ git commit -m "feat: the guard promotes itself to acting at lead start when a si
 **Files:**
 - Create: `lead/guard/offer.py`
 - Modify: `lead/guard/review.py` (`offer_pick`, `run(..., items=None)`), `lead/start.py` (the offer
-  before step 6, `_workspace`)
+  before step 6, `_workspace`, `:204-205`; docstring numbering 1-8) (build ruling, 2026-11-23, as-built)
 - Test: `tests/test_guard_offer.py`, `tests/test_guard_review.py`, `tests/test_start.py`
 
 **Interfaces:**
@@ -1261,12 +1291,12 @@ git commit -m "feat: bw start offers a short guard review once a day, and sample
 ### Task 10: The config unlock, the example, and the docs
 
 **Files:**
-- Modify: `metrics/config.py:24` (`GUARD_MODES = {"shadow", "auto", "acting"}`), `:339` (the default
+- Modify: `metrics/config.py:25` (`GUARD_MODES = {"shadow", "auto", "acting"}`), `:346` (the default
   for an unnamed profile becomes `"auto"` **only when `version >= 3`**; a schema-2 file keeps
-  `"shadow"`, so `tests/test_config_v3.py:124-127` holds unchanged; B12), `:346` (the acting refusal
-  goes); `guard.model` unset with `auto` or `acting` stays allowed. An explicit `"shadow"` in an
+  `"shadow"`, so `tests/test_config_v3.py:124-127` holds unchanged; B12), `:353` (the acting refusal
+  goes) (line numbers as built (build ruling, 2026-11-23, as-built)); `guard.model` unset with `auto` or `acting` stays allowed. An explicit `"shadow"` in an
   existing config stays a pin and never promotes (moderator's call, plan panel, G-p).
-- Modify: `lead/runner.py:254` (the fallback reads the loaded config's mode; it no longer hard-codes
+- Modify: `lead/runner.py:289` (`ctx.config.get("guard", {}).get("mode", {}).get(profile, "shadow")`; the fallback reads the loaded config's mode; it no longer hard-codes
   a default of its own)
 - Modify: `balancewheel.example.json:245-250` → `"guard": {"mode": {"product": "auto"}, "model":
   null}` and drop `on_judge_failure` (deprecated, G-f). The top-level `_comment` gains one sentence:
