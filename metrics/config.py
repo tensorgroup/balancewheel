@@ -53,7 +53,7 @@ PERMISSION_ARGS = {
 DEFAULT_PROTECTED_BRANCHES = ["main", "master"]
 V2_TOP_KEYS = {"plans", "tools", "leads", "profiles", "projects", "default_profile", "rotation", "updates", "cockpit", "team"}
 SEAT_KEYS = {"runtime", "model", "effort", "roles", "args", "provider", "policy", "enabled"}
-V2_SEAT_KEYS = {"plan", "fallback", "tier"}
+V2_SEAT_KEYS = {"plan", "fallback", "tier", "title"}
 SEAT_TIERS = frozenset({"default", "reserved"})
 RESERVED_SEAT_NAMES = {"verify", "list"}
 BILLING = {"plan", "metered"}
@@ -129,7 +129,10 @@ def _validate_seat(name, seat, version=1):
     _expect(isinstance(enabled, bool), f"{kp}.enabled: must be true or false")
     tier = seat.get("tier", "default")
     _expect(tier in SEAT_TIERS, f"{kp}.tier: must be one of {sorted(SEAT_TIERS)}, got {tier!r}")
-    return {"runtime": rt, "model": seat["model"], "effort": effort, "roles": roles, "tier": tier,
+    title = seat.get("title")
+    _expect(title is None or (isinstance(title, str) and title.strip() and "\n" not in title and "\r" not in title),
+            f"{kp}.title: must be a non-empty single-line string")
+    return {"runtime": rt, "model": seat["model"], "effort": effort, "roles": roles, "tier": tier, "title": title,
             "args": args, "provider": provider, "policy": policy, "enabled": enabled,
             "plan": seat.get("plan"), "fallback": seat.get("fallback")}
 

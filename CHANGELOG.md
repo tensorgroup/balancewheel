@@ -15,6 +15,7 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.
 - **The guard review offer (`lead/guard/offer.py`).** On a terminal, before the lead opens, `bw start` offers a
   short review of unmarked guard decisions: 5 once a day while the profile is under the gate's counts (a quarter
   are sampled allows), 3 once a week after promotion (at least 2 are stops). Enter skips. It never runs with

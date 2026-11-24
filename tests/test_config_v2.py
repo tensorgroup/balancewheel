@@ -27,6 +27,21 @@ class SchemaV2(unittest.TestCase):
             load_obj(obj)
         self.assertIn(needle, str(e.exception))
 
+    def test_seat_title_default_and_accepted(self):
+        self.assertIsNone(load_obj(v2())["seats"]["beta"]["title"])
+        o = v2(); o["seats"]["beta"]["title"] = "Escalation seat"
+        self.assertEqual(load_obj(o)["seats"]["beta"]["title"], "Escalation seat")
+
+    def test_seat_title_must_be_one_nonempty_line(self):
+        for bad in ("", "  ", "two\nlines", "cr\rline", 7):
+            o = v2(); o["seats"]["beta"]["title"] = bad
+            self.rejects(o, "seats.beta.title")
+
+    def test_schema_1_refuses_title(self):
+        o = json.loads(V1.read_text()); seat = next(iter(o["seats"]))
+        o["seats"][seat]["title"] = "x"
+        self.rejects(o, f"seats.{seat}.title: unknown key")
+
     def test_schema_2_keeps_the_orca_canvas(self):
         self.assertEqual(cfg.load_config(str(V2))["canvas"], "orca")
 

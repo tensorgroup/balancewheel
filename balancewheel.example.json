@@ -87,7 +87,7 @@
         "review",
         "decision"
       ],
-      "policy": "why this seat has these roles; the evidence cited; what would change them",
+      "policy": "First voice on plan, design, and decision targets and an equal peer on code review; re-demote only on logged dispute evidence.",
       "plan": "chatgpt-plan",
       "fallback": "gem"
     },
@@ -105,6 +105,7 @@
         "contextWindow": 1310720,
         "maxTokens": 131072
       },
+      "policy": "Metered peer on every target kind at cents per review.",
       "plan": "openrouter"
     },
     "opus": {
@@ -117,6 +118,7 @@
         "debug",
         "decision"
       ],
+      "policy": "The moderator's own model family in a fresh headless session, scored as a peer; the moderator must not favor it.",
       "plan": "claude-plan"
     },
     "fable": {
@@ -129,6 +131,7 @@
         "review",
         "debug"
       ],
+      "policy": "Joins only deep panels and stuck debugging, or when the user asks; each run is scored like every other seat.",
       "plan": "claude-plan"
     },
     "gem": {
@@ -137,6 +140,7 @@
       "roles": [
         "review"
       ],
+      "policy": "Peer on review and the stand-in for capped seats; scored under its own name.",
       "plan": "google-plan"
     },
     "kimi": {
@@ -147,6 +151,7 @@
         "review"
       ],
       "enabled": false,
+      "policy": "Peer on review; plan on trial.",
       "plan": "kimi-plan",
       "fallback": "gem"
     }
