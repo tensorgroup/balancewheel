@@ -201,6 +201,16 @@ not against the prose.
   "Never set, export, or unset a variable whose name starts with BW_." moved from `panel.md` to
   `checkpoint.md`, so every lead gets it. The rules changed, so the guard verification key and the
   evidence key both reset.
+- **The guard judge's request** (`lead/guard/judge.py`). Nothing calls it yet. `prepare` sends no
+  call that holds a secret, puts `{worktree}` and `~` in place of the worktree and home paths, scrubs
+  the text, and refuses a user message over 4 KiB. The request goes only to OpenRouter's chat
+  completions URL, with no redirects, `provider.zdr`, temperature 0, reasoning off
+  (`reasoning: {"enabled": false}`), at most 200 output tokens, and a strict JSON schema: `decision`
+  is `allow` or `ask`, and `reason` is a string. `parse` refuses any other reply, and cleans the
+  reason and cuts it to 300 characters. `prompt_hash()` hashes only the system prompt and the schema.
+  `python3 -I lead/guard/judge.py` runs one call as a child. The call text moved from the broker to
+  `judge.call_text`. Every file in `lead/guard/` is hashed, so the guard verification key resets;
+  the rules did not change, so the evidence key holds.
 - **No Codex `cli` reading yet.** `codex exec --json` (`codex-cli 0.164.0`) carries no `rate_limits`
   (checked 2026-11-23). A Codex seat run writes no `quota/<plan>.cli.json`. `chatgpt-plan` in the
   example stays at `"quota": "none"`. The passive `cli` source stays for a later Codex version.

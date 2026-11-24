@@ -22,6 +22,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 
 from lead.guard import guard_version, record, rules_version  # noqa: E402
+from lead.guard.judge import call_text  # noqa: E402
 from lead.guard.normalise import normalise  # noqa: E402
 from lead.guard.redact import digest, redact  # noqa: E402
 from lead.guard.rules import RuleContext, decide  # noqa: E402
@@ -31,14 +32,6 @@ MAX_PATH = 103  # sun_path is 104 bytes on macOS, NUL included
 MAX_WORKERS = 8
 READ_DEADLINE = 0.5
 OUTCOME = {"allow": "allowed", "block": "blocked", "ask": "asked"}
-
-
-def _text(call):
-    """The call as text, unredacted: the command, else the tool with its paths and args."""
-    if call.kind == "shell" and call.command is not None:
-        return call.command
-    return json.dumps({"tool": call.tool, "paths": list(call.paths), "args": call.args},
-                      sort_keys=True, default=str)
 
 
 def _pct(vals, q):
@@ -245,7 +238,7 @@ class Broker:
 
     def _finish(self, conn, call, d, t0):
         latency = round((time.monotonic() - t0) * 1000, 3)
-        text = _text(call)
+        text = call_text(call)
         with self._lock:  # one-shot: the first matching call spends the marker
             self_test = bool(self._marker) and self._marker in text
             if self_test:
