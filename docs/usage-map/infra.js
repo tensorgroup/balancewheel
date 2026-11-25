@@ -1,5 +1,6 @@
 // docs/usage-map/infra.js — the hand-written layer of the Balancewheel usage map.
 // Written 2026-11-22 against the README, docs/architecture.md, docs/roadmap.md and the code.
+// Updated 2026-11-24: seats/ shipped as the bw seat runner, so the Planned box became Seat runner.
 // It holds what the code cannot show: who takes part, where things live, and the journeys.
 // Generated parts (bw commands, modules, the example roster, config keys, home paths) come
 // from docs/usage-map/generate.py → data.generated.js. Ids prefixed cmd:, mod:, seat:, lead:,
@@ -17,7 +18,7 @@ window.USAGE_MAP_INFRA = {
     'Start with a journey (top bar): each one walks a real task step by step, with the command to run.',
     'Click a box to see its connections and details. Click it again to zoom in; once more to zoom out to everything it connects to.',
     'Click empty space to clear the lines. Esc goes up one level. Press / to search.',
-    'Dashed boxes are planned, not built. Boxes with many small cells are generated from the code and the example config.',
+    'Dashed boxes, when shown, are planned, not built. Boxes with many small cells are generated from the code and the example config.',
   ],
   derivedLabel: 'Generated links (from code and example config)',
   flowsLabel: 'Journeys',
@@ -53,8 +54,8 @@ window.USAGE_MAP_INFRA = {
           files: ['lead/protocol/checkpoint.md'] },
         { id: 'seats', kind: 'persona', title: 'Seats', sub: 'Other vendors\' CLIs, enforced read-only',
           wants: 'One shared brief and a blind first round, so their findings are independent.',
-          desc: 'Read-only reviewers: each vendor\'s own repo-aware CLI agent behind a uniform wrapper. A seat is verified read-only by attack, never by reading vendor docs. The wrappers are the user\'s own today; the generator is planned (seats/).',
-          files: ['docs/architecture.md'] },
+          desc: 'Read-only reviewers: each vendor\'s own repo-aware CLI agent behind a uniform wrapper. A seat is verified read-only by attack, never by reading vendor docs. bw seat (seats/) runs each one under the OS sandbox.',
+          files: ['docs/architecture.md', 'seats/run.py'] },
         { id: 'nextlead', kind: 'persona', title: 'Next lead', sub: 'Takes the worktree when a plan is capped',
           wants: 'A handoff it can continue from without the old transcript.',
           desc: 'The next eligible lead in the profile\'s lead_order. It continues the handoff\'s next: line; the preferred lead returns after its plan resets.' },
@@ -215,12 +216,17 @@ window.USAGE_MAP_INFRA = {
       ],
     },
     {
-      id: 'planned', title: 'Planned', subtitle: 'docs/roadmap.md', tone: 'plan', status: 'planned', plannedIn: 'docs/roadmap.md',
-      x: 2180, y: 1760, w: 380, h: 500, cols: 1, nodeGap: 12,
-      desc: 'The planned directory shape. Code lands here only when all four extraction criteria in docs/roadmap.md hold.',
-      files: ['docs/roadmap.md'],
+      id: 'seatrunner', title: 'Seat runner', subtitle: 'seats/ behind bw seat', tone: 'ci',
+      x: 2180, y: 1760, w: 380, h: 500, cols: 2, nodeGap: 12,
+      desc: 'One read-only seat run: the brief, the session, the OS sandbox, the wall-clock cap, one stand-in hop, and a usage row. The panel calls it in-process; you run bw seat only to test a seat.',
+      files: ['seats/run.py', 'seats/cli.py'],
       nodes: [
-        { id: 'seatsgen', status: 'planned', plannedIn: 'docs/roadmap.md', title: 'seats/', sub: 'Generate the uniform seat.sh wrapper' },
+        { id: 'seatcmd', title: 'bw seat', sub: 'Run one seat; the answer goes to stdout', usage: 'bw seat <id> [-b] [-r] [-d DIR] [--deep] "prompt"\nbw seat list [--json]', files: ['seats/cli.py', 'seats/run.py'] },
+        { id: 'seatadapters', title: 'Adapters', sub: 'Headless argv per runtime', desc: 'Separate from the lead adapters, so a seat change never resets a lead key.', files: ['seats/adapters.py'] },
+        { id: 'seatbrief', title: 'Sessions', sub: 'The shared brief; one session per directory', files: ['seats/brief.py', 'seats/sessions.py'] },
+        { id: 'seatcaps', title: 'Stand-ins', sub: 'Cap flags; a capped seat hands one hop to its stand-in', files: ['seats/caps.py'] },
+        { id: 'seatgrants', title: 'Seat sandbox', sub: 'What a seat may read and write', files: ['seats/grants.py', 'lead/sandbox.py'] },
+        { id: 'seatverify', title: 'Seat verify', sub: 'Attack each seat; record a pass per seat id', usage: 'bw seat verify [<id>...] [--all]', files: ['seats/verify.py', 'seats/judge.py', 'tests/attack/seat_readonly.sh'] },
       ],
     },
   ],
@@ -288,7 +294,15 @@ window.USAGE_MAP_INFRA = {
     { from: 'escbin', to: 'govrepo', label: 'syncs' },
     { from: 'metricslog', to: 'packsexport', label: 'regenerates' },
     { from: 'packsexport', to: 'modelseats' },
-    { from: 'seatsgen', to: 'seats', label: 'wrappers', kind: 'planned' },
+    // Seat runner
+    { from: 'p-blind', to: 'seatcmd', label: 'runs each seat' },
+    { from: 'seatcmd', to: 'seats', label: 'runs' },
+    { from: 'seatcmd', to: 'seatadapters' },
+    { from: 'seatcmd', to: 'seatbrief' },
+    { from: 'seatcmd', to: 'seatcaps' },
+    { from: 'seatgrants', to: 'seats', label: 'contains' },
+    { from: 'seatverify', to: 'seatgrants', label: 'proves' },
+    { from: 'seatcmd', to: 'metricslog', label: 'usage row' },
   ],
 
   flows: [
@@ -300,6 +314,7 @@ window.USAGE_MAP_INFRA = {
         { node: 'config', text: 'Copy the example config, replace the rows with your own plans, leads and seats, then validate it.', command: 'cp balancewheel.example.json ~/.config/balancewheel/config.json\npython3 metrics/log.py config' },
         { node: 'quota', text: 'Install bin/bw-statusline as Claude Code\'s statusLine, so caps are seen automatically.', command: 'bw-statusline <plan>' },
         { node: 'attack', text: 'Attack-test the sandbox and the guard on each runtime that needs them. A lead runs only after a recorded pass.', command: 'bw sandbox verify pi\nbw guard verify pi' },
+        { node: 'seatverify', text: 'Attack-test every reachable seat. A seat runs in a panel only after a recorded pass.', command: 'bw seat verify\nbw seat list' },
         { node: 'triagehook', text: 'Optionally let the decision model settle questions with a strong recommendation.', command: 'bw triage install claude' },
         { node: 'registry', text: 'Check what the config wires together.', command: 'bw registry --print' },
       ],
@@ -348,7 +363,8 @@ window.USAGE_MAP_INFRA = {
         { node: 'profile:high-stakes', text: 'The profile names the seats for this checkpoint, which are required, and the minimum count.' },
         { node: 'p-brief', text: 'The lead writes a request file at a checkpoint. bw renders one shared brief. You normally never run bw panel. A panel is queued, running, ready, logged, or failed.', command: 'bw panel <checkpoint> [target] [--deep] [--background]' },
         { node: 'p-blind', text: 'Seats review blind and in parallel.' },
-        { node: 'seats', text: 'Each seat is another vendor\'s CLI, enforced read-only. A capped seat\'s fallback stands in.' },
+        { node: 'seatcmd', text: 'bw runs each seat in its OS sandbox, with the shared brief and a wall-clock cap. A capped seat\'s stand-in runs in its place.' },
+        { node: 'seats', text: 'Each seat is another vendor\'s CLI, enforced read-only.' },
         { node: 'p-dispute', text: 'Only disputed claims are cross-examined, the claim relayed alone.', command: 'bw panel ask <panel-id> <seat> "<claim>"' },
         { node: 'p-bar', text: 'Challenges below the substance bar are dropped.' },
         { node: 'p-verify', text: 'The lead checks every surviving finding against the code.' },

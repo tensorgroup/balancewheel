@@ -100,18 +100,23 @@ python3 docs/usage-map/generate.py --open
 
 **Design repo, mid-extraction.** The reference implementation runs as the author's
 private tooling and is dogfooded daily. What is here: the full design, the rebuild guide,
-dated session handoffs, and the `metrics/` package (Python 3.9+, standard library only,
-tested). `seats/` is here now, under the 2026-11-22 roadmap amendment. It is the Python
-runner behind `bw seat`: headless argv per runtime, the brief, per-directory sessions,
-caps and stand-ins, the OS sandbox for every seat, usage records, and attack-based
-verification. What is deliberately *not* here yet: the protocol prompts and the driver
-launcher. They wait for the criteria in [docs/roadmap.md](docs/roadmap.md): design stable
-for about a month, no preview model id in any interface, no private paths or references,
-and one person other than the author has built the setup from this README alone.
+dated session handoffs, and the code (Python 3.9+, standard library only, tested). Every
+directory in the planned shape is here now, under the roadmap amendments of 2026-10-24
+and 2026-11-22:
 
-Planned shape: `seats/` (here now), `panel/` (templates **plus** the mechanics code
-behind `bw panel` — the moderator stays whatever agent you already run), `metrics/` (here
-now), `packs/` (the export of one marked catalog block in esc's `model-seats` pack).
+- `metrics/` — the log, the watches, and the dashboard.
+- `lead/` and `bin/bw` — leads, rotation, the guard, and the starter.
+- `seats/` — the runner behind `bw seat`: headless argv per runtime, the brief,
+  per-directory sessions, caps and stand-ins, the OS sandbox for every seat, usage
+  records, and attack-based verification.
+- `panel/` — the seat briefs (templates) plus the mechanics behind `bw panel`. The
+  moderator stays whatever agent you already run.
+- `packs/` — `bw pack export`, the export of one marked catalog block in esc's
+  `model-seats` pack.
+
+The first tagged release that calls the extraction complete still waits for the last
+criterion in [docs/roadmap.md](docs/roadmap.md): one person other than the author has
+built the setup from this README alone.
 
 ## What gets installed, and where
 

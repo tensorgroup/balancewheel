@@ -25,7 +25,8 @@ stuck debugging) and seat C on the vendor's default-tier model.
 Revised 2026-11-22: Orca is optional; bw opens a Terminal tab unless `canvas` is `orca`.
 Updated 2026-11-23: `bw panel` runs the mechanical half of the panel protocol; the lead keeps
 the judgment (see "The panel protocol"). Updated again 2026-11-23 after the review fixes: a
-worktree has up to three open panels and one running job, and bw fails work that no job holds.*
+worktree has up to three open panels and one running job, and bw fails work that no job holds.
+Updated 2026-11-24: `packs/` is shipped, not planned.*
 
 ## The problem
 
@@ -297,7 +298,7 @@ pack, rendered into a repo's instruction files and versioned like any other poli
 change. esc's `examples/packs/model-seats` is this policy generalized: seats named by
 role, the substance bar, mandatory logging, evidence-cited demotion with re-promotion
 criteria, and the models behind the seats as a dated catalog roster rather than a rule.
-The roadmap's planned `packs/` is the export step that regenerates it from the log. The seam between the
+`packs/` (`bw pack export`) is the export step that regenerates its catalog block from the log. The seam between the
 two is scope, not files: balancewheel configures the user's own agent under the home
 directory, esc governs the repo, and a pack rule wins over a moderator rule in the repo
 it is synced into (the README's "Working with OpenEscapement" section).

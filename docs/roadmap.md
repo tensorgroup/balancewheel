@@ -35,6 +35,9 @@ commands, launchd sync, local dashboard). Goals of this phase:
 
 ## Planned shape
 
+As of 2026-11-24 every directory below has landed (see the amendments). The list stays as the
+record of what each one owns.
+
 - `seats/` — a Python runner behind `bw seat`: headless argv per runtime, the brief,
   per-directory sessions, caps and stand-ins, the OS sandbox for every seat, usage records,
   and attack-based verification.
