@@ -65,6 +65,14 @@ OpenEscapement" section owns the install order and the reconcile rule.
 - `README.md` — the pitch, the six core ideas, an outline of how it works, the plan,
   a paste-in setup prompt for a new user's own agent, and the use/maintain outline. It
   is the entry point a second person builds from; details stay in `docs/`.
+- `docs/leads.md` — the full `bw` reference (leads and rotation, the guard, `bw start`, quota,
+  triage, the inbox, the cockpit, first-run steps and seat logins). The README keeps only the
+  Quick start and the everyday commands, and links here.
+- `docs/start/` — the public, interactive guide linked from the README (GitHub Pages): a panel
+  you can step through, the Quick start with real `bw` output, rotation, and the scoreboard.
+  Hand-written and self-contained. **Its terminal output is copied from real runs; update it
+  (and the README's Quick start) in the same commit as any change to what those commands print.**
+  `preview.png` is a screenshot of its panel section.
 - `docs/architecture.md` — the design write-up: problem, three-peers/one-moderator
   topology, the panel protocol, the metrics loop, the knowledge layer, lessons learned.
 - `docs/reference-implementation.md` — the working example with tools, versions, and

@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Balancewheel Guide</title>
+<meta name="description" content="Balancewheel step by step: a review panel you can watch, the quick start with real output, and the scoreboard.">
+<!-- docs/start/index.html — the interactive getting-started guide. Hand-written, self-contained, no network.
+     Written 2026-11-24. Terminal output on this page is copied from real runs of bw on the example config;
+     the panel, the timeline, and the scoreboard are illustrations with synthetic data. -->
+<style>
+:root {
+  --bg: #f6f5f2; --ground: #ecebe6; --surface: #ffffff; --ink: #16150b; --ink-2: #4b4a42; --ink-3: #85837a;
+  --line: #d6d3cc; --accent: #009ec4; --accent-ink: #00718d; --focus: #009ec4; --warn: #b45309;
+  --ok: #15803d; --bad: #dc2626; --dispute: #7c3aed; --term-bg: #12141a; --term-ink: #e6e8ec; --term-dim: #8b93a1;
+  --person: #db2777; --core: #0891b2; --seat-a: #10a37f; --seat-b: #d97706; --seat-c: #7c3aed;
+  --shadow: 0 10px 30px rgba(22, 21, 11, .10);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f1115; --ground: #14171d; --surface: #1a1e26; --ink: #eef0f3; --ink-2: #b5bac4; --ink-3: #7d8491;
+    --line: #2c323d; --accent: #38bdf8; --accent-ink: #7dd3fc; --focus: #38bdf8; --warn: #fbbf24;
+    --ok: #4ade80; --bad: #f87171; --dispute: #a78bfa; --term-bg: #0b0d11;
+    --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1115; --ground: #14171d; --surface: #1a1e26; --ink: #eef0f3; --ink-2: #b5bac4; --ink-3: #7d8491;
+  --line: #2c323d; --accent: #38bdf8; --accent-ink: #7dd3fc; --focus: #38bdf8; --warn: #fbbf24;
+  --ok: #4ade80; --bad: #f87171; --dispute: #a78bfa; --term-bg: #0b0d11;
+  --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+a { color: var(--accent-ink); }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+code { font-size: .92em; background: var(--ground); padding: .08em .35em; border-radius: 5px; }
+
+/* top bar */
+.bar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; display: flex; align-items: center; gap: 16px;
+  padding: 10px max(16px, env(safe-area-inset-left, 0px)); background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+.bar strong { font-size: 16px; letter-spacing: -.01em; }
+.bar nav { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13.5px; }
+.bar nav a { color: var(--ink-2); text-decoration: none; }
+.bar nav a:hover { color: var(--accent-ink); }
+.bar .spacer { flex: 1; }
+
+main { max-width: 1080px; margin: 0 auto; padding: 0 16px 80px; }
+section { padding-top: 56px; scroll-margin-top: 60px; }
+h1 { font-size: clamp(28px, 4.4vw, 44px); line-height: 1.12; letter-spacing: -.02em; margin: 0 0 14px; }
+h2 { font-size: clamp(22px, 3vw, 28px); letter-spacing: -.015em; margin: 0 0 6px; }
+.lede { font-size: 17px; color: var(--ink-2); max-width: 720px; margin: 0 0 20px; }
+.kicker { text-transform: uppercase; letter-spacing: .09em; font-size: 12px; font-weight: 700; color: var(--accent-ink); margin-bottom: 6px; }
+.sub { color: var(--ink-2); margin: 0 0 22px; max-width: 760px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+.btn {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 7px 16px; font-size: 14px;
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+:root[data-theme="dark"] .btn.primary { color: #061018; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn.primary { color: #061018; } }
+.btn[disabled] { opacity: .45; cursor: default; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* hero */
+.hero { display: grid; grid-template-columns: 1fr 1.1fr; gap: 28px; align-items: center; padding-top: 44px; }
+@media (max-width: 860px) { .hero { grid-template-columns: 1fr; } }
+.hero svg { width: 100%; height: auto; display: block; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 18px; }
+.fact { padding: 12px 14px; }
+.fact b { display: block; font-size: 14px; }
+.fact span { color: var(--ink-3); font-size: 13px; }
+.flow-dot { animation: travel 4.2s linear infinite; }
+@keyframes travel { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+@media (prefers-reduced-motion: reduce) { .flow-dot { animation: none; display: none; } }
+
+/* terminal */
+.term {
+  background: var(--term-bg); color: var(--term-ink); border-radius: 12px; padding: 14px 16px; font-size: 13px; line-height: 1.5;
+  overflow-x: auto; min-height: 120px; white-space: pre; border: 1px solid color-mix(in srgb, var(--line) 50%, #000);
+}
+.term .p { color: #7dd3fc; }
+.term .dim { color: var(--term-dim); }
+.term .ok { color: #4ade80; }
+.term .bad { color: #f87171; }
+.term .cursor { display: inline-block; width: 8px; height: 1.1em; background: var(--term-ink); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.term-head { display: flex; gap: 6px; margin-bottom: 10px; }
+.term-head i { width: 10px; height: 10px; border-radius: 50%; background: #3a3f4b; }
+.cmd { display: flex; align-items: center; gap: 10px; background: var(--ground); border: 1px solid var(--line); border-radius: 10px; padding: 8px 8px 8px 14px; margin: 10px 0; }
+.cmd pre { margin: 0; flex: 1; overflow-x: auto; font-size: 13px; white-space: pre; }
+.copy { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 4px 10px; font-size: 12.5px; min-height: 32px; }
+
+/* panel player */
+.stage { padding: 18px; }
+.stepper { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.stepper button {
+  border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 5px 12px; font-size: 13px; color: var(--ink-2);
+}
+.stepper button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.stepper button.done { border-color: var(--accent); color: var(--accent-ink); }
+.arena { display: grid; grid-template-columns: repeat(3, 1fr) 1.15fr; gap: 12px; }
+@media (max-width: 860px) { .arena { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .arena { grid-template-columns: 1fr; } }
+.seat { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: var(--bg); min-height: 190px; position: relative; transition: opacity .3s; }
+.seat h4, .leadbox h4 { margin: 0 0 2px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.seat h4 .sw { width: 10px; height: 10px; border-radius: 3px; }
+.seat .vendor { font-size: 12px; color: var(--ink-3); margin-bottom: 8px; }
+.seat .lock { position: absolute; top: 10px; right: 10px; font-size: 11px; color: var(--ink-3); border: 1px solid var(--line); border-radius: 99px; padding: 1px 7px; }
+.seat.blind .wall { display: block; }
+.wall { display: none; position: absolute; inset: auto 8px 8px 8px; font-size: 11px; color: var(--ink-3); text-align: center; }
+.finding {
+  font-size: 12.5px; border-radius: 8px; padding: 6px 8px; margin: 6px 0; border: 1px solid var(--line); background: var(--surface);
+  opacity: 0; transform: translateY(6px); transition: opacity .35s, transform .35s, border-color .3s, background .3s;
+}
+.finding.show { opacity: 1; transform: none; }
+.finding .sev { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-right: 6px; color: var(--ink-3); }
+.finding.dispute { border-color: var(--dispute); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dispute) 25%, transparent); }
+.finding.dropped { text-decoration: line-through; opacity: .45; }
+.finding.confirmed { border-color: var(--ok); }
+.finding.refuted { border-color: var(--bad); }
+.finding .verdict { display: block; text-align: right; font-weight: 700; font-size: 12px; }
+.finding .verdict:empty { display: none; }
+.finding.confirmed .verdict { color: var(--ok); }
+.finding.refuted .verdict { color: var(--bad); }
+.leadbox { border: 2px solid var(--person); border-radius: 12px; padding: 12px; background: color-mix(in srgb, var(--person) 6%, var(--surface)); min-height: 190px; }
+.leadbox .vendor { font-size: 12px; color: var(--ink-3); margin-bottom: 8px; }
+.leadbox .item { font-size: 12.5px; margin: 6px 0; padding: 6px 8px; border-radius: 8px; background: var(--surface); border: 1px dashed var(--line); }
+.narr { margin-top: 16px; padding: 14px 16px; border-left: 4px solid var(--accent); background: var(--ground); border-radius: 0 10px 10px 0; min-height: 76px; }
+.narr b { display: block; margin-bottom: 2px; }
+.rule { display: inline-block; margin-top: 6px; font-size: 12.5px; color: var(--accent-ink); font-weight: 600; }
+.summary { margin-top: 14px; display: none; }
+.summary.show { display: block; }
+
+/* quick start */
+.qs { display: grid; grid-template-columns: 260px 1fr; gap: 18px; }
+@media (max-width: 860px) { .qs { grid-template-columns: 1fr; } }
+.qs ol { list-style: none; margin: 0; padding: 8px; counter-reset: s; }
+.qs li button {
+  width: 100%; text-align: left; border: 0; background: none; padding: 9px 10px; border-radius: 10px; display: flex; gap: 10px; align-items: baseline; color: var(--ink-2);
+}
+.qs li button::before { counter-increment: s; content: counter(s); flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--ground); color: var(--ink-2); }
+.qs li button[aria-current="step"] { background: var(--ground); color: var(--ink); font-weight: 600; }
+.qs li button[aria-current="step"]::before { background: var(--accent); color: #fff; }
+.qs .pane { padding: 18px; }
+.qs .pane h3 { margin: 0 0 4px; font-size: 18px; }
+.qs .why { color: var(--ink-2); margin: 0 0 4px; }
+.qs .means { margin-top: 12px; font-size: 14px; color: var(--ink-2); border-top: 1px solid var(--line); padding-top: 10px; }
+.qs .means b { color: var(--ink); }
+.qs .nav { display: flex; justify-content: space-between; margin-top: 14px; gap: 10px; }
+
+/* rotation */
+.timeline { padding: 18px; }
+.lanes { position: relative; margin: 8px 0 4px; }
+.lane { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 10px; margin: 10px 0; }
+.lane .name { font-size: 13px; font-weight: 600; }
+.track { position: relative; height: 30px; background: var(--ground); border-radius: 8px; overflow: hidden; }
+.seg { position: absolute; top: 0; bottom: 0; border-radius: 8px; transform-origin: left; transition: width .5s linear; display: flex; align-items: center; padding-left: 8px; font-size: 12px; color: #fff; font-weight: 600; white-space: nowrap; overflow: hidden; }
+.quota { height: 8px; background: var(--ground); border-radius: 99px; overflow: hidden; margin-top: 4px; }
+.quota i { display: block; height: 100%; background: var(--ok); width: 0; transition: width .3s linear, background .3s; }
+.tlog { font-size: 13px; margin-top: 10px; min-height: 66px; }
+
+/* scoreboard */
+.score { padding: 18px; }
+.score table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.score th { text-align: left; font-size: 12px; color: var(--ink-3); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.score td { padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.meter { height: 8px; width: 100%; min-width: 60px; background: var(--ground); border-radius: 99px; overflow: hidden; }
+.meter i { display: block; height: 100%; border-radius: 99px; transition: width .4s; }
+.watch { margin-top: 12px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); font-size: 14px; display: none; }
+.watch.show { display: block; }
+input[type=range] { width: min(420px, 100%); accent-color: var(--accent); }
+.tablewrap { overflow-x: auto; }
+
+/* cheat sheet */
+.cheats { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+.cheat { padding: 14px; }
+.cheat h4 { margin: 0 0 6px; font-size: 14px; }
+.cheat p { margin: 6px 0 0; font-size: 13px; color: var(--ink-3); }
+.cheat .cmd { margin: 6px 0 0; }
+
+footer { margin-top: 60px; color: var(--ink-3); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
+.hero > *, .qs > *, .arena > *, .cheats > *, .lane > *, main > section { min-width: 0; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<header class="bar">
+  <strong>Balancewheel</strong><span style="color:var(--ink-3);font-size:13px">Guide</span>
+  <span class="spacer"></span>
+  <nav aria-label="Sections">
+    <a href="#panel">Watch a panel</a>
+    <a href="#quickstart">Quick start</a>
+    <a href="#rotation">Plans run out</a>
+    <a href="#scoreboard">Scoreboard</a>
+    <a href="#commands">Commands</a>
+    <a href="../usage-map/">Usage map</a>
+    <a href="https://github.com/tensorgroup/balancewheel">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <!-- HERO -->
+  <section class="hero" aria-labelledby="t-hero">
+    <div>
+      <div class="kicker">Moderated multi-model review</div>
+      <h1 id="t-hero">Other vendors' agents review your work. You keep the receipts.</h1>
+      <p class="lede">You work in one agent, the <b>lead</b>. At a checkpoint it asks other vendors' agents, the <b>seats</b>, to review. The seats can read your code. They cannot change it. The lead checks every finding in the code and logs the result. The log becomes a scoreboard.</p>
+      <div class="row">
+        <a class="btn primary" href="#panel">▶ Watch a panel</a>
+        <a class="btn" href="#quickstart">Quick start</a>
+      </div>
+      <div class="facts">
+        <div class="card fact"><b>One writer</b><span>Only the lead changes code.</span></div>
+        <div class="card fact"><b>Blind first round</b><span>No seat sees another.</span></div>
+        <div class="card fact"><b>Code decides</b><span>Not a model's opinion.</span></div>
+      </div>
+    </div>
+    <div class="card" style="padding:14px">
+      <svg viewBox="0 0 520 330" role="img" aria-labelledby="hero-svg-t">
+        <title id="hero-svg-t">You work in the lead. The lead sends one brief to three read-only seats. Their findings come back, the lead checks them in the code, and one record goes to the log and the scoreboard.</title>
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-3)"/></marker>
+        </defs>
+        <g fill="none" stroke="var(--ink-3)" stroke-width="1.5" marker-end="url(#ar)">
+          <path id="p1" d="M70 165 H128"/>
+          <path id="p2" d="M222 150 C260 110 270 70 312 62"/>
+          <path id="p3" d="M222 165 H312"/>
+          <path id="p4" d="M222 180 C260 220 270 262 312 268"/>
+          <path d="M398 62 C440 70 452 120 452 140"/>
+          <path d="M398 165 H436"/>
+          <path d="M398 268 C440 262 452 214 452 192"/>
+        </g>
+        <g font-size="12.5" text-anchor="middle" fill="var(--ink)">
+          <circle cx="40" cy="165" r="28" fill="color-mix(in srgb, var(--person) 16%, var(--surface))" stroke="var(--person)" stroke-width="2"/>
+          <text x="40" y="170" font-weight="700">You</text>
+          <rect x="130" y="128" width="92" height="74" rx="12" fill="color-mix(in srgb, var(--person) 10%, var(--surface))" stroke="var(--person)" stroke-width="2"/>
+          <text x="176" y="160" font-weight="700">Lead</text>
+          <text x="176" y="177" font-size="11" fill="var(--ink-3)">only writer</text>
+          <g>
+            <rect x="314" y="36" width="84" height="52" rx="10" fill="var(--surface)" stroke="var(--seat-a)" stroke-width="2"/>
+            <text x="356" y="59" font-weight="700">Seat A</text><text x="356" y="75" font-size="10.5" fill="var(--ink-3)">🔒 read-only</text>
+            <rect x="314" y="139" width="84" height="52" rx="10" fill="var(--surface)" stroke="var(--seat-b)" stroke-width="2"/>
+            <text x="356" y="162" font-weight="700">Seat B</text><text x="356" y="178" font-size="10.5" fill="var(--ink-3)">🔒 read-only</text>
+            <rect x="314" y="242" width="84" height="52" rx="10" fill="var(--surface)" stroke="var(--seat-c)" stroke-width="2"/>
+            <text x="356" y="265" font-weight="700">Seat C</text><text x="356" y="281" font-size="10.5" fill="var(--ink-3)">🔒 read-only</text>
+          </g>
+          <rect x="438" y="142" width="76" height="48" rx="10" fill="color-mix(in srgb, var(--accent) 12%, var(--surface))" stroke="var(--accent)" stroke-width="2"/>
+          <text x="476" y="163" font-weight="700">✓ Check</text><text x="476" y="179" font-size="10.5" fill="var(--ink-3)">in the code</text>
+          <text x="176" y="235" font-size="11" fill="var(--ink-3)">one shared brief →</text>
+          <rect x="420" y="300" width="96" height="24" rx="6" fill="var(--ground)" stroke="var(--line)"/>
+          <text x="468" y="316" font-size="11">📊 log + score</text>
+          <path d="M476 190 V298" stroke="var(--ink-3)" stroke-width="1.5" fill="none" marker-end="url(#ar)"/>
+        </g>
+        <g fill="var(--accent)">
+          <circle r="4" class="flow-dot" style="offset-path: path('M222 150 C260 110 270 70 312 62')"/>
+          <circle r="4" class="flow-dot" style="offset-path: path('M222 165 H312'); animation-delay: -1.4s"/>
+          <circle r="4" class="flow-dot" style="offset-path: path('M222 180 C260 220 270 262 312 268'); animation-delay: -2.8s"/>
+        </g>
+      </svg>
+    </div>
+  </section>
+
+  <!-- PANEL PLAYER -->
+  <section id="panel" aria-labelledby="t-panel">
+    <div class="kicker">The core loop</div>
+    <h2 id="t-panel">Watch a panel, one step at a time</h2>
+    <p class="sub">A synthetic code review with three seats. Press <b>Play</b>, or step through it. Each step names the rule it shows.</p>
+    <div class="card stage">
+      <div class="row" style="justify-content:space-between;margin-bottom:12px">
+        <div class="stepper" id="pstepper" role="tablist" aria-label="Panel steps"></div>
+        <div class="row">
+          <button class="btn" id="pprev" aria-label="Previous step">◀</button>
+          <button class="btn primary" id="pplay">▶ Play</button>
+          <button class="btn" id="pnext" aria-label="Next step">▶▶</button>
+          <button class="btn" id="preset">Reset</button>
+        </div>
+      </div>
+      <div class="arena" id="arena"></div>
+      <div class="narr" id="pnarr" aria-live="polite"></div>
+      <div class="summary" id="psummary">
+        <div class="term" style="min-height:0"><span class="dim"># what you see in the lead</span>
+Seats: astra, opus, kimi.
+5 findings, 3 confirmed, 1 refuted, 1 dropped (style). Most important: the retry loop never stops on a 4xx.
+One dispute (opus against astra on the lock order). The code agreed with astra.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- QUICK START -->
+  <section id="quickstart" aria-labelledby="t-qs">
+    <div class="kicker">About 15 minutes</div>
+    <h2 id="t-qs">Quick start, with what you should see</h2>
+    <p class="sub">Every output below is copied from a real run on the example config. Paths are shortened. You need Python 3.9+, git, and one vendor CLI you are logged in to.</p>
+    <div class="qs">
+      <div class="card"><ol id="qslist" aria-label="Quick start steps"></ol></div>
+      <div class="card pane" id="qspane" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- ROTATION -->
+  <section id="rotation" aria-labelledby="t-rot">
+    <div class="kicker">Leads and rotation</div>
+    <h2 id="t-rot">When a plan runs out, work goes on</h2>
+    <p class="sub">A profile lists your leads in order. When the current lead's plan is capped, <code>bw</code> stops it at a turn boundary, writes a handoff, and starts the next lead. When the preferred plan resets, the next session goes back to it. The plans and times here are an illustration.</p>
+    <div class="card timeline">
+      <div class="row" style="justify-content:space-between">
+        <div class="row"><button class="btn primary" id="rplay">▶ Play a day</button><button class="btn" id="rreset">Reset</button></div>
+        <span class="mono" id="rclock" style="color:var(--ink-3)">09:00</span>
+      </div>
+      <div class="lanes">
+        <div class="lane"><div class="name">Lead A<div class="quota" aria-hidden="true"><i id="qa"></i></div></div><div class="track" id="ta"></div></div>
+        <div class="lane"><div class="name">Lead B<div class="quota" aria-hidden="true"><i id="qb"></i></div></div><div class="track" id="tb"></div></div>
+      </div>
+      <div class="tlog" id="rlog" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- SCOREBOARD -->
+  <section id="scoreboard" aria-labelledby="t-score">
+    <div class="kicker">The metrics loop</div>
+    <h2 id="t-score">The scoreboard changes the roster, not a feeling</h2>
+    <p class="sub">Move the slider to log more panels. Watch the numbers settle. When a seat finds nothing that another seat missed in its last five panels, a <b>watch</b> suggests a change. You decide. The data is synthetic.</p>
+    <div class="card score">
+      <label for="np" class="row" style="gap:12px"><b>Panels logged: <span id="npv">1</span></b>
+        <input type="range" id="np" min="1" max="12" value="1"></label>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Seat</th><th>Panels</th><th>Confirmed rate</th><th style="width:30%">Unique catches</th><th>Dispute wins</th></tr></thead>
+          <tbody id="sbody"></tbody>
+        </table>
+      </div>
+      <div class="watch" id="swatch" role="status"></div>
+    </div>
+  </section>
+
+  <!-- COMMANDS -->
+  <section id="commands" aria-labelledby="t-cmd">
+    <div class="kicker">Cheat sheet</div>
+    <h2 id="t-cmd">Everyday commands</h2>
+    <p class="sub">The few you use every day. All of them: <code>bw --help</code>, or <a href="https://github.com/tensorgroup/balancewheel/blob/main/docs/leads.md">docs/leads.md</a>.</p>
+    <div class="cheats" id="cheats"></div>
+  </section>
+
+  <footer>
+    Balancewheel is Apache-2.0. Terminal output on this page comes from real runs of <code>bw</code> on <code>balancewheel.example.json</code>; the panel, the timeline, and the scoreboard use synthetic data.
+    <a href="https://github.com/tensorgroup/balancewheel">Source and README</a> · <a href="../usage-map/">Usage map</a>
+  </footer>
+</main>
+
+<script>
+(() => {
+  'use strict';
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const $ = (s, r = document) => r.querySelector(s);
+  const el = (tag, attrs = {}, ...kids) => {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'class') n.className = v; else if (k === 'text') n.textContent = v;
+      else if (k.startsWith('on')) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v);
+    }
+    for (const k of kids) if (k != null) n.append(k);
+    return n;
+  };
+  const copyBtn = (text) => el('button', { class: 'copy', type: 'button', 'aria-label': 'Copy command', onclick: async (e) => {
+    const b = e.currentTarget;
+    try { await navigator.clipboard.writeText(text); b.textContent = 'Copied'; }
+    catch { b.textContent = 'Select it'; }
+    setTimeout(() => { b.textContent = 'Copy'; }, 1400);
+  } }, 'Copy');
+  const cmdBox = (text) => el('div', { class: 'cmd' }, el('pre', { text }), copyBtn(text));
+
+  /* ── PANEL PLAYER ─────────────────────────────────────────────── */
+  const seats = [
+    { id: 'astra', vendor: 'OpenAI · Codex CLI', color: 'var(--seat-a)' },
+    { id: 'opus', vendor: 'Anthropic · Claude Code', color: 'var(--seat-b)' },
+    { id: 'kimi', vendor: 'Moonshot · Kimi Code', color: 'var(--seat-c)' },
+  ];
+  // Each finding: which seat, severity, text, and what happens to it.
+  const findings = [
+    { id: 'f1', seat: 'astra', sev: 'major', text: 'retry loop never stops on a 4xx (client.py:88)', fate: 'confirmed', also: 'opus' },
+    { id: 'f2', seat: 'astra', sev: 'major', text: 'save() and load() take the locks in opposite order (store.py:40)', fate: 'confirmed', dispute: true },
+    { id: 'f3', seat: 'opus', sev: 'nit', text: 'variable name "d" is unclear', fate: 'dropped' },
+    { id: 'f4', seat: 'kimi', sev: 'major', text: 'no timeout on the HTTP call (client.py:51)', fate: 'confirmed' },
+    { id: 'f5', seat: 'kimi', sev: 'critical', text: 'SQL injection in search() (db.py:12)', fate: 'refuted' },
+  ];
+  const steps = [
+    { key: 'brief', label: 'Brief', title: 'One shared brief',
+      text: 'bw builds one brief for the target: the diff, the files, the question. Every seat gets the same brief, so their answers can be compared.',
+      rule: 'Rule: same input for every seat.' },
+    { key: 'blind', label: 'Blind round', title: 'The seats review blind, in parallel',
+      text: 'Each seat explores the repo on its own and cannot see the others. Agreement between them now means something. Each seat runs in an OS sandbox and has a time cap.',
+      rule: 'Rule: blind first round. Never relaxed.' },
+    { key: 'merge', label: 'Merge', title: 'bw merges and counts',
+      text: 'Two seats found the same retry-loop bug, so it merges into one finding. opus challenges astra on the lock order. That is a dispute.',
+      rule: 'Rule: one finding per problem, counted per seat.' },
+    { key: 'dispute', label: 'Dispute', title: 'Only the disputed claim is relayed',
+      text: 'The lead sends astra the one claim from opus, not the whole transcript. astra answers with file and line. Rounds are capped.',
+      rule: 'Rule: claim-only relays. Never relaxed.' },
+    { key: 'filter', label: 'Filter', title: 'The substance bar drops weak challenges',
+      text: 'A finding must say what breaks and where. "Variable name is unclear" says neither, so it is dropped. It is still logged against the seat that raised it.',
+      rule: 'Rule: what breaks, and where.' },
+    { key: 'verify', label: 'Verify', title: 'The lead checks every finding in the code',
+      text: 'The lead reads the code for each finding. The query in search() uses parameters, so the injection claim is refuted. The other three are confirmed.',
+      rule: 'Rule: the code decides, never a model\'s self-report.' },
+    { key: 'log', label: 'Log', title: 'One record goes to the log',
+      text: 'bw fills in the mechanical fields and appends one panel record to metrics.jsonl: seats, findings, disputes, verdicts. The scoreboard reads it.',
+      rule: 'Rule: every panel is logged, with its findings.' },
+  ];
+  const arena = $('#arena');
+  const seatEls = {}, findEls = {};
+  for (const s of seats) {
+    const box = el('div', { class: 'seat', 'aria-label': `Seat ${s.id}` },
+      el('span', { class: 'lock', text: '🔒 read-only' }),
+      el('h4', {}, el('span', { class: 'sw', style: `background:${s.color}` }), s.id),
+      el('div', { class: 'vendor', text: s.vendor }),
+      el('div', { class: 'wall', text: 'cannot see the other seats' }));
+    seatEls[s.id] = box; arena.append(box);
+  }
+  for (const f of findings) {
+    const n = el('div', { class: 'finding' }, el('span', { class: 'sev', text: f.sev }), f.text, el('span', { class: 'verdict' }));
+    findEls[f.id] = n; seatEls[f.seat].insertBefore(n, seatEls[f.seat].querySelector('.wall'));
+  }
+  const lead = el('div', { class: 'leadbox', 'aria-label': 'The lead' },
+    el('h4', {}, '👤 Lead (moderator)'), el('div', { class: 'vendor', text: 'your agent · the only writer' }));
+  const leadItems = el('div'); lead.append(leadItems); arena.append(lead);
+  const stepper = $('#pstepper');
+  const stepBtns = steps.map((s, i) => {
+    const b = el('button', { type: 'button', role: 'tab', text: `${i + 1}. ${s.label}`, onclick: () => { stop(); show(i); } });
+    stepper.append(b); return b;
+  });
+  let cur = -1, timer = null;
+  function leadSay(lines) { leadItems.replaceChildren(...lines.map(t => el('div', { class: 'item', text: t }))); }
+  function show(i) {
+    cur = Math.max(0, Math.min(steps.length - 1, i));
+    const k = steps[cur].key, at = (key) => steps.findIndex(s => s.key === key) <= cur;
+    stepBtns.forEach((b, j) => { b.classList.toggle('on', j === cur); b.classList.toggle('done', j < cur); b.setAttribute('aria-selected', j === cur); });
+    for (const s of seats) seatEls[s.id].classList.toggle('blind', k === 'blind');
+    for (const f of findings) {
+      const n = findEls[f.id], v = n.querySelector('.verdict');
+      n.classList.toggle('show', at('blind'));
+      n.classList.toggle('dispute', !!f.dispute && (k === 'merge' || k === 'dispute'));
+      n.classList.toggle('dropped', f.fate === 'dropped' && at('filter'));
+      const judged = at('verify') && f.fate !== 'dropped';
+      n.classList.toggle('confirmed', judged && f.fate === 'confirmed');
+      n.classList.toggle('refuted', judged && f.fate === 'refuted');
+      v.textContent = judged ? (f.fate === 'confirmed' ? '✓ confirmed' : '✗ refuted') : (f.fate === 'dropped' && at('filter') ? 'dropped' : '');
+    }
+    const leadText = {
+      brief: ['Target: the change to client.py, store.py, db.py', 'bw renders one brief for all three seats'],
+      blind: ['Waiting for round 1…', 'Each seat has a wall-clock cap'],
+      merge: ['5 findings from 3 seats', 'retry-loop bug: found by astra and opus', 'Dispute: opus says the lock order is safe'],
+      dispute: ['→ astra: "opus says store.py:40 is safe because load() never runs under save(). Answer with file and line."', '← astra: "load() is called from save() at store.py:63."'],
+      filter: ['Dropped: "variable name d is unclear" (no break, no place)'],
+      verify: ['client.py:88 retries on 404 → confirmed', 'store.py:63 calls load() under the lock → confirmed', 'client.py:51 has no timeout → confirmed', 'db.py:12 uses query parameters → refuted'],
+      log: ['bw panel log <panel-id> < verdicts.json', '1 panel record appended to metrics.jsonl'],
+    }[k];
+    leadSay(leadText);
+    const s = steps[cur];
+    $('#pnarr').replaceChildren(el('b', { text: `${cur + 1}. ${s.title}` }), s.text, el('br'), el('span', { class: 'rule', text: s.rule }));
+    $('#psummary').classList.toggle('show', k === 'log');
+    $('#pprev').disabled = cur === 0; $('#pnext').disabled = cur === steps.length - 1;
+  }
+  function stop() { clearInterval(timer); timer = null; $('#pplay').textContent = '▶ Play'; }
+  $('#pplay').onclick = () => {
+    if (timer) return stop();
+    if (cur >= steps.length - 1) show(0);
+    $('#pplay').textContent = '❚❚ Pause';
+    timer = setInterval(() => { if (cur >= steps.length - 1) return stop(); show(cur + 1); }, reduce ? 5200 : 3600);
+  };
+  $('#pnext').onclick = () => { stop(); show(cur + 1); };
+  $('#pprev').onclick = () => { stop(); show(cur - 1); };
+  $('#preset').onclick = () => { stop(); show(0); };
+  show(0);
+
+  /* ── QUICK START ──────────────────────────────────────────────── */
+  const qs = [
+    { t: 'Get bw', why: 'Clone it to a place that no lead edits, and link the command.',
+      cmd: 'git clone https://github.com/tensorgroup/balancewheel ~/.local/share/balancewheel\nln -sf ~/.local/share/balancewheel/bin/bw ~/.local/bin/bw\nln -sf ~/.local/share/balancewheel/bin/bw-statusline ~/.local/bin/bw-statusline',
+      out: [['dim', "Cloning into '~/.local/share/balancewheel'..."]],
+      means: '<b>Why a separate clone?</b> A lead can edit its own worktree. If <code>bw</code> ran from there, the lead could change the guard of its next session.' },
+    { t: 'Make a config', why: 'Start from the example. Then check it.',
+      cmd: 'mkdir -p ~/.config/balancewheel\ncp ~/.local/share/balancewheel/balancewheel.example.json ~/.config/balancewheel/config.json\npython3 ~/.local/share/balancewheel/metrics/log.py config',
+      out: [['', '{\n  "schema_version": 3,\n  "canvas": "terminal",\n  "plans": {\n    "claude-plan": {\n      "vendor": "anthropic",\n  …'], ['ok', '\n(exit status 0)']],
+      means: '<b>Exit 0:</b> the config is valid. A mistake prints one line, for example <code>config error: seatz: unknown key</code>, and exit status 2. Then put your own plans, leads, and seats in place of the example.' },
+    { t: 'Look at the state', why: 'One command shows plans, leads, asks, and the guard.',
+      cmd: 'bw status',
+      out: [['', 'plans:\n  chatgpt-plan (plan): quota unknown — quota: none\n  claude-plan (plan): quota unknown — statusline: no reading\n    no quota reading yet; rotation is using observed caps only\n  …\nleads:\n  astra: codex gpt-6-astra on chatgpt-plan · contained by self\n  claude: claude-code opus on claude-plan · contained by self\ninbox: empty\nguard:\n  no judge: gray calls are recorded as asks, nothing is stopped; the guard stays shadow']],
+      means: '<b>"quota unknown" is normal</b> on a new machine. It changes after the first lead session reports usage.' },
+    { t: 'List the seats', why: 'Each seat has a runtime, a model, a plan, and a verification state.',
+      cmd: 'bw seat list',
+      out: [['', 'astra  codex  gpt-6-astra  plan=chatgpt-plan  fallback=gem  tier=default  '], ['bad', 'verified=no (never verified)'], ['', '  capped=no\nopus  claude-code  claude-opus-5-5  plan=claude-plan  fallback=-  tier=default  '], ['bad', 'verified=no (never verified)'], ['', '  capped=no\n…']],
+      means: '<b>verified=no</b> means the seat never runs in a panel. The next step fixes that.' },
+    { t: 'Prove the seats are read-only', why: 'Log each seat in first. Then attack-test them: each seat is told to write a file, on a new and a resumed session. The write must fail.',
+      cmd: 'bw seat verify\nbw seat list',
+      out: [['dim', '… the attack runs for each seat …\n'], ['ok', 'bw: recorded a seat pass for codex on …'], ['', '\nastra  codex  gpt-6-astra  plan=chatgpt-plan  …  '], ['ok', 'verified=yes'], ['', '  capped=no']],
+      means: '<b>It spends a little model quota.</b> A seat that is capped or not logged in shows <code>seat &lt;id&gt;: pending — &lt;reason&gt;</code>. That is not a failure. Run it again after a CLI upgrade.' },
+    { t: 'Open a project (dry run)', why: 'See what bw start would do. Nothing runs and nothing is written.',
+      cmd: 'bw start --dry-run ~/code/my-project',
+      out: [['', 'bw start: dry run for ~/code/my-project (profile product); nothing is run or written\nbw start: would update claude: claude update · lock runtime-claude-code · installer claude\nbw start: would read quota for plan claude-plan\nbw start: would check seats in the background\n'], ['ok', 'bw start: lead: claude (order)'], ['', '\nbw start: would run: open -a Terminal ~/.local/state/balancewheel/start/98bf2f5e3750.command']],
+      means: '<b>lead: claude (order)</b> means the first lead in the profile\'s order would start.' },
+    { t: 'Open it for real', why: 'Update the tools, re-check containment, read quota, and open the lead in a new Terminal tab.',
+      cmd: 'bw start ~/code/my-project',
+      out: [['', 'bw start: claude: 2.4.1 → 2.4.1 current (1.2s)\n…\nbw start: lead: claude (order)\nbw start: checking seats in the background (log: …)\n'], ['ok', 'bw start: opened a Terminal tab for ~/code/my-project']],
+      means: '<b>Inside a project, plain <code>bw</code></b> starts the lead in the terminal you are in. The version numbers here are an example.' },
+    { t: 'Answer and improve', why: 'Questions only you can answer reach you as files. bw also learns from how you work.',
+      cmd: 'bw inbox\nbw improve',
+      out: [['', 'bw: inbox empty\nbw: nothing to change yet; the evidence builds as you work']],
+      means: '<b>When a lead asks something,</b> it shows in <code>bw inbox</code>. Answer with <code>bw answer &lt;id&gt; "&lt;text&gt;"</code>. The lead reads your answer from a file only bw writes.' },
+  ];
+  const qslist = $('#qslist'), qspane = $('#qspane');
+  let qcur = 0, typing = null;
+  const qbtns = qs.map((s, i) => {
+    const b = el('button', { type: 'button', text: s.t, onclick: () => qshow(i) });
+    qslist.append(el('li', {}, b)); return b;
+  });
+  function typeOut(term, parts) {
+    clearTimeout(typing);
+    term.replaceChildren();
+    const spans = parts.map(([cls]) => { const s = el('span', { class: cls }); term.append(s); return s; });
+    const cursor = el('span', { class: 'cursor' }); term.append(cursor);
+    if (reduce) { parts.forEach(([, txt], i) => { spans[i].textContent = txt; }); cursor.remove(); return; }
+    let p = 0, c = 0;
+    const tick = () => {
+      if (p >= parts.length) { cursor.remove(); return; }
+      const txt = parts[p][1], n = Math.min(txt.length, c + 6);
+      spans[p].textContent = txt.slice(0, n); c = n;
+      if (c >= txt.length) { p++; c = 0; }
+      typing = setTimeout(tick, 12);
+    };
+    tick();
+  }
+  function qshow(i) {
+    qcur = Math.max(0, Math.min(qs.length - 1, i));
+    const s = qs[qcur];
+    qbtns.forEach((b, j) => { if (j === qcur) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current'); });
+    const term = el('div', { class: 'term', role: 'log', 'aria-label': 'Output' });
+    const means = el('div', { class: 'means' }); means.innerHTML = s.means;
+    const prev = el('button', { class: 'btn', type: 'button', text: '◀ Back', onclick: () => qshow(qcur - 1) });
+    const next = el('button', { class: 'btn primary', type: 'button', text: qcur === qs.length - 1 ? 'Done ✓' : 'Next ▶', onclick: () => qshow(qcur === qs.length - 1 ? 0 : qcur + 1) });
+    prev.disabled = qcur === 0;
+    qspane.replaceChildren(
+      el('div', { class: 'kicker', text: `Step ${qcur + 1} of ${qs.length}` }),
+      el('h3', { text: s.t }), el('p', { class: 'why', text: s.why }),
+      cmdBox(s.cmd),
+      el('div', { class: 'term-head', 'aria-hidden': 'true' }, el('i'), el('i'), el('i')),
+      term, means, el('div', { class: 'nav' }, prev, next));
+    typeOut(term, [['p', '$ ' + s.cmd.split('\n').join('\n$ ') + '\n'], ...s.out]);
+  }
+  qshow(0);
+
+  /* ── ROTATION TIMELINE ────────────────────────────────────────── */
+  // 09:00 → 21:00 in 48 ticks of 15 minutes. Lead A's plan caps at 13:30 and resets at 17:00.
+  const ta = $('#ta'), tb = $('#tb'), rlog = $('#rlog');
+  const T0 = 9 * 60, TEND = 21 * 60, CAP = 13 * 60 + 30, RESET = 17 * 60;
+  const pct = (m) => ((m - T0) / (TEND - T0)) * 100;
+  let rt = null, now = T0;
+  const events = [
+    [T0, 'bw start: lead: A (order) · your preferred plan'],
+    [CAP, 'Lead A\'s plan is capped. bw waits for the turn to end, stops A, and writes a handoff.'],
+    [CAP + 15, 'bw starts Lead B with the handoff. B continues the checkpoint\'s "next:" line.'],
+    [RESET, 'Plan A has reset. At the next session boundary, bw goes back to Lead A.'],
+    [RESET + 15, 'Lead A continues from B\'s checkpoint. Every switch is in the log.'],
+  ];
+  function seg(track, from, to, color, label) {
+    const s = el('div', { class: 'seg', text: label, style: `left:${pct(from)}%;width:${pct(Math.min(to, now)) - pct(from)}%;background:${color}` });
+    track.append(s);
+  }
+  function rdraw() {
+    ta.replaceChildren(); tb.replaceChildren();
+    if (now > T0) seg(ta, T0, Math.min(now, CAP), 'var(--seat-a)', 'working');
+    if (now > CAP + 15) seg(tb, CAP + 15, Math.min(now, RESET), 'var(--seat-b)', 'working');
+    if (now > RESET + 15) seg(ta, RESET + 15, now, 'var(--seat-a)', 'back');
+    const used = now < CAP ? (now - T0) / (CAP - T0) : now < RESET ? 1 : (now - RESET) / (CAP - T0) * .6;
+    $('#qa').style.width = `${Math.min(100, used * 100)}%`;
+    $('#qa').style.background = used >= 1 ? 'var(--bad)' : used > .8 ? 'var(--warn)' : 'var(--ok)';
+    const ub = now <= CAP ? 0 : Math.min(now, RESET) - CAP;
+    $('#qb').style.width = `${Math.min(100, ub / (TEND - T0) * 160)}%`;
+    const hh = String(Math.floor(now / 60)).padStart(2, '0'), mm = String(now % 60).padStart(2, '0');
+    $('#rclock').textContent = `${hh}:${mm}`;
+    const past = events.filter(([t]) => t <= now);
+    rlog.replaceChildren(...past.slice(-3).map(([t, msg]) => el('div', {}, el('span', { class: 'mono', style: 'color:var(--ink-3)', text: `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}  ` }), msg)));
+  }
+  function rstop() { clearInterval(rt); rt = null; $('#rplay').textContent = '▶ Play a day'; }
+  $('#rplay').onclick = () => {
+    if (rt) return rstop();
+    if (now >= TEND) now = T0;
+    $('#rplay').textContent = '❚❚ Pause';
+    if (reduce) { now = TEND; rdraw(); return rstop(); }
+    rt = setInterval(() => { now += 15; rdraw(); if (now >= TEND) rstop(); }, 160);
+  };
+  $('#rreset').onclick = () => { rstop(); now = T0; rdraw(); };
+  rdraw();
+
+  /* ── SCOREBOARD ───────────────────────────────────────────────── */
+  // Synthetic panels: per seat [findings, confirmed, unique, disputesWon, disputes].
+  const P = [
+    { astra: [3, 3, 1, 1, 1], opus: [2, 1, 0, 0, 1], kimi: [2, 1, 1, 0, 0] },
+    { astra: [2, 2, 1, 0, 0], opus: [3, 3, 1, 1, 1], kimi: [1, 0, 0, 0, 1] },
+    { astra: [4, 3, 1, 1, 1], opus: [2, 2, 0, 0, 0], kimi: [2, 1, 0, 0, 0] },
+    { astra: [1, 1, 0, 0, 0], opus: [3, 2, 1, 1, 1], kimi: [3, 1, 0, 0, 1] },
+    { astra: [3, 2, 1, 0, 0], opus: [2, 2, 1, 0, 0], kimi: [1, 1, 0, 0, 0] },
+    { astra: [2, 2, 1, 1, 1], opus: [1, 1, 0, 0, 0], kimi: [2, 1, 0, 0, 1] },
+    { astra: [3, 3, 1, 0, 0], opus: [2, 1, 1, 1, 1], kimi: [2, 0, 0, 0, 0] },
+    { astra: [2, 1, 0, 0, 1], opus: [3, 3, 1, 1, 1], kimi: [1, 1, 0, 0, 0] },
+    { astra: [4, 3, 2, 1, 1], opus: [2, 2, 0, 0, 0], kimi: [2, 1, 0, 0, 1] },
+    { astra: [2, 2, 1, 0, 0], opus: [2, 2, 1, 0, 0], kimi: [1, 0, 0, 0, 0] },
+    { astra: [3, 2, 1, 1, 1], opus: [3, 2, 1, 0, 1], kimi: [2, 1, 0, 0, 0] },
+    { astra: [2, 2, 0, 0, 0], opus: [2, 2, 1, 1, 1], kimi: [1, 1, 0, 0, 0] },
+  ];
+  const colors = { astra: 'var(--seat-a)', opus: 'var(--seat-b)', kimi: 'var(--seat-c)' };
+  function sdraw(n) {
+    $('#npv').textContent = n;
+    const rows = Object.keys(colors).map(id => {
+      let f = 0, c = 0, u = 0, w = 0, d = 0;
+      P.slice(0, n).forEach(p => { const [a, b, x, y, z] = p[id]; f += a; c += b; u += x; w += y; d += z; });
+      const lastFive = P.slice(Math.max(0, n - 5), n).reduce((s, p) => s + p[id][2], 0);
+      return { id, f, c, u, w, d, lastFive };
+    });
+    const maxU = Math.max(1, ...rows.map(r => r.u));
+    $('#sbody').replaceChildren(...rows.map(r => el('tr', {},
+      el('td', {}, el('span', { style: `display:inline-block;width:10px;height:10px;border-radius:3px;background:${colors[r.id]};margin-right:8px` }), el('b', { text: r.id })),
+      el('td', { text: String(n) }),
+      el('td', { text: n < 3 ? `${r.c}/${r.f} (too few)` : `${Math.round(r.c / r.f * 100)}% (${r.c}/${r.f})` }),
+      el('td', {}, el('div', { class: 'row', style: 'flex-wrap:nowrap' }, el('div', { class: 'meter' }, el('i', { style: `width:${r.u / maxU * 100}%;background:${colors[r.id]}` })), el('span', { class: 'mono', text: String(r.u) }))),
+      el('td', { text: r.d ? `${r.w}/${r.d}` : '—' }))));
+    const idle = rows.filter(r => n >= 5 && r.lastFive === 0);
+    const w = $('#swatch');
+    w.classList.toggle('show', idle.length > 0);
+    w.textContent = idle.length ? `WATCH[redundant-seat] ${idle.map(r => r.id).join(', ')}: 0 unique catches in the last 5 panels → suggest dropping it. You decide, and you state what would earn the seat back.` : '';
+  }
+  $('#np').addEventListener('input', (e) => sdraw(+e.target.value));
+  sdraw(1);
+
+  /* ── CHEAT SHEET ──────────────────────────────────────────────── */
+  const cheats = [
+    ['Work on a project', 'bw', 'Inside a project: the lead starts in this terminal.'],
+    ['Open a project in a new tab', 'bw start ~/code/my-project', 'One line per tool, quota per plan, then "opened a Terminal tab".'],
+    ['See plans, leads, and asks', 'bw status', 'Plans, worktrees, leads, inbox, and guard.'],
+    ['Answer a lead', 'bw inbox\nbw answer <id> "<text>"', 'The open asks. The lead then reads your answer.'],
+    ['Use another lead here', 'bw lead --use <lead>', 'Undo with bw lead --auto.'],
+    ['Record a capped plan', 'bw cap <plan>', 'For leads that do not report usage themselves.'],
+    ['Check the seats', 'bw seat list', 'One line per seat: verified=, capped=.'],
+    ['Re-test after an upgrade', 'bw seat verify', '"bw: recorded a seat pass for …" per seat.'],
+    ['See the scoreboard', 'python3 ~/.local/share/balancewheel/metrics/dashboard.py', 'The path of dashboard.html. Open it in a browser.'],
+    ['Everything, live', 'bw cockpit', 'A local, read-only page: models, usage, history, now, graph.'],
+  ];
+  $('#cheats').replaceChildren(...cheats.map(([t, c, p]) => el('div', { class: 'card cheat' }, el('h4', { text: t }), cmdBox(c), el('p', { text: p }))));
+})();
+</script>
+</body>
+</html>
