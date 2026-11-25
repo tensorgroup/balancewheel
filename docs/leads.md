@@ -2,7 +2,9 @@
 
 *Written 2026-11-24: moved here, unchanged, from the README's "Leads and rotation" section, so the README
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
-`bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).*
+`bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
+Corrected the same day after review: the panel's summary line, the `bw start` prefix of the seat-check
+line, and a stale "not in v0" note on acting.*
 
 The **lead** is the agent you work in for a project; it is also the moderator of every
 panel it convenes. One plan usually runs out first, so a project's **profile** (config
@@ -44,8 +46,8 @@ at each checkpoint of its profile, writes a request file, and keeps working. `bw
 counts them. The lead then checks each finding against the code, relays disputed claims one
 at a time, and logs the panel. You see three lines:
 
-    Seats: astra, opus. kimi was absent (usage cap).
-    7 findings, 5 confirmed, 2 refuted. Most important: the retry loop never stops on a 4xx.
+    Review panel (astra, opus; kimi absent: usage cap): 7 findings, 5 confirmed, 2 refuted, 0 dropped.
+    Most important: the retry loop never stops on a 4xx.
     One dispute (astra against opus on the lock order). The code agreed with astra.
 
 A panel has the states `queued`, `running`, `ready`, `logged`, and `failed`. A worktree has
@@ -151,7 +153,7 @@ once for each bw-contained lead runtime.
     share: the allow grammar is deliberately small, so most unfamiliar commands start gray.
     Another agent runtime started by the lead (a second `claude`, `codex`, or `pi`) is
     outside the guard: it is gray, so it asks, and what it does inside is not judged.
-    Once acting exists (not in v0), a false block is worked around by hand, outside the lead.
+    When the guard is acting, a false block is worked around by hand, outside the lead.
 - **`bw start [path] [--dry-run] [--no-update] [--no-verify]` (since 2026-10-25).** One command
   to begin a session in a project (the path defaults to the current directory). It refuses
   when `bw` itself lives inside the target worktree or its git directory (a lead could edit
@@ -345,8 +347,8 @@ once for each bw-contained lead runtime.
    lead to end the session; `bw guard review` later shows what a guarded lead's guard
    logged.
 6. **Seats.** You do not need `bw seat` in normal use: the panel runs the seats. `bw start`
-   checks changed seats in the background after the lead opens. It prints `bw: checking seats
-   in the background (log: <path>)`. `bw seat verify` does the same check by hand, and
+   checks changed seats in the background after the lead opens. It prints `bw start: checking
+   seats in the background (log: <path>)`. `bw seat verify` does the same check by hand, and
    `bw seat list` shows the state of each seat. Each seat has its own login step:
    - **Claude seat.** The keychain login does not carry over to the seat's private home. Run
      `claude setup-token` once. Export `CLAUDE_CODE_OAUTH_TOKEN` in the shell that runs `bw`.

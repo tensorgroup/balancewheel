@@ -295,8 +295,8 @@ footer { margin-top: 60px; color: var(--ink-3); font-size: 13px; border-top: 1px
       <div class="narr" id="pnarr" aria-live="polite"></div>
       <div class="summary" id="psummary">
         <div class="term" style="min-height:0"><span class="dim"># what you see in the lead</span>
-Seats: astra, opus, kimi.
-5 findings, 3 confirmed, 1 refuted, 1 dropped (style). Most important: the retry loop never stops on a 4xx.
+Review panel (astra, opus, kimi): 6 findings, 4 confirmed, 1 refuted, 1 dropped.
+Most important: the retry loop never stops on a 4xx.
 One dispute (opus against astra on the lock order). The code agreed with astra.</div>
       </div>
     </div>
@@ -317,7 +317,7 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
   <section id="rotation" aria-labelledby="t-rot">
     <div class="kicker">Leads and rotation</div>
     <h2 id="t-rot">When a plan runs out, work goes on</h2>
-    <p class="sub">A profile lists your leads in order. When the current lead's plan is capped, <code>bw</code> stops it at a turn boundary, writes a handoff, and starts the next lead. When the preferred plan resets, the next session goes back to it. The plans and times here are an illustration.</p>
+    <p class="sub">A profile lists your leads in order. When the current lead's plan is capped, <code>bw</code> stops it at its next check, writes a handoff, and starts the next lead. A plan that is only low never moves a running lead. After the preferred plan resets, your next session goes back to it. The plans and times here are an illustration.</p>
     <div class="card timeline">
       <div class="row" style="justify-content:space-between">
         <div class="row"><button class="btn primary" id="rplay">▶ Play a day</button><button class="btn" id="rreset">Reset</button></div>
@@ -341,7 +341,7 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
         <input type="range" id="np" min="1" max="12" value="1"></label>
       <div class="tablewrap">
         <table>
-          <thead><tr><th>Seat</th><th>Panels</th><th>Confirmed rate</th><th style="width:30%">Unique catches</th><th>Dispute wins</th></tr></thead>
+          <thead><tr><th>Seat</th><th>Panels</th><th>Confirmed rate</th><th style="width:30%">Unique catches (last 5 panels)</th><th>Dispute wins</th></tr></thead>
           <tbody id="sbody"></tbody>
         </table>
       </div>
@@ -393,7 +393,8 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
   ];
   // Each finding: which seat, severity, text, and what happens to it.
   const findings = [
-    { id: 'f1', seat: 'astra', sev: 'major', text: 'retry loop never stops on a 4xx (client.py:88)', fate: 'confirmed', also: 'opus' },
+    { id: 'f1', seat: 'astra', sev: 'major', text: 'retry loop never stops on a 4xx (client.py:88)', fate: 'confirmed' },
+    { id: 'f1b', seat: 'opus', sev: 'major', text: '4xx responses are retried forever (client.py:88)', fate: 'confirmed' },
     { id: 'f2', seat: 'astra', sev: 'major', text: 'save() and load() take the locks in opposite order (store.py:40)', fate: 'confirmed', dispute: true },
     { id: 'f3', seat: 'opus', sev: 'nit', text: 'variable name "d" is unclear', fate: 'dropped' },
     { id: 'f4', seat: 'kimi', sev: 'major', text: 'no timeout on the HTTP call (client.py:51)', fate: 'confirmed' },
@@ -406,20 +407,20 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
     { key: 'blind', label: 'Blind round', title: 'The seats review blind, in parallel',
       text: 'Each seat explores the repo on its own and cannot see the others. Agreement between them now means something. Each seat runs in an OS sandbox and has a time cap.',
       rule: 'Rule: blind first round. Never relaxed.' },
-    { key: 'merge', label: 'Merge', title: 'bw merges and counts',
-      text: 'Two seats found the same retry-loop bug, so it merges into one finding. opus challenges astra on the lock order. That is a dispute.',
-      rule: 'Rule: one finding per problem, counted per seat.' },
+    { key: 'merge', label: 'Merge', title: 'bw groups and counts',
+      text: 'astra and opus both found the retry-loop bug at client.py:88, so bw puts the two findings in one group. Each seat keeps its own finding and its own verdict. Only astra raised the lock order.',
+      rule: 'Rule: one group per problem, counted per seat.' },
     { key: 'dispute', label: 'Dispute', title: 'Only the disputed claim is relayed',
-      text: 'The lead sends astra the one claim from opus, not the whole transcript. astra answers with file and line. Rounds are capped.',
+      text: 'The lead asks opus about astra\'s lock-order claim. It sends that one claim, never the whole transcript. opus disagrees, so the lead asks astra for file and line. Rounds are capped.',
       rule: 'Rule: claim-only relays. Never relaxed.' },
     { key: 'filter', label: 'Filter', title: 'The substance bar drops weak challenges',
       text: 'A finding must say what breaks and where. "Variable name is unclear" says neither, so it is dropped. It is still logged against the seat that raised it.',
       rule: 'Rule: what breaks, and where.' },
     { key: 'verify', label: 'Verify', title: 'The lead checks every finding in the code',
-      text: 'The lead reads the code for each finding. The query in search() uses parameters, so the injection claim is refuted. The other three are confirmed.',
+      text: 'The lead reads the code for each finding. The query in search() uses parameters, so the injection claim is refuted. The other four are confirmed.',
       rule: 'Rule: the code decides, never a model\'s self-report.' },
     { key: 'log', label: 'Log', title: 'One record goes to the log',
-      text: 'bw fills in the mechanical fields and appends one panel record to metrics.jsonl: seats, findings, disputes, verdicts. The scoreboard reads it.',
+      text: 'The lead hands bw its verdicts in a request file. bw fills in the mechanical fields and appends one panel record to metrics.jsonl: seats, findings, disputes, verdicts. The scoreboard reads it.',
       rule: 'Rule: every panel is logged, with its findings.' },
   ];
   const arena = $('#arena');
@@ -464,11 +465,11 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
     const leadText = {
       brief: ['Target: the change to client.py, store.py, db.py', 'bw renders one brief for all three seats'],
       blind: ['Waiting for round 1…', 'Each seat has a wall-clock cap'],
-      merge: ['5 findings from 3 seats', 'retry-loop bug: found by astra and opus', 'Dispute: opus says the lock order is safe'],
-      dispute: ['→ astra: "opus says store.py:40 is safe because load() never runs under save(). Answer with file and line."', '← astra: "load() is called from save() at store.py:63."'],
+      merge: ['6 findings from 3 seats', 'group: retry-loop bug (astra and opus)', 'store.py:40 lock order: only astra raised it'],
+      dispute: ['→ opus: "Another reviewer says store.py:40 can deadlock. Is it right?"', '← opus: "No. load() never runs under save()."', '→ astra: "Show where load() runs under save()."', '← astra: "save() calls load() at store.py:63."'],
       filter: ['Dropped: "variable name d is unclear" (no break, no place)'],
-      verify: ['client.py:88 retries on 404 → confirmed', 'store.py:63 calls load() under the lock → confirmed', 'client.py:51 has no timeout → confirmed', 'db.py:12 uses query parameters → refuted'],
-      log: ['bw panel log <panel-id> < verdicts.json', '1 panel record appended to metrics.jsonl'],
+      verify: ['client.py:88 retries on 404 → confirmed (astra, opus)', 'store.py:63 calls load() under the lock → confirmed', 'client.py:51 has no timeout → confirmed', 'db.py:12 uses query parameters → refuted'],
+      log: ['The lead writes its verdicts as a log request file', 'bw appends 1 panel record to metrics.jsonl'],
     }[k];
     leadSay(leadText);
     const s = steps[cur];
@@ -491,17 +492,17 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
   /* ── QUICK START ──────────────────────────────────────────────── */
   const qs = [
     { t: 'Get bw', why: 'Clone it to a place that no lead edits, and link the command.',
-      cmd: 'git clone https://github.com/tensorgroup/balancewheel ~/.local/share/balancewheel\nln -sf ~/.local/share/balancewheel/bin/bw ~/.local/bin/bw\nln -sf ~/.local/share/balancewheel/bin/bw-statusline ~/.local/bin/bw-statusline',
+      cmd: 'mkdir -p ~/.local/bin\ngit clone https://github.com/tensorgroup/balancewheel ~/.local/share/balancewheel\nln -sf ~/.local/share/balancewheel/bin/bw ~/.local/bin/bw\nln -sf ~/.local/share/balancewheel/bin/bw-statusline ~/.local/bin/bw-statusline',
       out: [['dim', "Cloning into '~/.local/share/balancewheel'..."]],
-      means: '<b>Why a separate clone?</b> A lead can edit its own worktree. If <code>bw</code> ran from there, the lead could change the guard of its next session.' },
+      means: '<b>Make sure <code>~/.local/bin</code> is on your PATH.</b> Why a separate clone? A lead can edit its own worktree. If <code>bw</code> ran from there, the lead could change the guard of its next session.' },
     { t: 'Make a config', why: 'Start from the example. Then check it.',
       cmd: 'mkdir -p ~/.config/balancewheel\ncp ~/.local/share/balancewheel/balancewheel.example.json ~/.config/balancewheel/config.json\npython3 ~/.local/share/balancewheel/metrics/log.py config',
       out: [['', '{\n  "schema_version": 3,\n  "canvas": "terminal",\n  "plans": {\n    "claude-plan": {\n      "vendor": "anthropic",\n  …'], ['ok', '\n(exit status 0)']],
-      means: '<b>Exit 0:</b> the config is valid. A mistake prints one line, for example <code>config error: seatz: unknown key</code>, and exit status 2. Then put your own plans, leads, and seats in place of the example.' },
+      means: '<b>Exit 0:</b> the config is valid. A mistake prints one line, for example <code>config error: seatz: unknown key</code>, and exit status 2. Keep the example for the next steps. Before real use, put your own plans, leads, seats, and profiles in its place.' },
     { t: 'Look at the state', why: 'One command shows plans, leads, asks, and the guard.',
       cmd: 'bw status',
-      out: [['', 'plans:\n  chatgpt-plan (plan): quota unknown — quota: none\n  claude-plan (plan): quota unknown — statusline: no reading\n    no quota reading yet; rotation is using observed caps only\n  …\nleads:\n  astra: codex gpt-6-astra on chatgpt-plan · contained by self\n  claude: claude-code opus on claude-plan · contained by self\ninbox: empty\nguard:\n  no judge: gray calls are recorded as asks, nothing is stopped; the guard stays shadow']],
-      means: '<b>"quota unknown" is normal</b> on a new machine. It changes after the first lead session reports usage.' },
+      out: [['', 'plans:\n  chatgpt-plan (plan): quota unknown — quota: none\n  claude-plan (plan): quota unknown — statusline: no reading\n    no quota reading yet; rotation is using observed caps only\n  …\nleads:\n  astra: codex gpt-6-astra on chatgpt-plan · contained by self\n  claude: claude-code opus on claude-plan · contained by self\ninbox: empty\nguard:\n  no judge: gray calls are recorded as asks, nothing is stopped; the guard stays shadow (set guard.model to let it act)']],
+      means: '<b>"quota unknown" is normal</b> on a new machine. To let Claude Code report quota, set <code>bw-statusline &lt;plan&gt;</code> as its <code>statusLine</code>. For other leads, run <code>bw cap &lt;plan&gt;</code> when a plan runs out. <b>contained by self</b> means the tool uses its own sandbox. In <b>shadow</b> mode the guard only logs.' },
     { t: 'List the seats', why: 'Each seat has a runtime, a model, a plan, and a verification state.',
       cmd: 'bw seat list',
       out: [['', 'astra  codex  gpt-6-astra  plan=chatgpt-plan  fallback=gem  tier=default  '], ['bad', 'verified=no (never verified)'], ['', '  capped=no\nopus  claude-code  claude-opus-5-5  plan=claude-plan  fallback=-  tier=default  '], ['bad', 'verified=no (never verified)'], ['', '  capped=no\n…']],
@@ -510,14 +511,14 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
       cmd: 'bw seat verify\nbw seat list',
       out: [['dim', '… the attack runs for each seat …\n'], ['ok', 'bw: recorded a seat pass for codex on …'], ['', '\nastra  codex  gpt-6-astra  plan=chatgpt-plan  …  '], ['ok', 'verified=yes'], ['', '  capped=no']],
       means: '<b>It spends a little model quota.</b> A seat that is capped or not logged in shows <code>seat &lt;id&gt;: pending — &lt;reason&gt;</code>. That is not a failure. Run it again after a CLI upgrade.' },
-    { t: 'Open a project (dry run)', why: 'See what bw start would do. Nothing runs and nothing is written.',
+    { t: 'Open a project (dry run)', why: 'Use the path of one of your git repositories. See what bw start would do. Nothing runs and nothing is written.',
       cmd: 'bw start --dry-run ~/code/my-project',
       out: [['', 'bw start: dry run for ~/code/my-project (profile product); nothing is run or written\nbw start: would update claude: claude update · lock runtime-claude-code · installer claude\nbw start: would read quota for plan claude-plan\nbw start: would check seats in the background\n'], ['ok', 'bw start: lead: claude (order)'], ['', '\nbw start: would run: open -a Terminal ~/.local/state/balancewheel/start/98bf2f5e3750.command']],
       means: '<b>lead: claude (order)</b> means the first lead in the profile\'s order would start.' },
-    { t: 'Open it for real', why: 'Update the tools, re-check containment, read quota, and open the lead in a new Terminal tab.',
+    { t: 'Open it for real', why: 'Update the tools, re-check containment, read quota, and open the lead in a new macOS Terminal tab.',
       cmd: 'bw start ~/code/my-project',
-      out: [['', 'bw start: claude: 2.4.1 → 2.4.1 current (1.2s)\n…\nbw start: lead: claude (order)\nbw start: checking seats in the background (log: …)\n'], ['ok', 'bw start: opened a Terminal tab for ~/code/my-project']],
-      means: '<b>Inside a project, plain <code>bw</code></b> starts the lead in the terminal you are in. The version numbers here are an example.' },
+      out: [['', 'bw start: claude: 2.4.1 → 2.4.1 current (1.2s)\n…\nbw start: lead: claude (order)\n'], ['ok', 'bw start: opened a Terminal tab for ~/code/my-project'], ['', '\nbw start: checking seats in the background (log: …)']],
+      means: '<b>Inside a project, plain <code>bw</code></b> starts the lead in the terminal you are in. On Linux, use that. The version numbers here are an example.' },
     { t: 'Answer and improve', why: 'Questions only you can answer reach you as files. bw also learns from how you work.',
       cmd: 'bw inbox\nbw improve',
       out: [['', 'bw: inbox empty\nbw: nothing to change yet; the evidence builds as you work']],
@@ -572,10 +573,10 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
   let rt = null, now = T0;
   const events = [
     [T0, 'bw start: lead: A (order) · your preferred plan'],
-    [CAP, 'Lead A\'s plan is capped. bw waits for the turn to end, stops A, and writes a handoff.'],
+    [CAP, 'Lead A\'s plan is capped. At its next check, bw stops A and writes a handoff.'],
     [CAP + 15, 'bw starts Lead B with the handoff. B continues the checkpoint\'s "next:" line.'],
-    [RESET, 'Plan A has reset. At the next session boundary, bw goes back to Lead A.'],
-    [RESET + 15, 'Lead A continues from B\'s checkpoint. Every switch is in the log.'],
+    [RESET, 'Plan A has reset. Lead B keeps running until you quit it.'],
+    [RESET + 15, 'You quit Lead B. bw says Lead A is available again; your next bw starts Lead A.'],
   ];
   function seg(track, from, to, color, label) {
     const s = el('div', { class: 'seg', text: label, style: `left:${pct(from)}%;width:${pct(Math.min(to, now)) - pct(from)}%;background:${color}` });
@@ -584,12 +585,12 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
   function rdraw() {
     ta.replaceChildren(); tb.replaceChildren();
     if (now > T0) seg(ta, T0, Math.min(now, CAP), 'var(--seat-a)', 'working');
-    if (now > CAP + 15) seg(tb, CAP + 15, Math.min(now, RESET), 'var(--seat-b)', 'working');
-    if (now > RESET + 15) seg(ta, RESET + 15, now, 'var(--seat-a)', 'back');
+    if (now > CAP + 15) seg(tb, CAP + 15, Math.min(now, RESET + 15), 'var(--seat-b)', 'working');
+    if (now > RESET + 30) seg(ta, RESET + 30, now, 'var(--seat-a)', 'back');
     const used = now < CAP ? (now - T0) / (CAP - T0) : now < RESET ? 1 : (now - RESET) / (CAP - T0) * .6;
     $('#qa').style.width = `${Math.min(100, used * 100)}%`;
     $('#qa').style.background = used >= 1 ? 'var(--bad)' : used > .8 ? 'var(--warn)' : 'var(--ok)';
-    const ub = now <= CAP ? 0 : Math.min(now, RESET) - CAP;
+    const ub = now <= CAP ? 0 : Math.min(now, RESET + 15) - CAP;
     $('#qb').style.width = `${Math.min(100, ub / (TEND - T0) * 160)}%`;
     const hh = String(Math.floor(now / 60)).padStart(2, '0'), mm = String(now % 60).padStart(2, '0');
     $('#rclock').textContent = `${hh}:${mm}`;
@@ -632,12 +633,12 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
       const lastFive = P.slice(Math.max(0, n - 5), n).reduce((s, p) => s + p[id][2], 0);
       return { id, f, c, u, w, d, lastFive };
     });
-    const maxU = Math.max(1, ...rows.map(r => r.u));
+    const maxU = Math.max(1, ...rows.map(r => r.lastFive));
     $('#sbody').replaceChildren(...rows.map(r => el('tr', {},
       el('td', {}, el('span', { style: `display:inline-block;width:10px;height:10px;border-radius:3px;background:${colors[r.id]};margin-right:8px` }), el('b', { text: r.id })),
       el('td', { text: String(n) }),
       el('td', { text: n < 3 ? `${r.c}/${r.f} (too few)` : `${Math.round(r.c / r.f * 100)}% (${r.c}/${r.f})` }),
-      el('td', {}, el('div', { class: 'row', style: 'flex-wrap:nowrap' }, el('div', { class: 'meter' }, el('i', { style: `width:${r.u / maxU * 100}%;background:${colors[r.id]}` })), el('span', { class: 'mono', text: String(r.u) }))),
+      el('td', {}, el('div', { class: 'row', style: 'flex-wrap:nowrap' }, el('div', { class: 'meter' }, el('i', { style: `width:${r.lastFive / maxU * 100}%;background:${colors[r.id]}` })), el('span', { class: 'mono', text: String(r.lastFive) }))),
       el('td', { text: r.d ? `${r.w}/${r.d}` : '—' }))));
     const idle = rows.filter(r => n >= 5 && r.lastFive === 0);
     const w = $('#swatch');
@@ -654,7 +655,7 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
     ['See plans, leads, and asks', 'bw status', 'Plans, worktrees, leads, inbox, and guard.'],
     ['Answer a lead', 'bw inbox\nbw answer <id> "<text>"', 'The open asks. The lead then reads your answer.'],
     ['Use another lead here', 'bw lead --use <lead>', 'Undo with bw lead --auto.'],
-    ['Record a capped plan', 'bw cap <plan>', 'For leads that do not report usage themselves.'],
+    ['Record a capped plan', 'bw cap <plan>', '"bw: <plan> capped until …". For leads that do not report usage.'],
     ['Check the seats', 'bw seat list', 'One line per seat: verified=, capped=.'],
     ['Re-test after an upgrade', 'bw seat verify', '"bw: recorded a seat pass for …" per seat.'],
     ['See the scoreboard', 'python3 ~/.local/share/balancewheel/metrics/dashboard.py', 'The path of dashboard.html. Open it in a browser.'],

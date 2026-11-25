@@ -52,10 +52,12 @@ You normally never start a panel by hand. The lead convenes one at a checkpoint 
 a plan, a code review, a stuck bug), and you see three lines:
 
 ```text
-Seats: astra, opus. kimi was absent (usage cap).
-7 findings, 5 confirmed, 2 refuted. Most important: the retry loop never stops on a 4xx.
+Review panel (astra, opus; kimi absent: usage cap): 7 findings, 5 confirmed, 2 refuted, 0 dropped.
+Most important: the retry loop never stops on a 4xx.
 One dispute (astra against opus on the lock order). The code agreed with astra.
 ```
+
+Line 1 comes from `bw`. Lines 2 and 3 come from the lead.
 
 ```mermaid
 sequenceDiagram
@@ -87,10 +89,13 @@ Everything is under your home directory.
 **1. Get `bw`.** Clone it to a place that no lead edits, and link the command.
 
 ```sh
+mkdir -p ~/.local/bin
 git clone https://github.com/tensorgroup/balancewheel ~/.local/share/balancewheel
 ln -sf ~/.local/share/balancewheel/bin/bw ~/.local/bin/bw
 ln -sf ~/.local/share/balancewheel/bin/bw-statusline ~/.local/bin/bw-statusline
 ```
+
+Make sure `~/.local/bin` is on your `PATH`. Check with `bw --help`.
 
 > Why a separate clone? A lead can edit its own worktree. If `bw` ran from that worktree,
 > the lead could change the guard of its next session.
@@ -121,8 +126,9 @@ A mistake gives one line and exit status 2. Fix the key it names and run the che
 config error: seatz: unknown key
 ```
 
-Then replace the example's plans, leads, and seats with your own. The example is a working
-combination, not a requirement.
+Keep the example for steps 3 to 5, so that you see the same names as below. Before real
+use, put your own in its place: `plans` (your subscriptions and API keys), `leads`, `seats`,
+and `profiles` (the lead order and the panel rules for each project).
 
 **3. Look at the state.**
 
@@ -144,7 +150,12 @@ guard:
   no judge: gray calls are recorded as asks, nothing is stopped; the guard stays shadow (set guard.model to let it act)
 ```
 
-"quota unknown" is normal on a new machine. It changes after the first lead session.
+- `contained by self` means the tool runs in its own sandbox.
+- The `guard` checks a lead's tool calls. In `shadow` mode it only logs, and blocks nothing.
+- "quota unknown" is normal on a new machine. To let Claude Code report its quota, set
+  `bw-statusline <plan>` as its `statusLine` in `~/.claude/settings.json` (see
+  [first run](docs/leads.md#start-leading-first-run)). For other leads, run `bw cap <plan>`
+  when a plan runs out.
 
 **4. Prove that each seat is read-only.**
 
@@ -175,7 +186,8 @@ bw: recorded a seat pass for codex on …
 The test spends a little model quota. A seat that is capped or not logged in shows
 `seat <id>: pending — <reason>` and does not fail the run.
 
-**5. Open a project with a lead.** Try a dry run first. It changes nothing:
+**5. Open a project with a lead.** Use the path of one of your git repositories in place of
+`~/code/my-project`. Try a dry run first. It changes nothing:
 
 ```sh
 bw start --dry-run ~/code/my-project
@@ -191,7 +203,7 @@ bw start: would run: open -a Terminal ~/.local/state/balancewheel/start/98bf2f5e
 ```
 
 Then run it for real. `bw start` updates your tools, re-checks containment, reads quota, and
-opens the lead in a new Terminal tab:
+opens the lead in a new macOS Terminal tab. On Linux, run `bw` inside the repository instead.
 
 ```sh
 bw start ~/code/my-project
@@ -199,8 +211,9 @@ bw start ~/code/my-project
 
 Inside a project, plain `bw` does the same in the terminal you are in.
 
-**6. Work as usual.** The lead keeps a checkpoint and convenes panels. When its plan runs
-out, `bw` stops it, writes a handoff, and starts the next lead in your profile's order.
+**6. Work as usual.** The lead keeps a checkpoint and convenes panels. When its plan is
+capped (the status line reports it for Claude Code; `bw cap <plan>` records it for other
+leads), `bw` stops the lead, writes a handoff, and starts the next lead in your profile's order.
 
 **7. Answer what only you can answer.**
 
@@ -240,7 +253,7 @@ setup by your own agent, use the paste-in prompts in [Getting started](#getting-
 | See plans, leads, and asks | `bw status` | plans, worktrees, leads, inbox, guard |
 | Answer a lead's question | `bw inbox`, then `bw answer <id> "<text>"` | the open asks; then the lead reads your answer |
 | Use a different lead here | `bw lead --use <lead>` (undo: `bw lead --auto`) | that lead starts here; a change from the profile order is logged |
-| Record that a plan ran out | `bw cap <plan>` | the next lead takes over at the next boundary |
+| Record that a plan ran out | `bw cap <plan>` | `bw: <plan> capped until …`; the running lead switches at the next check |
 | Check the seats | `bw seat list` | one line per seat: `verified=`, `capped=` |
 | Re-test a seat after an upgrade | `bw seat verify <id>` | `bw: recorded a seat pass for …` |
 | See the scoreboard | `python3 ~/.local/share/balancewheel/metrics/dashboard.py` | the path of `dashboard.html` |
@@ -254,14 +267,16 @@ All commands: `bw --help`, or [docs/leads.md](docs/leads.md).
 
 ```mermaid
 flowchart TD
-    a["Lead A works<br/>(preferred plan)"] -->|plan capped| stop["bw stops Lead A<br/>at a turn boundary"]
+    a["Lead A works<br/>(preferred plan)"] -->|plan capped| stop["bw stops Lead A<br/>at its next check"]
     stop --> h["bw writes a handoff:<br/>git facts + last checkpoint"]
     h --> b["Lead B starts<br/>(next in lead_order)"]
     b -->|continues the 'next:' line| w["work goes on"]
-    w -->|preferred plan resets| a
+    w -->|"plan A resets, you quit Lead B"| a
 ```
 
-`bw` never switches in the middle of a turn, and never for a plan that is only low.
+`bw` switches a running lead only when its plan is capped, never when the plan is only low.
+After the preferred plan resets, Lead B keeps running. When you quit it, `bw` says that Lead A
+is available again, and your next `bw` starts Lead A.
 
 ## The core ideas (one screen)
 
@@ -286,16 +301,16 @@ flowchart TD
 
 ## It gets better with use
 
-The standing goal: working with balancewheel gets easier, faster, and better the more it is used,
-for everyone working together on a project. So it watches how you actually work. `bw improve` reads
-what is already recorded (decisions you reversed, questions you only agreed with, session ratings,
-cap switches, leads you forced by hand, seats that keep missing panels) plus the one-line `@improve`
-notes leads publish when you correct them, and names the specific change each pattern points to,
-with its evidence. Every rule has a minimum sample, so a thin log says nothing rather than a guess.
-It only looks at the last 30 days, and `bw improve done` means a suggestion returns only on new
-evidence. It never suggests weakening the safety checks. It changes nothing itself: config and
-protocol edits stay yours. A one-line nudge before a lead
-starts tells you when there is something to look at.
+`bw improve` reads the last 30 days of your log. It looks for patterns: decisions you
+reversed, questions you only agreed with, session ratings, cap switches, leads you forced by
+hand, seats that keep missing panels, and the one-line `@improve` notes leads write when you
+correct them. For each pattern it names one change, with the evidence.
+
+- Every rule needs a minimum sample. On a thin log it says nothing.
+- It never changes your config or your rules. You make each change.
+- It never suggests weaker safety checks.
+- `bw improve done <key>` hides a suggestion until new evidence appears.
+- Before a lead starts, `bw` prints one line when there is something to look at.
 
 ## How it works, in more detail
 
