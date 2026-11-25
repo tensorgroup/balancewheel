@@ -352,7 +352,9 @@ once for each bw-contained lead runtime.
    `bw seat list` shows the state of each seat. Each seat has its own login step:
    - **Claude seat.** The keychain login does not carry over to the seat's private home. Run
      `claude setup-token` once. Export `CLAUDE_CODE_OAUTH_TOKEN` in the shell that runs `bw`.
-     Without it, the Claude seat is absent with a "no login" reason.
+     Without it, the Claude seat is absent with a "no login" reason. Put the export in your
+     shell profile: the Terminal tab that `bw start` opens does not get variables you exported
+     only by hand.
    - **Codex seat.** It uses the real `~/.codex/auth.json`. The sandbox grants read and write
      on that one file only.
    - **agy seat.** It keeps the real home, because its login does not carry over. Only its own

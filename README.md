@@ -82,9 +82,10 @@ sequenceDiagram
 
 ## Quick start
 
-About 15 minutes. You need Python 3.9 or newer, git, and at least one vendor CLI that you
-are logged in to (for example Claude Code, Codex CLI, or pi). Nothing installs system-wide.
-Everything is under your home directory.
+About 15 minutes, on macOS. You need Python 3.9 or newer, git, and at least one vendor CLI
+that you are logged in to (for example Claude Code, Codex CLI, or pi). Nothing installs
+system-wide. Everything is under your home directory. Other systems need their own sandbox
+setup, and every seat must still pass `bw seat verify`.
 
 **1. Get `bw`.** Clone it to a place that no lead edits, and link the command.
 
@@ -95,7 +96,13 @@ ln -sf ~/.local/share/balancewheel/bin/bw ~/.local/bin/bw
 ln -sf ~/.local/share/balancewheel/bin/bw-statusline ~/.local/bin/bw-statusline
 ```
 
-Make sure `~/.local/bin` is on your `PATH`. Check with `bw --help`.
+If your shell does not find `bw`, add the folder to your `PATH` (and to your shell profile,
+so that new terminals get it too). The second command lists the commands:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+bw --help
+```
 
 > Why a separate clone? A lead can edit its own worktree. If `bw` ran from that worktree,
 > the lead could change the guard of its next session.
@@ -126,9 +133,11 @@ A mistake gives one line and exit status 2. Fix the key it names and run the che
 config error: seatz: unknown key
 ```
 
-Keep the example for steps 3 to 5, so that you see the same names as below. Before real
-use, put your own in its place: `plans` (your subscriptions and API keys), `leads`, `seats`,
-and `profiles` (the lead order and the panel rules for each project).
+Step 3 shows what the example looks like. Before step 4, edit the config for the tools and
+accounts you have: `tools`, `plans` (your subscriptions and API keys), `leads`, `seats`, and
+`profiles` (the lead order and the panel rules for each project). Remove what you do not use,
+and remove the references to it. Then run the check again. Otherwise step 4 spends quota on
+seats you do not use, and step 5 updates tools you did not install.
 
 **3. Look at the state.**
 
@@ -169,8 +178,15 @@ opus  claude-code  claude-opus-5-5  plan=claude-plan  fallback=-  tier=default  
 …
 ```
 
-A seat with `verified=no` never runs in a panel. Log each seat in first (see
-[seat logins](docs/leads.md#start-leading-first-run)), then attack-test them all:
+A seat with `verified=no` never runs in a panel. Log each seat in first. Two seats need more
+than the CLI's own login:
+
+- A Claude seat: run `claude setup-token`, and export the token as `CLAUDE_CODE_OAUTH_TOKEN`.
+- A pi seat: export `OPENROUTER_API_KEY`.
+
+Put these in your shell profile, not only in this terminal: the lead that `bw start` opens
+runs in a new terminal. Details: [seat logins](docs/leads.md#start-leading-first-run). Then
+attack-test every seat:
 
 ```sh
 bw seat verify
@@ -193,6 +209,9 @@ The test spends a little model quota. A seat that is capped or not logged in sho
 bw start --dry-run ~/code/my-project
 ```
 
+An excerpt (your output has one line per tool and per plan). Read every `would update` line
+before you continue:
+
 ```text
 bw start: dry run for ~/code/my-project (profile product); nothing is run or written
 bw start: would update claude: claude update · lock runtime-claude-code · installer claude
@@ -209,11 +228,16 @@ opens the lead in a new macOS Terminal tab. On Linux, run `bw` inside the reposi
 bw start ~/code/my-project
 ```
 
-Inside a project, plain `bw` does the same in the terminal you are in.
+Inside a project, plain `bw` starts the lead in the terminal you are in. It does not update
+tools or run checks.
 
 **6. Work as usual.** The lead keeps a checkpoint and convenes panels. When its plan is
 capped (the status line reports it for Claude Code; `bw cap <plan>` records it for other
 leads), `bw` stops the lead, writes a handoff, and starts the next lead in your profile's order.
+
+Try a first review. With some uncommitted changes in the repository, tell the lead: "Review
+my uncommitted changes with a review panel, and check each finding against the code." Look for
+a summary like the one in [What a panel looks like](#what-a-panel-looks-like).
 
 **7. Answer what only you can answer.**
 
@@ -225,7 +249,8 @@ bw inbox
 bw: inbox empty
 ```
 
-When a lead has a question for you, it shows here. Answer with `bw answer <id> "<text>"`.
+When a lead has a question for you, it shows here. Answer with `bw answer <id> "<text>"`,
+then tell the lead to read its inbox.
 
 **8. Read the scoreboard.**
 
@@ -248,10 +273,10 @@ setup by your own agent, use the paste-in prompts in [Getting started](#getting-
 
 | I want to… | Run | You see |
 |---|---|---|
-| Work on a project | `bw` (inside the project) | the lead starts in this terminal |
+| Work on a project | `bw` (inside the project) | the lead starts in this terminal (no updates, no checks) |
 | Open a project in a new tab | `bw start [path]` | one line per tool, quota, then `opened a Terminal tab for …` |
 | See plans, leads, and asks | `bw status` | plans, worktrees, leads, inbox, guard |
-| Answer a lead's question | `bw inbox`, then `bw answer <id> "<text>"` | the open asks; then the lead reads your answer |
+| Answer a lead's question | `bw inbox`, then `bw answer <id> "<text>"` | the open asks; then `… tell it to look`: tell the lead to read its inbox |
 | Use a different lead here | `bw lead --use <lead>` (undo: `bw lead --auto`) | that lead starts here; a change from the profile order is logged |
 | Record that a plan ran out | `bw cap <plan>` | `bw: <plan> capped until …`; the running lead switches at the next check |
 | Check the seats | `bw seat list` | one line per seat: `verified=`, `capped=` |

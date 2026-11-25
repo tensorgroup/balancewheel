@@ -219,7 +219,7 @@ footer { margin-top: 60px; color: var(--ink-3); font-size: 13px; border-top: 1px
   <section class="hero" aria-labelledby="t-hero">
     <div>
       <div class="kicker">Moderated multi-model review</div>
-      <h1 id="t-hero">Other vendors' agents review your work. You keep the receipts.</h1>
+      <h1 id="t-hero">Other vendors' agents review your work. The results choose your reviewers.</h1>
       <p class="lede">You work in one agent, the <b>lead</b>. At a checkpoint it asks other vendors' agents, the <b>seats</b>, to review. The seats can read your code. They cannot change it. The lead checks every finding in the code and logs the result. The log becomes a scoreboard.</p>
       <div class="row">
         <a class="btn primary" href="#panel">▶ Watch a panel</a>
@@ -306,7 +306,7 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
   <section id="quickstart" aria-labelledby="t-qs">
     <div class="kicker">About 15 minutes</div>
     <h2 id="t-qs">Quick start, with what you should see</h2>
-    <p class="sub">Every output below is copied from a real run on the example config. Paths are shortened. You need Python 3.9+, git, and one vendor CLI you are logged in to.</p>
+    <p class="sub">Every output below is copied from a real run on the example config. Paths are shortened, and long outputs are cut. The steps assume macOS. You need Python 3.9+, git, and one vendor CLI you are logged in to.</p>
     <div class="qs">
       <div class="card"><ol id="qslist" aria-label="Quick start steps"></ol></div>
       <div class="card pane" id="qspane" aria-live="polite"></div>
@@ -455,6 +455,7 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
     for (const f of findings) {
       const n = findEls[f.id], v = n.querySelector('.verdict');
       n.classList.toggle('show', at('blind'));
+      n.setAttribute('aria-hidden', String(!at('blind')));
       n.classList.toggle('dispute', !!f.dispute && (k === 'merge' || k === 'dispute'));
       n.classList.toggle('dropped', f.fate === 'dropped' && at('filter'));
       const judged = at('verify') && f.fate !== 'dropped';
@@ -494,11 +495,11 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
     { t: 'Get bw', why: 'Clone it to a place that no lead edits, and link the command.',
       cmd: 'mkdir -p ~/.local/bin\ngit clone https://github.com/tensorgroup/balancewheel ~/.local/share/balancewheel\nln -sf ~/.local/share/balancewheel/bin/bw ~/.local/bin/bw\nln -sf ~/.local/share/balancewheel/bin/bw-statusline ~/.local/bin/bw-statusline',
       out: [['dim', "Cloning into '~/.local/share/balancewheel'..."]],
-      means: '<b>Make sure <code>~/.local/bin</code> is on your PATH.</b> Why a separate clone? A lead can edit its own worktree. If <code>bw</code> ran from there, the lead could change the guard of its next session.' },
+      means: '<b>Shell does not find <code>bw</code>?</b> Run <code>export PATH="$HOME/.local/bin:$PATH"</code>, and add it to your shell profile. Why a separate clone? A lead can edit its own worktree. If <code>bw</code> ran from there, the lead could change the guard of its next session.' },
     { t: 'Make a config', why: 'Start from the example. Then check it.',
       cmd: 'mkdir -p ~/.config/balancewheel\ncp ~/.local/share/balancewheel/balancewheel.example.json ~/.config/balancewheel/config.json\npython3 ~/.local/share/balancewheel/metrics/log.py config',
       out: [['', '{\n  "schema_version": 3,\n  "canvas": "terminal",\n  "plans": {\n    "claude-plan": {\n      "vendor": "anthropic",\n  …'], ['ok', '\n(exit status 0)']],
-      means: '<b>Exit 0:</b> the config is valid. A mistake prints one line, for example <code>config error: seatz: unknown key</code>, and exit status 2. Keep the example for the next steps. Before real use, put your own plans, leads, seats, and profiles in its place.' },
+      means: '<b>Exit 0:</b> the config is valid. A mistake prints one line, for example <code>config error: seatz: unknown key</code>, and exit status 2. Look at the next step with the example. Then, before you verify seats, edit <code>tools</code>, <code>plans</code>, <code>leads</code>, <code>seats</code>, and <code>profiles</code> for what you have, and remove the rest.' },
     { t: 'Look at the state', why: 'One command shows plans, leads, asks, and the guard.',
       cmd: 'bw status',
       out: [['', 'plans:\n  chatgpt-plan (plan): quota unknown — quota: none\n  claude-plan (plan): quota unknown — statusline: no reading\n    no quota reading yet; rotation is using observed caps only\n  …\nleads:\n  astra: codex gpt-6-astra on chatgpt-plan · contained by self\n  claude: claude-code opus on claude-plan · contained by self\ninbox: empty\nguard:\n  no judge: gray calls are recorded as asks, nothing is stopped; the guard stays shadow (set guard.model to let it act)']],
@@ -507,22 +508,22 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
       cmd: 'bw seat list',
       out: [['', 'astra  codex  gpt-6-astra  plan=chatgpt-plan  fallback=gem  tier=default  '], ['bad', 'verified=no (never verified)'], ['', '  capped=no\nopus  claude-code  claude-opus-5-5  plan=claude-plan  fallback=-  tier=default  '], ['bad', 'verified=no (never verified)'], ['', '  capped=no\n…']],
       means: '<b>verified=no</b> means the seat never runs in a panel. The next step fixes that.' },
-    { t: 'Prove the seats are read-only', why: 'Log each seat in first. Then attack-test them: each seat is told to write a file, on a new and a resumed session. The write must fail.',
+    { t: 'Prove the seats are read-only', why: 'Log each seat in first. A Claude seat needs CLAUDE_CODE_OAUTH_TOKEN (from claude setup-token); a pi seat needs OPENROUTER_API_KEY. Put them in your shell profile. Then attack-test: each seat is told to write a file, on a new and a resumed session. The write must fail.',
       cmd: 'bw seat verify\nbw seat list',
       out: [['dim', '… the attack runs for each seat …\n'], ['ok', 'bw: recorded a seat pass for codex on …'], ['', '\nastra  codex  gpt-6-astra  plan=chatgpt-plan  …  '], ['ok', 'verified=yes'], ['', '  capped=no']],
       means: '<b>It spends a little model quota.</b> A seat that is capped or not logged in shows <code>seat &lt;id&gt;: pending — &lt;reason&gt;</code>. That is not a failure. Run it again after a CLI upgrade.' },
-    { t: 'Open a project (dry run)', why: 'Use the path of one of your git repositories. See what bw start would do. Nothing runs and nothing is written.',
+    { t: 'Open a project (dry run)', why: 'Use the path of one of your git repositories. See what bw start would do. Nothing runs and nothing is written. This is an excerpt: read every "would update" line in yours.',
       cmd: 'bw start --dry-run ~/code/my-project',
       out: [['', 'bw start: dry run for ~/code/my-project (profile product); nothing is run or written\nbw start: would update claude: claude update · lock runtime-claude-code · installer claude\nbw start: would read quota for plan claude-plan\nbw start: would check seats in the background\n'], ['ok', 'bw start: lead: claude (order)'], ['', '\nbw start: would run: open -a Terminal ~/.local/state/balancewheel/start/98bf2f5e3750.command']],
       means: '<b>lead: claude (order)</b> means the first lead in the profile\'s order would start.' },
     { t: 'Open it for real', why: 'Update the tools, re-check containment, read quota, and open the lead in a new macOS Terminal tab.',
       cmd: 'bw start ~/code/my-project',
       out: [['', 'bw start: claude: 2.4.1 → 2.4.1 current (1.2s)\n…\nbw start: lead: claude (order)\n'], ['ok', 'bw start: opened a Terminal tab for ~/code/my-project'], ['', '\nbw start: checking seats in the background (log: …)']],
-      means: '<b>Inside a project, plain <code>bw</code></b> starts the lead in the terminal you are in. On Linux, use that. The version numbers here are an example.' },
+      means: '<b>Try a first review:</b> tell the lead "Review my uncommitted changes with a review panel, and check each finding against the code." Inside a project, plain <code>bw</code> starts the lead in this terminal, with no updates and no checks. The version numbers here are an example.' },
     { t: 'Answer and improve', why: 'Questions only you can answer reach you as files. bw also learns from how you work.',
       cmd: 'bw inbox\nbw improve',
       out: [['', 'bw: inbox empty\nbw: nothing to change yet; the evidence builds as you work']],
-      means: '<b>When a lead asks something,</b> it shows in <code>bw inbox</code>. Answer with <code>bw answer &lt;id&gt; "&lt;text&gt;"</code>. The lead reads your answer from a file only bw writes.' },
+      means: '<b>When a lead asks something,</b> it shows in <code>bw inbox</code>. Answer with <code>bw answer &lt;id&gt; "&lt;text&gt;"</code>, then tell the lead to read its inbox. It reads your answer from a file only bw writes.' },
   ];
   const qslist = $('#qslist'), qspane = $('#qspane');
   let qcur = 0, typing = null;
@@ -555,12 +556,14 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
     const prev = el('button', { class: 'btn', type: 'button', text: '◀ Back', onclick: () => qshow(qcur - 1) });
     const next = el('button', { class: 'btn primary', type: 'button', text: qcur === qs.length - 1 ? 'Done ✓' : 'Next ▶', onclick: () => qshow(qcur === qs.length - 1 ? 0 : qcur + 1) });
     prev.disabled = qcur === 0;
+    const moveFocus = qspane.contains(document.activeElement);
     qspane.replaceChildren(
       el('div', { class: 'kicker', text: `Step ${qcur + 1} of ${qs.length}` }),
       el('h3', { text: s.t }), el('p', { class: 'why', text: s.why }),
       cmdBox(s.cmd),
       el('div', { class: 'term-head', 'aria-hidden': 'true' }, el('i'), el('i'), el('i')),
       term, means, el('div', { class: 'nav' }, prev, next));
+    if (moveFocus) { const h = qspane.querySelector('h3'); h.tabIndex = -1; h.focus({ preventScroll: true }); }
     typeOut(term, [['p', '$ ' + s.cmd.split('\n').join('\n$ ') + '\n'], ...s.out]);
   }
   qshow(0);
@@ -650,10 +653,10 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
 
   /* ── CHEAT SHEET ──────────────────────────────────────────────── */
   const cheats = [
-    ['Work on a project', 'bw', 'Inside a project: the lead starts in this terminal.'],
+    ['Work on a project', 'bw', 'Inside a project: the lead starts in this terminal. No updates, no checks.'],
     ['Open a project in a new tab', 'bw start ~/code/my-project', 'One line per tool, quota per plan, then "opened a Terminal tab".'],
     ['See plans, leads, and asks', 'bw status', 'Plans, worktrees, leads, inbox, and guard.'],
-    ['Answer a lead', 'bw inbox\nbw answer <id> "<text>"', 'The open asks. The lead then reads your answer.'],
+    ['Answer a lead', 'bw inbox\nbw answer <id> "<text>"', 'The open asks. Then tell the lead to read its inbox.'],
     ['Use another lead here', 'bw lead --use <lead>', 'Undo with bw lead --auto.'],
     ['Record a capped plan', 'bw cap <plan>', '"bw: <plan> capped until …". For leads that do not report usage.'],
     ['Check the seats', 'bw seat list', 'One line per seat: verified=, capped=.'],
