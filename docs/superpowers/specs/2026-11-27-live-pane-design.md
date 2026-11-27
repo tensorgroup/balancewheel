@@ -1,6 +1,7 @@
 # Live pane, run events, and the local layer — design
 
-Date: 2026-11-27. Status: approved direction (approach 1 below), revised after a design
+Date: 2026-11-27 (synced with the plan panel the same day: direct append first, the `beat`
+phase, `run_max_s` in `bw live`'s `local`). Status: approved direction (approach 1 below), revised after a design
 panel (astra, opus, kimi, flash) and a builder check. Clean-room: this design and the code
 built from it are written from public requirements only (see Constraints).
 
@@ -101,6 +102,10 @@ Appended through `store.append()` (which adds `ts`, second precision):
  "duration_s": 12.4, "tokens_in": 0, "tokens_out": 0, "cost_usd": null, "ctx_peak": 0}
 ```
 
+- **Heartbeat.** While its child runs, `bw run --` also writes
+  `{"type": "run", "phase": "beat", "run_id": "...", "t": 0.0, "seat": "...", "dir": "..."}` every
+  `local.run_max_s / 2`. A long run then always has a row inside `bw live`'s read window, and the
+  `run_max_s` rule below counts from the newest beat. The `start`/`end` form writes no beats.
 - `t` is a float epoch (the row's own high-resolution time; `ts` stays as `append` writes
   it). The end row repeats `seat` and `dir`, so an end whose start is out of reach still
   shows.
@@ -116,8 +121,8 @@ Appended through `store.append()` (which adds `ts`, second precision):
   `session_id`) to `bw seat`, for round one and for asks; the rows carry them.
 - **Dead runs.** A start with no end is shown as live only while its `pid` is alive on the
   same `host` (`os.kill(pid, 0)`); otherwise it is `ended: unknown`. When `host` differs or
-  `pid` is absent (older rows), it is live until `local.run_max_s` (default 2700 s), then
-  `stale`. For panel seats, panel state that shows the seat done also closes it.
+  `pid` is absent (older rows), it is live until `local.run_max_s` (default 2700 s) after its
+  newest start or beat row, then `stale`. For panel seats, panel state that shows the seat done also closes it.
 
 ### 2. `bw run`
 
@@ -136,8 +141,11 @@ bw run end RUN_ID (--ok | --fail [--reason R])
   everything else goes to stderr. Both exit 0 when tracking fails. `end` refuses to close a
   run whose start row says `source: bw`.
 - `source` is always `local` for `bw run`.
-- **Inside a contained lead**, bw's state folder is not writable (by design). There `bw run`
-  (seen by `BW_CHECKPOINT`) writes a small request file to `<checkpoint>/runs/` instead; the
+- **Inside a contained lead**, bw's state folder is not writable (by design). `bw run` always
+  tries a direct append to the log first (`BW_CHECKPOINT` is set for every lead bw starts, contained
+  or not). Only when that append fails and `BW_CHECKPOINT` is set does it write a small request file
+  to `<checkpoint dir>/runs/` instead. `bw run end` finds the start in the log or in those files, and
+  an end request may omit `seat` and `dir` (the service fills them from the start); the
   panel service, which already watches checkpoint folders, validates each (bounded fields,
   `source` forced to `local`, `dir` forced to that worktree) and appends it. With no service
   running, `bw live` reads pending request files read-only, so the lane still shows.
@@ -192,14 +200,15 @@ does), `--since EPOCH` (default: 24 h ago), `--limit N` (default 50). Output `v:
  "local":  {"seats": [{"name": "...", "match": "...", "metric": "...", "model": "...",
                        "icon": "...", "color": "..."}],
             "logs": [{"path": "...", "ok": true, "error": null}],
-            "families": {"...": "#rrggbb"}},
+            "families": {"...": "#rrggbb"}, "run_max_s": 2700},
  "panels": [{"panel": "p0123abc", "state": "running", "seats": {"<seat>": "running"},
              "asks": [{"id": "...", "seat": "...", "state": "running"}]}]}
 ```
 
 - **Reading.** Each log is read backward in chunks until the read covers
-  `min(since, now - run_max_s)`. Any start older than `run_max_s` is stale by definition,
-  so this finds every live run without a full scan. A cut line at either end of a chunk is
+  `min(since, now - run_max_s)`. A live `bw run` writes a beat row every `run_max_s / 2`, and a
+  `bw seat` run is shorter than its cap, so every live run has a row in that window and no full
+  scan is needed (the read also covers the panel's deep cap). A cut line at either end of a chunk is
   skipped. A per-read cap (64 MB) sets `complete: false` when it is hit. A missing or
   unreadable log is reported in `local.logs[].error`, never fatal.
 - **Open runs** come from start rows without an end, plus panel seats and asks in a running
