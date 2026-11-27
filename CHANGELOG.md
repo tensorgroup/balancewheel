@@ -15,6 +15,13 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **The `run` row and `store.read_tail` (`metrics/store.py`).** A new log row type, `run`, records one seat or
+  local run: `{"type": "run", "phase": "start" | "beat" | "end", "run_id": "r<12 hex>", "t": <float epoch>, "seat",
+  "dir", ...}`. A start row adds `model`, `label`, `source` (`bw` | `local`), `panel`, `session_id`, `pid`, `host`, and
+  `stand_in_for`; an end row adds `ok`, `reason`, `duration_s`, `tokens_in`, `tokens_out`, `cost_usd`, and
+  `ctx_peak`. `store.load()` keeps them in file order under `"runs"`. `store.read_tail(path, since)` reads only the
+  end of the log, backward in 256 KiB chunks, and stops at the first row appended before `since` or after 64 MiB
+  (`complete` is then False). `store.row_time` gives a row's `t` (else its `ts`).
 - **`bw pack export --to <dir> [--dry-run]` (`packs/export.py`).** It rewrites the `# bw:catalog:begin` / `# bw:catalog:end` block of esc's `model-seats` `pack.yaml` and its version (minor on a status, model, or membership change; patch on numbers only). It refuses a wrong name, a dirty file, a `pack.yaml` git does not track (untracked or ignored), and missing markers. It saves esc's changelog bullet to `state_dir/packs/` and logs a `pack_export` event. It reads every log in `improve.panel_logs`.
 - **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.
 - **The guard review offer (`lead/guard/offer.py`).** On a terminal, before the lead opens, `bw start` offers a

@@ -4,17 +4,27 @@ Append-only. Later events amend earlier ones:
   watch-update  {"type":"watch-update","watch_id":…,"status":"open|resolved|dismissed","note":…}
   panel-amend   {"type":"panel-amend","panel_id":… (legacy: "panel_ts"),"findings_detail":[…],…,"note":…}
 load() folds these and normalises legacy shapes; nothing else should parse the raw lines.
+Other rows load() keeps as written, by type, for example:
+  run           {"type":"run","phase":"start|beat|end","run_id":"r<12 hex>","t":<float epoch>,"seat":…,"dir":…,…}
+                one seat or local run; load() keeps them in file order under "runs".
+read_tail() reads only the end of the log, backward in chunks, for the live view.
 """
 import fcntl
 import hashlib
 import json
+import math
 import os
+from collections import namedtuple
 from datetime import datetime, timezone
 from pathlib import Path
 
 PANEL_AMENDABLE = ("findings_detail", "findings", "findings_raw", "findings_after_triage", "notes")
 COUNT_KEYS = ("total", "confirmed", "refuted", "partial", "unique")
 WATCH_STATUSES = ("open", "resolved", "dismissed")
+TAIL_CHUNK = 256 * 1024
+TAIL_CAP = 64 * 1024 * 1024
+TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+Tail = namedtuple("Tail", "events complete error")
 
 
 def now_ts():
@@ -77,6 +87,94 @@ def read_events(path):
             continue
         events.append(obj)
     return events, warnings
+
+
+def _parse_ts(ts):
+    try:
+        return datetime.strptime(ts, TS_FORMAT).replace(tzinfo=timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def row_time(event):
+    """The row's own time: `t` when it is a finite number (not a bool), else `ts`, else None."""
+    t = event.get("t")
+    if isinstance(t, (int, float)) and not isinstance(t, bool):
+        try:
+            if math.isfinite(t):
+                return float(t)
+        except OverflowError:
+            pass
+    return _parse_ts(event.get("ts"))
+
+
+def written_time(event):
+    """The append time (`ts`), else row_time. The log is in this order; a row ingested late keeps an old `t`."""
+    w = _parse_ts(event.get("ts"))
+    return w if w is not None else row_time(event)
+
+
+def _parse_line(raw):
+    """One raw line to an event dict with a string `type`, else None (blank, cut, or not an event)."""
+    line = raw.decode("utf-8", errors="replace")
+    if not line.strip():
+        return None
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict) or not isinstance(obj.get("type"), str):
+        return None
+    return obj
+
+
+def read_tail(path, since, cap=TAIL_CAP, chunk=TAIL_CHUNK):
+    """Events with row_time >= since, in file order, read backward from the end in chunks.
+    It stops at the first chunk that holds a row written before `since` (the cover point), or after
+    `cap` bytes; complete is False only when the cap stopped it before the cover point and the file start.
+    A missing file is Tail([], True, None); any other OSError is Tail([], False, "<strerror>")."""
+    try:
+        f = open(path, "rb")
+    except FileNotFoundError:
+        return Tail([], True, None)
+    except OSError as e:
+        return Tail([], False, e.strerror or type(e).__name__)
+    out, carry, read, complete = [], b"", 0, True
+    try:
+        with f:
+            pos = os.fstat(f.fileno()).st_size
+            while pos > 0:
+                if read >= cap:
+                    complete = False  # the cap stopped us before the cover point and the file start
+                    break
+                n = min(chunk, pos, cap - read)
+                pos -= n
+                f.seek(pos)
+                buf = f.read(n) + carry
+                read += n
+                parts = buf.split(b"\n")
+                # the first piece may be cut by the chunk edge: carry it into the next read
+                carry, body = (parts[0], parts[1:]) if pos > 0 else (b"", parts)
+                oldest = None
+                for raw in reversed(body):
+                    e = _parse_line(raw)
+                    if e is None:
+                        continue
+                    out.append(e)
+                    w = written_time(e)  # append time: the file is in this order, `t` is not
+                    if w is not None:
+                        oldest = w if oldest is None else min(oldest, w)
+                if oldest is not None and oldest < since - 1:  # `ts` has 1 s precision
+                    break
+    except OSError as e:
+        return Tail([], False, e.strerror or type(e).__name__)
+    out.reverse()
+    kept = []
+    for e in out:
+        t = row_time(e)
+        if t is not None and t >= since:  # 0.0 is a time
+            kept.append(e)
+    return Tail(kept, complete, None)
 
 
 def locked(path):
@@ -223,6 +321,7 @@ def load(path):
     guard_modes = [e for e in events if e.get("type") == "guard_mode"]
     asks = [e for e in events if e.get("type") == "ask"]
     answers = [e for e in events if e.get("type") == "answer"]
+    runs = [e for e in events if e.get("type") == "run"]
     panel_runs, run_ids = [], set()
     for e in events:  # a crash between append and mark can repeat a panel's event: keep the first
         if e.get("type") != "panel_run" or (e.get("panel_id") is not None and e.get("panel_id") in run_ids):
@@ -231,7 +330,7 @@ def load(path):
         run_ids.add(e.get("panel_id"))
     return {"usage": usage, "panels": panels, "watches": watches, "events": events, "warnings": warnings,
             "sessions": sessions, "leads": leads, "ratings": ratings, "guards": guards, "guard_modes": guard_modes, "asks": asks,
-            "answers": answers, "panel_runs": panel_runs}
+            "answers": answers, "panel_runs": panel_runs, "runs": runs}
 
 
 def append(path, event):

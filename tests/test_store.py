@@ -1,4 +1,5 @@
 import hashlib, json, os, sys, tempfile, threading, unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -6,6 +7,10 @@ sys.path.insert(0, str(HERE.parent / "metrics"))
 import store  # noqa: E402
 
 FX = HERE / "fixtures"
+
+
+def store_ts(n):
+    return datetime.fromtimestamp(n, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class GuardEvents(unittest.TestCase):
@@ -207,6 +212,56 @@ class Append(unittest.TestCase):
             events, warnings = store.read_events(p)
             self.assertEqual(len(events), 20)
             self.assertEqual(warnings, [])
+
+
+class Tail(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, ignore_errors=True)
+        self.log = os.path.join(d, "m.jsonl")
+
+    def test_read_tail_matches_forward_read_for_every_chunk_size(self):
+        rows = [{"type": "run", "phase": "start", "run_id": f"r{i:012x}", "t": 1000.0 + i, "seat": "s"} for i in range(40)]
+        rows[15]["label"] = "x" * 300                     # in range, and longer than every small chunk
+        body = "\n".join(json.dumps(r) for r in rows) + "\n\n" + '{"type": "run", "t": 99'  # blank line + cut tail
+        Path(self.log).write_text(body)
+        want = [r for r in rows if r["t"] >= 1010.0]
+        for chunk in range(1, 65):
+            t = store.read_tail(self.log, 1010.0, chunk=chunk)
+            self.assertEqual((t.events, t.complete, t.error), (want, True, None), chunk)
+
+    def test_a_late_row_with_an_old_t_does_not_stop_the_read(self):
+        rows = [{"type": "run", "t": 1000.0 + i, "ts": store_ts(1000 + i)} for i in range(30)]
+        rows.append({"type": "run", "t": 900.0, "ts": store_ts(1030)})   # ingested late: old t, new ts
+        Path(self.log).write_text("".join(json.dumps(r) + "\n" for r in rows))
+        t = store.read_tail(self.log, 1010.0, chunk=40)
+        self.assertEqual([e["t"] for e in t.events], [1000.0 + i for i in range(10, 30)])
+
+    def test_read_tail_stops_at_the_cap(self):
+        lines = [json.dumps({"type": "usage", "t": 1000.0 + i}) + "\n" for i in range(100)]   # every line is 31 bytes
+        Path(self.log).write_text("".join(lines))
+        t = store.read_tail(self.log, 0.0, cap=230, chunk=100)   # 230 is not a multiple of 100
+        self.assertFalse(t.complete)
+        self.assertEqual([e["t"] for e in t.events], [1093.0 + i for i in range(7)])   # only lines whole in the last 230 bytes
+
+    def test_a_file_smaller_than_the_cap_is_complete(self):
+        Path(self.log).write_text(json.dumps({"type": "usage", "t": 0.0}) + "\n")   # t == 0.0 is a valid time
+        t = store.read_tail(self.log, 0.0, cap=10_000, chunk=7)
+        self.assertEqual((len(t.events), t.complete), (1, True))
+
+    def test_read_tail_missing_and_unreadable(self):
+        self.assertEqual(store.read_tail(self.log + ".nope", 0.0), store.Tail([], True, None))
+        os.mkdir(self.log)                                 # a directory: open() fails
+        t = store.read_tail(self.log, 0.0); self.assertEqual((t.events, t.complete), ([], False)); self.assertTrue(t.error)
+
+    def test_row_time_prefers_t_then_ts(self):
+        self.assertEqual(store.row_time({"t": 5.5, "ts": "2026-11-27T00:00:00Z"}), 5.5)
+        self.assertEqual(store.row_time({"ts": "1970-01-01T00:00:10Z"}), 10.0)
+        self.assertIsNone(store.row_time({"t": True})); self.assertIsNone(store.row_time({"ts": "bad"}))
+
+    def test_load_keeps_run_rows(self):
+        store.append(self.log, {"type": "run", "phase": "start", "run_id": "r0123456789ab", "t": 1.0})
+        self.assertEqual([e["run_id"] for e in store.load(self.log)["runs"]], ["r0123456789ab"])
 
 
 class LogPath(unittest.TestCase):
