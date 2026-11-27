@@ -1138,7 +1138,7 @@ git commit -m "feat: bw setup claude-pane and the live pane check at claude code
 - Modify: `CHANGELOG.md [Unreleased]` (check that every earlier task's line is there; one summary line for the pane)
 - Modify: `docs/stack.md` (preamble date and "what changed")
 - Modify: `balancewheel.example.json` (`"claude_pane": true` and a `local` section with one synthetic seat, as in spec §3; `tests/test_config*` load it, so run them)
-- Modify: `docs/reference-implementation.md:44` (the seat row "Planning seat (\"ox\")" becomes "GLM seat", with one line: it was called "ox" while it ran as OpenRouter's `ox-alpha` preview), `docs/architecture.md:271` (the example `"seat": "ox-agent"` becomes `"glm-agent"`)
+- (Removed 2026-11-27: the old "ox"/GLM seat is retired and replaced by `flash` on branch `docs/retire-glm`, merged to `main`; this branch takes it in when it merges `main` before finishing. Do not edit `docs/reference-implementation.md` or `docs/architecture.md` for it here.)
 
 - [ ] **Step 1: Check every doc claim against the code**
 
@@ -1153,7 +1153,7 @@ Expected: `OK` (or `OK (skipped=N)`), with more tests than the 2337 at baseline.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add docs/leads.md docs/usage-map/infra.js docs/usage-map/data.generated.js docs/stack.md CHANGELOG.md balancewheel.example.json docs/reference-implementation.md docs/architecture.md
+git add docs/leads.md docs/usage-map/infra.js docs/usage-map/data.generated.js docs/stack.md CHANGELOG.md balancewheel.example.json
 git commit -m "docs: the live pane, bw run, bw live, and the local layer"
 ```
 
