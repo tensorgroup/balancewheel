@@ -91,9 +91,9 @@
       "plan": "chatgpt-plan",
       "fallback": "gem"
     },
-    "ox": {
+    "flash": {
       "runtime": "pi",
-      "model": "openrouter/z-ai/glm-5.3-flash",
+      "model": "openrouter/deepseek/deepseek-v4.1-flash",
       "effort": "medium",
       "roles": [
         "plan",
@@ -102,7 +102,7 @@
       ],
       "provider": {
         "reasoning": true,
-        "contextWindow": 1310720,
+        "contextWindow": 1048576,
         "maxTokens": 131072
       },
       "policy": "Metered peer on every target kind at cents per review.",
@@ -180,7 +180,7 @@
             "astra",
             "opus",
             "gem",
-            "ox"
+            "flash"
           ],
           "required": [
             "astra",
@@ -211,7 +211,7 @@
           "seats": [
             "astra",
             "gem",
-            "ox"
+            "flash"
           ]
         }
       },

@@ -188,7 +188,7 @@ class HostileHandoffInput(unittest.TestCase):
 
 CFG = {"profiles": {
     "high": {"depth": "standard", "checkpoints": {
-        "review": {"seats": ["astra", "opus", "gem", "ox"], "required": ["astra", "opus"], "min_seats": 3},
+        "review": {"seats": ["astra", "opus", "gem", "flash"], "required": ["astra", "opus"], "min_seats": 3},
         "design": {"seats": ["astra", "opus", "gem"], "required": ["astra"], "min_seats": 2}}},
     "loose": {"depth": "deep-on-stakes", "checkpoints": {
         "debug": {"seats": ["a", "b"], "required": [], "min_seats": 2}}},
@@ -204,7 +204,7 @@ class PanelProtocol(unittest.TestCase):
     def test_protocol_lists_exactly_the_profile_checkpoints(self):
         text = protocol_text(CFG, "high", "/s/handoffs/k/panel", "/s/inbox-view/k/panels")
         self.assertIn("- design: astra, opus, gem (required: astra; at least 2)", text)
-        self.assertIn("- review: astra, opus, gem, ox (required: astra, opus; at least 3)", text)
+        self.assertIn("- review: astra, opus, gem, flash (required: astra, opus; at least 3)", text)
         self.assertLess(text.index("- design:"), text.index("- review:"))   # ROLES order, not config order
         self.assertNotIn("- plan:", text)
         self.assertNotIn("$", text.split("Review panels.", 1)[1])   # checkpoint.md keeps its own $BW_ASKS; panel.md has none

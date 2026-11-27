@@ -50,10 +50,10 @@ rejected — unique counts are computed from the detail, never self-reported.
 A finding alone in its group but refuted is not a unique catch.
 
 example (seat ids are the shipped example config's; use your own):
-  echo '{"target":"PR 42","kind":"review","seats":["astra","ox"],
+  echo '{"target":"PR 42","kind":"review","seats":["astra","flash"],
          "immediate_agreement":false,
          "findings":{"astra":{"total":1,"confirmed":1,"refuted":0,"unique":1},
-                     "ox":{"total":0,"confirmed":0,"refuted":0,"unique":0}},
+                     "flash":{"total":0,"confirmed":0,"refuted":0,"unique":0}},
          "findings_detail":[{"seat":"astra","group":"g1","title":"off-by-one",
                              "severity":"major","verdict":"confirmed"}]}' \\
     | log.py panel

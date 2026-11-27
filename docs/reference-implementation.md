@@ -6,7 +6,7 @@ a rebuild guide: each section names the tool, the settings that took debugging t
 get right, and the traps. Written 2026-08-26 against the versions noted; updated
 2026-09-02 when the stealth seat model graduated (see the pi section); updated
 2026-09-11 when the Codex seat moved to a new model generation and gained planning duties
-(see the Codex section) and to describe the ox seat's runtime move from OpenCode to pi
+(see the Codex section) and to describe the metered seat's runtime move from OpenCode to pi
 (2026-09-03); updated 2026-09-16 with the driver-mode section (which harness may run
 which model at flat rate, first-party-harness containment, two new traps) and the pi
 version bump to 0.85.x it required; the cast table gained the same-vendor blind seat
@@ -33,7 +33,9 @@ name is rename-proof (see Seat runtimes under `bw seat`); updated 2026-11-23 a s
 now live in this repo as `bw panel` (see Panel instructions); updated 2026-11-23 a seventh time after the
 first live panel: the kimi seat runs `-p` with no `--auto` (Kimi Code 2.3.2 refuses the pair); updated 2026-11-23 with the known limits of the lead guard rules (see Lead guard rules); updated 2026-11-23 an eighth time: the
 Codex `cli` quota reading is not applicable on `codex-cli 0.164.0` (see the note under the runtime table); updated
-2026-11-24: one more known limit of the lead guard rules (`eval`, `trap`, and `alias` text).*
+2026-11-24: one more known limit of the lead guard rules (`eval`, `trap`, and `alias` text); updated
+2026-11-27 when the metered pi seat moved from GLM 5.3 Flash (seat "ox") to DeepSeek V4.1 Flash
+(seat "flash"; see the pi section).*
 
 ## The cast
 
@@ -41,7 +43,7 @@ Codex `cli` quota reading is not applicable on `codex-cli 0.164.0` (see the note
 |---|---|---|---|
 | Moderator / primary | Claude Code (CLI) with the [superpowers](https://github.com/obra/superpowers) plugin (6.x) as the workflow skeleton | `claude-opus-5-5` at effort `medium` (raised per task); Fable only on an escalation (since 2026-11-11) | Anthropic subscription |
 | Planning + review seat ("astra") | Codex CLI ≥0.153 | `gpt-6-astra`, xhigh reasoning (was `gpt-5.6-sol`, seat "sol", until 2026-09-11) | OpenAI Pro subscription (CLI OAuth) |
-| Planning seat ("ox") | pi 0.85.x (0.74.x until 2026-09-16; was OpenCode ≥1.18 until 2026-09-03) | `z-ai/glm-5.3-flash` via OpenRouter (was `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
+| Metered seat ("flash") | pi 0.85.x (0.74.x until 2026-09-16; was OpenCode ≥1.18 until 2026-09-03) | `deepseek/deepseek-v4.1-flash` via OpenRouter, thinking `medium` (since 2026-11-27; seat "ox" on `z-ai/glm-5.3-flash` before, `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
 | Same-vendor blind seat ("opus") | Claude Code headless (`claude -p`), fresh session, write tools disallowed plus a pre-tool guard hook | `claude-opus-5-5`, effort `medium` (since 2026-11-11; the on-demand seat from 2026-09-22, `claude-opus-4-8` before) | Claude subscription (flat); a fresh scoreboard |
 | Reserved same-vendor seat ("fable") | same mechanism | `claude-fable-5-2` (`claude-fable-5-1` from 2026-09-02 until 2026-11-11, when it was the default blind seat) | Claude subscription (flat), twice Opus 5.5 per token; deep panels and stuck debugging only, each run with its reason |
 | Blind one-shot fallback | plain HTTPS (`chat/completions`) | same OpenRouter model | OpenRouter API key |
@@ -97,7 +99,7 @@ Invocation and traps:
   but the desktop app manages `config.toml` — expect churn there; keep your profile in
   its own file.
 
-## Seat: pi (`z-ai/glm-5.3-flash` via OpenRouter)
+## Seat: pi (`deepseek/deepseek-v4.1-flash` via OpenRouter)
 
 Runtime: [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
 (`@earendil-works/pi-coding-agent`, 0.85.x since 2026-09-16 — 0.74.x before). Re-verify the
@@ -129,16 +131,19 @@ searching them defeats the pinning; probe the manager's shim directory only. And
 pi upgrade, check the installed model catalog rather than the docs: 0.74 stopped at the
 previous model generation.
 
-**The stealth-model lesson, lived (2026-09-02):** the seat originally ran on
-`stealth/ox-alpha`, a free preview. OpenRouter ended the test period one week after
-setup; every call then returned a 404 that also revealed the model's identity (ZAI's
-GLM-5.3 Flash). Because the id was pinned in exactly one config line per component,
-re-pinning to the graduated catalog model took minutes; the logged seat history and
-policy carried over unchanged since the underlying model did not change. Two
-operational notes: the successor is paid, so the OpenRouter account must hold
-credits (a $0 balance fails identically to a missing model), and a per-key spend cap
-is the cost control — at $0.075/M input, $0.25/M output a repo-aware review round is
-about two cents.
+**History.** The seat began as OpenRouter's stealth `ox-alpha` preview (served as GLM-5.3
+Flash), ran GLM 5.3 Flash until 2026-09-26, and was replaced by DeepSeek V4.1 Flash
+(seat `flash`) on 2026-11-27. The scoreboard showed DeepSeek doing the same job (a cheap,
+metered OpenRouter reader on the same pi engine) with fewer timeouts (1% of runs against 13%)
+and more unique catches (40% against 34%), so the GLM seat was redundant.
+
+**The stealth-model lesson, lived (2026-09-02):** when OpenRouter ended the free preview one
+week after setup, every call returned a 404 that also revealed the model's identity. Because
+the id was pinned in exactly one config line per component, re-pinning took minutes; the
+2026-11-27 model change was the same one-line edit. Two operational notes: the model is
+paid, so the OpenRouter account must hold credits (a $0 balance fails identically to a
+missing model), and a per-key spend cap is the cost control. The seat is metered at
+OpenRouter's list price; a repo-aware review costs a few cents.
 
 **Read-only, in three layers** — the reason this runtime won the seat:
 
@@ -166,17 +171,19 @@ explicitly so reasoning and limits are pinned rather than inherited:
 
 ```json
 { "providers": { "openrouter": { "models": [
-  { "id": "z-ai/glm-5.3-flash", "name": "GLM-5.3 Flash (ox seat)",
+  { "id": "deepseek/deepseek-v4.1-flash", "name": "DeepSeek V4.1 Flash (flash seat)",
     "reasoning": true, "input": ["text"],
-    "contextWindow": 1310720, "maxTokens": 131072,
-    "cost": { "input": 0.075, "output": 0.25, "cacheRead": 0, "cacheWrite": 0 } }
+    "contextWindow": 1048576, "maxTokens": 131072 }
 ] } } }
 ```
+
+The model is absent from pi 0.85.1's built-in catalog, so this block is required. Add a
+`cost` block with OpenRouter's current list price if you want pi to report spend per run.
 
 Invocation (from the target directory, `OPENROUTER_API_KEY` **exported**):
 
 ```
-pi -p --model openrouter/z-ai/glm-5.3-flash --thinking medium \
+pi -p --model openrouter/deepseek/deepseek-v4.1-flash --thinking medium \
    --session-dir <seat-sessions> --session <seat-sessions>/<uuid>.jsonl \
    --no-extensions -e <guard.ts> --no-skills --no-prompt-templates --no-themes \
    --tools read,grep,find,ls,bash \
@@ -564,7 +571,7 @@ the credential, and the containment.
 |---|---|---|---|
 | astra | Codex CLI | `gpt-6-astra` (`gpt-6-sol`, which Codex now recommends as its everyday default, is the cheaper candidate for spec'd work once the rollout reaches the account) | OpenAI Pro, flat (CLI OAuth) |
 | astra via pi | pi ≥0.85, built-in `openai-codex` provider | `gpt-6-astra` | Same subscription, flat — OpenAI endorses third-party use ("Codex for OSS") |
-| ox | pi | `z-ai/glm-5.3-flash` via OpenRouter | ~$0.02 per session |
+| flash | pi | `deepseek/deepseek-v4.1-flash` via OpenRouter | metered at OpenRouter's list price; a few cents per session |
 | fable / opus / sonnet | Claude Code | the Claude tier named | Claude plan, flat |
 | *(not a seat)* Claude via pi | pi's Claude Pro/Max login | any Claude model | **per-token "extra usage"** — Anthropic bills third-party harnesses at API rates since 2026-04-04; only the vendor's own surfaces stay flat |
 

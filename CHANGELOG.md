@@ -286,6 +286,7 @@ not against the prose.
 
 ### Changed
 
+- **`balancewheel.example.json`: the metered pi seat `ox` (`openrouter/z-ai/glm-5.3-flash`) is now `flash` (`openrouter/deepseek/deepseek-v4.1-flash`, context 1,048,576)** in the seat list and both profiles' review rosters; the GLM seat was retired 2026-11-27.
 - `CLAUDE.md`: balancewheel writes esc's `pack.yaml`, only through `bw pack export`.
 - **Guard records keep the final decision and the rules' decision apart** (`lead/guard/record.py`,
   `broker.py`, `review.py`). A `guard.jsonl` decision row gains `rule_decision` (the rules' own

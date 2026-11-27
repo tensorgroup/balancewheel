@@ -48,7 +48,7 @@ class SeatVerify(unittest.TestCase):
 
     def test_seat_items_example(self):
         c = load_config(str(EXAMPLE))
-        self.assertEqual(verify.seat_items(c), ["astra", "ox", "opus", "fable", "gem"])  # kimi disabled; fable reserved
+        self.assertEqual(verify.seat_items(c), ["astra", "flash", "opus", "fable", "gem"])  # kimi disabled; fable reserved
 
     def test_fallback_followed_disabled_skipped(self):
         c = {"seats": {"a": {"enabled": True, "fallback": "b"}, "b": {"enabled": True, "fallback": "c"},
@@ -170,7 +170,7 @@ class SeatVerify(unittest.TestCase):
     def test_disabled_seat_not_in_seats_json(self):  # R16
         out = verify.write_seats_json(self.config, self.state, run=FAKE)
         self.assertNotIn("kimi", out)
-        self.assertEqual(list(out), ["astra", "ox", "opus", "fable", "gem", "astra2"])
+        self.assertEqual(list(out), ["astra", "flash", "opus", "fable", "gem", "astra2"])
 
     def test_later_failure_revokes_pass(self):  # R7
         key = verify.seat_key(self.config, self.state, "astra", run=FAKE)
@@ -638,7 +638,7 @@ class SpawnVerify(unittest.TestCase):
             code = cli.main(["verify", "--changed"], self.config, self.state, run=FAKE, out=out, err=err)
         self.assertEqual(code, 0, err.getvalue())
         self.assertNotIn("astra", done)
-        self.assertIn("ox", done)
+        self.assertIn("flash", done)
 
     def test_cli_verify_ids_hold_lock(self):
         from seats import cli
