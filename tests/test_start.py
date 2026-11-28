@@ -955,10 +955,10 @@ class StartCase(unittest.TestCase):
     def test_commands_the_user_may_paste_keep_their_absolute_paths(self):
         code, out = self.tty_start(FakeRun(), dry_run=True)
         flat = " ".join(out.split())
-        self.assertIn(f"would run: open -a Terminal {self.state}/start/", flat)  # not ~/state (HOME is the temp root)
+        self.assertTrue(any(ln.startswith("  · would run: open -a Terminal " + self.state + "/start/") for ln in out.splitlines()), out)  # not ~/state (HOME is the temp root)
         run = FakeRun(open_rc=1)
         code, out = self.tty_start(run, verify=False, update=False)
-        self.assertIn(f"run it yourself: cd {shlex.quote(str(self.repo))} && ", " ".join(out.split()))
+        self.assertTrue(any(f"run it yourself: cd {shlex.quote(str(self.repo))} && " in ln and ln.endswith(" lead") for ln in out.splitlines()), out)
 
     def test_dry_run_on_a_terminal_uses_the_layout(self):
         code, out = self.tty_start(FakeRun(), dry_run=True)
@@ -1017,6 +1017,41 @@ class StartCase(unittest.TestCase):
             self.assertIn(part, at_exec)  # everything was printed before the process was replaced
         self.assertTrue(os.path.exists(os.path.join(self.state, "start.json")))
         self.assertEqual(self.spawn.call_count, 1)  # the seat check was started before the exec
+
+    def test_the_exec_env_is_resolved_against_the_original_cwd_before_the_chdir(self):
+        sub = self.repo / "pkg"
+        sub.mkdir()
+        (sub / "conf").mkdir()
+        (sub / "conf" / "c.json").write_text("{}")
+        seen, cwd0 = [], os.getcwd()
+        self.addCleanup(os.chdir, cwd0)
+        os.chdir(sub)  # a real chdir from a subdirectory, with relative paths
+        env = {"BALANCEWHEEL_CONFIG": "conf/c.json", "BW_STATE_DIR": "../st"}
+        real_state = str(self.repo / "st")
+        out = Tty()
+        code = start.start(self.config, real_state, None, run=FakeRun(), out=out, bw_path=self.bw, env=env, now=NOW,
+                           verify=False, update=False, stdin=Tty(), width=88,
+                           execve=lambda prog, argv, e: seen.append((os.getcwd(), e)))
+        self.assertEqual(code, 0, out.getvalue())
+        (cwd_at_exec, e), = seen
+        self.assertEqual(os.path.realpath(cwd_at_exec), str(self.repo))
+        self.assertEqual(os.path.realpath(e["BALANCEWHEEL_CONFIG"]), str(sub / "conf" / "c.json"))
+        self.assertEqual(os.path.realpath(e["BW_STATE_DIR"]), str(self.repo / "st"))
+
+    def test_the_exec_fallback_command_is_built_before_the_chdir(self):
+        sub = self.repo / "pkg"
+        sub.mkdir()
+        cwd0 = os.getcwd()
+        self.addCleanup(os.chdir, cwd0)
+        os.chdir(sub)
+        out = Tty()
+
+        def boom(prog, argv, e):
+            raise OSError(2, "gone")
+        start.start(self.config, str(self.repo / "st"), None, run=FakeRun(), out=out, bw_path=self.bw,
+                    env={"BW_STATE_DIR": "../st"}, now=NOW, verify=False, update=False, stdin=Tty(), width=500, execve=boom)
+        (line,) = [ln for ln in out.getvalue().splitlines() if "run it yourself" in ln]
+        self.assertIn(f"BW_STATE_DIR={self.repo / 'st'} ", line.replace("'", ""))
 
     def test_a_path_inside_the_same_worktree_counts(self):
         sub = self.repo / "pkg"
@@ -1081,7 +1116,9 @@ class StartCase(unittest.TestCase):
                            chdir=lambda d: None, execve=boom)
         self.assertEqual(code, 1)
         self.assertIn("could not start the lead here (FileNotFoundError", out.getvalue())
-        self.assertIn(f"run it yourself: cd {shlex.quote(str(self.repo))} && ", " ".join(out.getvalue().split()))
+        (line,) = [ln for ln in out.getvalue().splitlines() if "run it yourself" in ln]  # one line, never wrapped
+        self.assertIn(f"run it yourself: cd {shlex.quote(str(self.repo))} && env ", line)
+        self.assertTrue(line.endswith(" lead"), line)
 
     def test_dry_run_says_what_it_would_start_here(self):
         run = FakeRun()
@@ -1089,7 +1126,7 @@ class StartCase(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(calls["execve"], [])
         cmd = shlex.join(["env", "BALANCEWHEEL_CONFIG=/cfg dir/c.json", f"BW_STATE_DIR={self.state}", self.bw, "lead"])
-        self.assertIn(f"· would start the lead here: {cmd}", " ".join(out.split()))
+        self.assertIn(f"  · would start the lead here: {cmd}", out.splitlines())  # one literal line, never wrapped
         self.assertNotIn("starting here", out)  # a dry run starts nothing
         self.assertNotIn(".command", out)
         self.assertEqual({a[0] for a in run.argvs()}, {"git"})

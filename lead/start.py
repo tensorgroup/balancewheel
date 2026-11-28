@@ -458,12 +458,15 @@ def _start_here(project, bw, env, rep, chdir, execve):
     exported config and state dir, `exec bw lead`). It returns only when `execve` does (a test's)
     or fails."""
     def launch():
+        # Everything that reads the current directory comes before the chdir: a relative
+        # BALANCEWHEEL_CONFIG or BW_STATE_DIR means the directory the user typed `bw start` in.
+        lead_env = {**os.environ, **dict(_passed(env))}
+        by_hand = f"cd {shlex.quote(project.worktree)} && {_lead_command(bw, env)}"
         try:
             chdir(project.worktree)
-            execve(bw, [bw, "lead"], {**os.environ, **dict(_passed(env))})
+            execve(bw, [bw, "lead"], lead_env)
         except OSError as e:
-            rep.bad("Lead", f"could not start the lead here ({type(e).__name__}); "
-                            f"run it yourself: cd {shlex.quote(project.worktree)} && {_lead_command(bw, env)}", raw=True)
+            rep.bad("Lead", f"could not start the lead here ({type(e).__name__}); run it yourself: {by_hand}", raw=True)
             return 1
         return 0
     return launch

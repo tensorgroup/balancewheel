@@ -134,7 +134,10 @@ class Report:
         if section != self._current:
             print(f"\n{section}", file=self.out)
             self._current = section
-        text = text if raw else self.tilde(text)
+        if raw:  # a command to paste: one line, however long, and no `~`
+            print(f"  {mark} {text}" if mark else f"  {text}", file=self.out, flush=True)
+            return
+        text = self.tilde(text)
         if mark is None:  # a detail line: kept as written, not wrapped
             print(f"      {text}", file=self.out, flush=True)
             return

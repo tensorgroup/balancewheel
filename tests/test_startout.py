@@ -78,6 +78,12 @@ class Terminal(unittest.TestCase):
                          ["  · would start the lead here: env X=/home/u/c /home/u/bw lead",
                           "  ✗ run it yourself: cd '/home/u/app' && x", "  · log ~/l"])
 
+    def test_a_raw_line_is_never_wrapped(self):
+        r, out = report(True, width=60)
+        cmd = "env BALANCEWHEEL_CONFIG=/home/u/c.json BW_STATE_DIR=/home/u/state /home/u/code/bw/bin/bw lead"
+        r.line("Lead", f"would start the lead here: {cmd}", raw=True)
+        self.assertEqual(out.getvalue().splitlines()[-1], f"  · would start the lead here: {cmd}")
+
     def test_tilde_only_replaces_a_whole_home_path(self):
         r, _ = report(True)
         self.assertEqual(r.tilde("log: /home/u/.local/x and /home/user/y and /home/u"), "log: ~/.local/x and /home/user/y and ~")
