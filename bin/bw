@@ -67,6 +67,7 @@ from panel import cli as panel_cli  # noqa: E402
 from packs import export as pack_export  # noqa: E402
 from lead.paths import ConfigError, load_config, state_dir  # noqa: E402  (also puts metrics/ on sys.path)
 import store  # noqa: E402
+import config as metrics_config  # noqa: E402
 import summary as metrics_summary  # noqa: E402
 from lead.projects import resolve_project, worktree_key  # noqa: E402
 from lead import proc  # noqa: E402
@@ -332,11 +333,12 @@ def _watch_last(w):
 
 
 def _panel_data(config):
-    """The main log plus every `improve.panel_logs` log: panels (first copy of an id wins, sorted by ts),
-    watches (one per id: the copy changed last wins, so its status is the latest), usage."""
-    data = store.load(store.log_path(config))
+    """The main log plus every extra log (`local.logs`, then `improve.panel_logs`): panels (first copy of an id
+    wins, sorted by ts), watches (one per id: the copy changed last wins, so its status is the latest), usage."""
+    main = store.log_path(config)
+    data = store.load(main)
     seen = {p["id"] for p in data["panels"]}
-    for log in config.get("improve", {}).get("panel_logs", []):  # logs a setup keeps somewhere other than metrics_log
+    for log in metrics_config.extra_logs(config, exclude=main):  # logs a setup keeps somewhere other than metrics_log
         extra = store.load(log)
         for p in extra["panels"]:
             if p["id"] not in seen:

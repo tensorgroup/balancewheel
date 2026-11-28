@@ -17,7 +17,7 @@ EFFORT_LEVELS = {
 }
 SEAT_NAME = re.compile(r"[a-z0-9-]+")  # used with fullmatch: a trailing newline is refused
 TOP_KEYS = {"_comment", "schema_version", "seats", "state_dir", "metrics_log", "commands_dir", "bin_dir", "watches"}
-V3_TOP_KEYS = {"guard", "triage", "improve", "panel", "canvas"}
+V3_TOP_KEYS = {"guard", "triage", "improve", "panel", "canvas", "claude_pane", "local"}
 CANVASES = {"terminal", "orca"}
 V3_LEAD_KEYS = {"autonomy"}
 V3_PROFILE_KEYS = {"protected_branches", "deploy_commands"}
@@ -26,6 +26,13 @@ GUARD_MODES = {"shadow", "auto", "acting"}
 JUDGE_FAILURES = {"allow", "ask"}
 TRIAGE_KEYS = {"mode", "model", "key_env", "thresholds"}
 TRIAGE_MODES = {"off", "shadow", "acting"}
+LOCAL_KEYS = {"seats", "logs", "run_max_s", "families"}
+LOCAL_SEAT_KEYS = {"name", "model", "match", "metric", "icon", "color", "runtime"}
+RUN_MAX_S_DEFAULT = 2700  # a local run with no end row counts as ended after this many seconds
+MATCH_MAX = 200  # characters in local.seats[].match: a plain substring of a Bash command
+ICON_MAX = 8  # characters in local.seats[].icon
+COLOR = re.compile(r"#[0-9a-fA-F]{6}")  # used with fullmatch
+FAMILY_WORD = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")  # used with fullmatch
 TRIAGE_THRESHOLDS = {"strong_case": 0.6, "only_person_knows": 0.7, "outward_or_irreversible": 0.3, "high_stakes": 0.3}
 SCHEMA_VERSIONS = (1, 2, 3)
 AUTONOMY = {"native", "guard", "bypass", "manual"}
@@ -418,6 +425,75 @@ def _validate_improve(obj):
     return {"panel_logs": [_abs(p) for p in logs]}
 
 
+def _single_line(v):
+    return isinstance(v, str) and bool(v.strip()) and "\n" not in v and "\r" not in v
+
+
+def _validate_local(obj, seats):
+    """The `local` section: seats and logs bw reads but does not run. Absent optional seat keys are None."""
+    given = obj.get("local", {})
+    _expect(isinstance(given, dict), "local: must be an object")
+    bad = sorted(set(given) - LOCAL_KEYS)
+    if bad:
+        raise ConfigError(f"local.{bad[0]}: unknown key")
+    seats_in = given.get("seats", [])
+    _expect(isinstance(seats_in, list), "local.seats: must be a list")
+    out, names = [], set()
+    for i, s in enumerate(seats_in):
+        kp = f"local.seats[{i}]"
+        _expect(isinstance(s, dict), f"{kp}: must be an object")
+        bad = sorted(set(s) - LOCAL_SEAT_KEYS)
+        if bad:
+            raise ConfigError(f"{kp}.{bad[0]}: unknown key")
+        name = s.get("name")
+        _expect(isinstance(name, str) and SEAT_NAME.fullmatch(name), f"{kp}.name: must match [a-z0-9-]+")
+        _expect(name not in seats, f"{kp}.name: {name!r} is a bw seat")
+        _expect(name not in names, f"{kp}.name: {name!r} is used twice")
+        names.add(name)
+        match = s.get("match")
+        _expect(_single_line(match) and len(match) <= MATCH_MAX,
+                f"{kp}.match: must be a non-empty single-line string of at most {MATCH_MAX} characters")
+        for k in ("model", "metric"):
+            if s.get(k) is not None:
+                _expect(_single_line(s[k]), f"{kp}.{k}: must be a non-empty single-line string")
+        icon = s.get("icon")
+        if icon is not None:
+            _expect(_single_line(icon) and len(icon) <= ICON_MAX, f"{kp}.icon: must be at most {ICON_MAX} characters")
+        color = s.get("color")
+        if color is not None:
+            _expect(isinstance(color, str) and COLOR.fullmatch(color), f"{kp}.color: must be #rrggbb")
+        runtime = s.get("runtime")
+        if runtime is not None:
+            _expect(isinstance(runtime, str) and runtime in RUNTIMES, f"{kp}.runtime: must be one of {sorted(RUNTIMES)}")
+        out.append({"name": name, "model": s.get("model"), "match": match, "metric": s.get("metric") or name,
+                    "icon": icon, "color": color, "runtime": runtime})
+    logs = given.get("logs", [])
+    _expect(isinstance(logs, list) and all(isinstance(p, str) and p.strip() for p in logs),
+            "local.logs: must be a list of paths")
+    run_max_s = given.get("run_max_s", RUN_MAX_S_DEFAULT)
+    _expect(_is_int(run_max_s) and run_max_s >= 1, "local.run_max_s: must be an integer of at least 1")
+    families = given.get("families", {})
+    _expect(isinstance(families, dict), "local.families: must be an object")
+    for word, color in families.items():
+        _expect(FAMILY_WORD.fullmatch(word), f"local.families: {word!r} must match {FAMILY_WORD.pattern}")
+        _expect(isinstance(color, str) and COLOR.fullmatch(color), f"local.families.{word}: must be #rrggbb")
+    return {"seats": out, "logs": [_abs(p) for p in logs], "run_max_s": run_max_s, "families": dict(families)}
+
+
+def extra_logs(config, exclude=None):
+    """Every log bw reads besides the main one: `local.logs`, then `improve.panel_logs`.
+    One entry per real path (the first spelling is kept); a log with the same real path as `exclude` is left out.
+    `config` may be partial (only `improve`, for example)."""
+    seen = {os.path.realpath(exclude)} if exclude else set()
+    out = []
+    for p in (config.get("local") or {}).get("logs", []) + (config.get("improve") or {}).get("panel_logs", []):
+        real = os.path.realpath(p)
+        if real not in seen:
+            seen.add(real)
+            out.append(p)
+    return out
+
+
 def _validate_defaults(obj, key, defaults, minimum=0):
     vals = dict(defaults)
     given = obj.get(key, {})
@@ -494,6 +570,9 @@ def load_config(path=None):
     guard = _validate_guard(obj, profiles, leads, version)
     triage = _validate_triage(obj, profiles)
     improve = _validate_improve(obj)
+    local = _validate_local(obj, seats)
+    claude_pane = obj.get("claude_pane", True)
+    _expect(isinstance(claude_pane, bool), "claude_pane: must be true or false")
     given_rotation = obj.get("rotation")
     _expect(version >= 3 or not isinstance(given_rotation, dict) or "cli_fresh_min" not in given_rotation,
             "rotation.cli_fresh_min: needs schema_version 3")
@@ -531,6 +610,8 @@ def load_config(path=None):
         "guard": guard,
         "triage": triage,
         "improve": improve,
+        "local": local,
+        "claude_pane": claude_pane,
         "path": p,
         "seats": seats,
         "state_dir": state_dir,

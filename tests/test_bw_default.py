@@ -180,6 +180,15 @@ class LeadNudges(Case):
             found = self.bw._suggestions({"improve": {"panel_logs": [log]}}, self.state, now)
         self.assertEqual([s["key"] for s in found], ["seat-absent:gem"])
 
+    def test_panel_data_reads_local_logs_too(self):
+        os.makedirs(self.state, exist_ok=True)
+        log = os.path.join(self.state, "local.jsonl")
+        self.bw.store.append(log, {"type": "panel", "id": "p-local", "ts": "2026-11-27T10:00:00Z",
+                                   "target": "t", "seats": ["a"]})
+        with mock.patch.object(self.bw.store, "log_path", return_value=os.path.join(self.state, "m.jsonl")):
+            panels = self.bw._panel_data({"local": {"logs": [log]}})["panels"]
+        self.assertEqual([p["id"] for p in panels], ["p-local"])
+
     def test_improve_refuses_a_note_with_no_text(self):
         self.assertEqual(self.improve_cmd("note")[0], 2)
 

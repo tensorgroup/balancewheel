@@ -4,7 +4,7 @@
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
 Corrected the same day after review: the panel's summary line, the `bw start` prefix of the seat-check
-line, and a stale "not in v0" note on acting.*
+line, and a stale "not in v0" note on acting. Updated 2026-11-27: the `local` config section and `claude_pane`.*
 
 The **lead** is the agent you work in for a project; it is also the moderator of every
 panel it convenes. One plan usually runs out first, so a project's **profile** (config
@@ -311,6 +311,17 @@ once for each bw-contained lead runtime.
   not carry show as unavailable. Keep its proxy, failover, and every config, prompt, MCP, and
   skill sync off, and never switch a provider in its UI; `bw setup cc-switch` writes the
   settings that do this before its first launch.
+- **Local seats and extra logs (`local`, `claude_pane`; config schema 3, since 2026-11-27).** The
+  `local` section names seats and logs that bw reads but does not run. Each `local.seats[]` entry
+  needs a `name` (`[a-z0-9-]+`, not a bw seat name, used once) and a `match`: a plain substring of a
+  Bash command, one line, at most 200 characters. `model`, `metric` (default: the `name`), `icon` (at
+  most 8 characters), `color` (`#rrggbb`), and `runtime` are optional. `local.logs` are extra JSONL
+  logs. bw reads them and never writes them. `local.run_max_s` (default 2700) is the number of seconds
+  after which a local run with no end row counts as ended. `local.families` maps a word in a model
+  string (`[a-z0-9][a-z0-9-]{0,31}`) to a `#rrggbb` color. bw reads `local.logs` and then
+  `improve.panel_logs` as one list, with one entry per real path. A path that is the main log is left
+  out. The top-level `claude_pane` (default true) turns the automatic Claude Code pane install off
+  when it is false.
 
 ## Start leading (first run)
 

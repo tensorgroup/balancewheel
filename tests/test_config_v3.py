@@ -422,5 +422,89 @@ class Triage(unittest.TestCase):
             self.assertIn(needle, str(c.exception))
 
 
+class LocalSection(unittest.TestCase):
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
+
+    def rejects(self, obj, *needles):
+        with self.assertRaises(cfg.ConfigError) as e:
+            load_obj(obj)
+        for n in needles:
+            self.assertIn(n, str(e.exception))
+
+    def test_defaults(self):
+        c = load_obj(v3())
+        self.assertIs(c["claude_pane"], True)
+        self.assertEqual(c["local"], {"seats": [], "logs": [], "run_max_s": 2700, "families": {}})
+
+    def test_full_section_resolves(self):
+        o = v3(); o["claude_pane"] = False
+        o["local"] = {"seats": [{"name": "my-seat", "model": "model-a", "match": "my-seat.sh", "icon": "\U0001f989", "color": "#2dd4bf"}],
+                      "logs": ["~/x/m.jsonl"], "run_max_s": 60, "families": {"opus": "#aabbcc"}}
+        c = load_obj(o)
+        self.assertIs(c["claude_pane"], False)
+        self.assertEqual(c["local"]["seats"][0], {"name": "my-seat", "model": "model-a", "match": "my-seat.sh",
+                                                 "metric": "my-seat", "icon": "\U0001f989", "color": "#2dd4bf", "runtime": None})
+        self.assertEqual(c["local"]["logs"], [os.path.expanduser("~/x/m.jsonl")])
+        self.assertEqual(c["local"]["run_max_s"], 60)
+        self.assertEqual(c["local"]["families"], {"opus": "#aabbcc"})
+
+    def test_bad_input_is_refused(self):  # Review Focus 5
+        bw_seat = next(iter(v3()["seats"]))
+        for local, needle in (({"seats": [{"name": "a", "match": ""}]}, "local.seats[0].match"),
+                              ({"seats": [{"name": "a", "match": "x" * 201}]}, "local.seats[0].match"),
+                              ({"seats": [{"name": bw_seat, "match": "x"}]}, "is a bw seat"),
+                              ({"seats": [{"name": "a", "match": "x"}, {"name": "a", "match": "y"}]}, "local.seats[1].name"),
+                              ({"seats": [{"name": "a", "match": "x", "color": "red"}]}, "local.seats[0].color"),
+                              ({"seats": [{"name": "a", "match": "x", "runtime": "nope"}]}, "local.seats[0].runtime"),
+                              ({"seats": [{"name": "a", "match": "x", "extra": 1}]}, "local.seats[0].extra: unknown key"),
+                              ({"run_max_s": 0}, "local.run_max_s"), ({"families": {"Bad Word": "#000000"}}, "local.families"),
+                              ({"logs": [""]}, "local.logs"), ({"nope": 1}, "local.nope: unknown key")):
+            o = v3(); o["local"] = local
+            self.rejects(o, needle)
+        o = v3(); o["claude_pane"] = "yes"; self.rejects(o, "claude_pane: must be true or false")
+
+    def test_wrong_types_are_refused_cleanly(self):
+        for local, needle in (({"seats": [{"name": 3, "match": "x"}]}, "local.seats[0].name"),
+                              ({"seats": [{"match": "x"}]}, "local.seats[0].name"),
+                              ({"seats": [{"name": "a"}]}, "local.seats[0].match"),
+                              ({"seats": [{"name": "a", "match": "x\ny"}]}, "local.seats[0].match"),
+                              ({"seats": [{"name": "a", "match": "x", "model": ["m"]}]}, "local.seats[0].model"),
+                              ({"seats": [{"name": "a", "match": "x", "icon": "x" * 9}]}, "local.seats[0].icon"),
+                              ({"seats": [{"name": "a", "match": "x", "metric": ""}]}, "local.seats[0].metric"),
+                              ({"seats": [{"name": "a", "match": "x", "color": 5}]}, "local.seats[0].color"),
+                              ({"seats": [{"name": "a", "match": "x", "runtime": ["codex"]}]}, "local.seats[0].runtime"),
+                              ({"seats": "a"}, "local.seats"), ({"seats": ["a"]}, "local.seats[0]"),
+                              ({"run_max_s": True}, "local.run_max_s"), ({"run_max_s": "60"}, "local.run_max_s"),
+                              ({"families": {"opus": "red"}}, "local.families.opus"), ({"families": []}, "local.families"),
+                              ({"logs": "x"}, "local.logs"), ("x", "local: must be an object")):
+            o = v3(); o["local"] = local
+            self.rejects(o, needle)
+
+    def test_needs_schema_3(self):
+        o = v2(); o["local"] = {}
+        self.rejects(o, "local: unknown key (needs schema_version 3)")
+
+    def test_schema_2_still_resolves_the_defaults(self):
+        c = load_obj(v2())
+        self.assertIs(c["claude_pane"], True)
+        self.assertEqual(c["local"], {"seats": [], "logs": [], "run_max_s": 2700, "families": {}})
+
+    def test_extra_logs_merge_and_dedupe(self):  # Review Focus 5
+        a = os.path.join(self.tmp, "a.jsonl"); b = os.path.join(self.tmp, "b.jsonl"); Path(a).touch(); Path(b).touch()
+        link = os.path.join(self.tmp, "a-link.jsonl"); os.symlink(a, link)
+        c = {"local": {"logs": [a, link]}, "improve": {"panel_logs": [b, a]}}
+        self.assertEqual(cfg.extra_logs(c), [a, b])
+        self.assertEqual(cfg.extra_logs(c, exclude=link), [b])
+        self.assertEqual(cfg.extra_logs({"improve": {"panel_logs": [b]}}), [b])
+
+    def test_extra_logs_drop_the_main_log(self):  # Review Focus 5
+        main = os.path.join(self.tmp, "metrics.jsonl"); Path(main).touch()
+        o = v3(); o["metrics_log"] = main; o["local"] = {"logs": [main]}
+        c = load_obj(o)
+        self.assertEqual(cfg.extra_logs(c, exclude=c["metrics_log"]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
