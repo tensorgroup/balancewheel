@@ -31,7 +31,7 @@ not against the prose.
   main log is no longer read twice.
 - **`seats/live.py`: live context and cost from a seat CLI's own session file.** `live_usage(runtime, home,
   session_id, dir, start, seat_cfg=None)` gives `ctx`, `window`, `ctx_peak`, `tokens_in`, `tokens_out`, and
-  `cost_usd` for codex (`token_count` events), claude-code (assistant `usage`), pi (assistant `usage` and its
+  `cost_usd` for codex (`token_count` events), claude-code (assistant `usage`, each `message.id` once), pi (assistant `usage` and its
   cost; the window from the seat's `provider.contextWindow`), and kimi (`token_counting.measured`, found through
   `session_index.jsonl`); agy gives nulls. It picks only a session whose working directory is the worktree: the
   file whose name holds `session_id`, else the newest with an mtime at or after `start - 1`. It reads at most the

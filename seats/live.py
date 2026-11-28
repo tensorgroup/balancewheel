@@ -10,7 +10,8 @@ Event shapes, per runtime (key names only):
 - codex: `{"type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage",
   "total_token_usage", "model_context_window"}}}` in `sessions/Y/M/D/rollout-*.jsonl`, whose first
   line `{"type": "session_meta", "payload": {"cwd"}}` names the worktree.
-- claude-code: `{"type": "assistant", "message": {"usage"}}` in `.claude/projects/<slug>/*.jsonl`.
+- claude-code: `{"type": "assistant", "message": {"id", "usage"}}` in `.claude/projects/<slug>/*.jsonl`;
+  one message spans several lines with the same `id` and usage, so each id counts once (its last line).
 - pi: `{"type": "message", "message": {"role": "assistant", "usage": {..., "cost": {"total"}}}}` in
   `sessions/--<dir>--/*.jsonl`, whose first line `{"type": "session", "cwd"}` names the worktree.
 - kimi: `{"type": "token_counting.measured", "tokens"}` in `<sessionDir>/agents/main/wire.jsonl`;
@@ -225,8 +226,9 @@ def _usage(runtime, rows, seat_cfg):
     out = dict(EMPTY)
     seen = False
     peak = None
-    out_sum = cost_sum = None
-    for r in rows:
+    cost_sum = None
+    msgs = {}  # claude-code: the last (ctx, output_tokens) per message.id; a line with no id stands alone
+    for n, r in enumerate(rows):
         ctx = None
         if runtime == "codex":
             info = _get(r, "payload", "info") if r.get("type") == "event_msg" and \
@@ -244,9 +246,9 @@ def _usage(runtime, rows, seat_cfg):
             if not isinstance(u, dict) or parts[0] is None:
                 continue
             ctx = sum(p or 0 for p in parts)
-            o = _int(u.get("output_tokens"))
-            if o is not None:
-                out_sum = (out_sum or 0) + o
+            mid = _get(r, "message", "id")
+            # one message is written over several lines that repeat its usage: count each id once
+            msgs[mid if isinstance(mid, str) and mid else n] = (ctx, _int(u.get("output_tokens")))
         elif runtime == "pi":
             m = r.get("message") if r.get("type") == "message" else None
             u = _get(m, "usage") if _get(m, "role") == "assistant" else None
@@ -268,7 +270,9 @@ def _usage(runtime, rows, seat_cfg):
         return dict(EMPTY)
     out["ctx_peak"] = peak
     if runtime == "claude-code":
-        out["tokens_out"] = out_sum
+        outs = [o for _, o in msgs.values() if o is not None]
+        out["tokens_out"] = sum(outs) if outs else None
+        out["ctx_peak"] = max(c for c, _ in msgs.values())
     if runtime == "pi":
         out["cost_usd"] = cost_sum
         out["window"] = _int(_get(seat_cfg, "provider", "contextWindow"))

@@ -85,6 +85,13 @@ class SeatLive(unittest.TestCase):
         self.assertEqual((u["ctx"], u["tokens_out"], u["window"]), (113000, 900, None))
         self.assertEqual(u["ctx_peak"], 113000)
 
+    def test_claude_counts_each_message_id_once(self):
+        # msg_a is split over two lines (300 once, not 600); msg_b keeps its last line (60);
+        # the two lines with no id count one by one (5 + 5)
+        home = self.copy_to_home("claude-code/split-message.jsonl", ".claude/projects/-w/s1.jsonl")
+        u = live.live_usage("claude-code", home, None, "/w", 0.0)
+        self.assertEqual((u["tokens_out"], u["ctx"], u["ctx_peak"]), (370, 20010, 90100))
+
     def test_pi_cost_and_window_from_config(self):
         home = self.copy_to_home("pi/session.jsonl", "sessions/--w--/x.jsonl")
         u = live.live_usage("pi", home, None, "/w", 0.0, {"provider": {"contextWindow": 1310720}})

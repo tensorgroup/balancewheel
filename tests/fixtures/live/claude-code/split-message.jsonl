@@ -1,0 +1,7 @@
+{"type": "assistant", "message": {"id": "msg_a", "role": "assistant", "usage": {"input_tokens": 100, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 90000, "output_tokens": 300}}}
+{"type": "assistant", "message": {"id": "msg_a", "role": "assistant", "usage": {"input_tokens": 100, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 90000, "output_tokens": 300}}}
+{"type": "user", "message": {"role": "user"}}
+{"type": "assistant", "message": {"id": "msg_b", "role": "assistant", "usage": {"input_tokens": 50, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 20000, "output_tokens": 40}}}
+{"type": "assistant", "message": {"id": "msg_b", "role": "assistant", "usage": {"input_tokens": 50, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 20000, "output_tokens": 60}}}
+{"type": "assistant", "message": {"role": "assistant", "usage": {"input_tokens": 10, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 20000, "output_tokens": 5}}}
+{"type": "assistant", "message": {"role": "assistant", "usage": {"input_tokens": 10, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 20000, "output_tokens": 5}}}
