@@ -69,12 +69,37 @@ def _add_dirs(writable):
     return [a for d in writable for a in ("--add-dir", d)]
 
 
+def _claude_args(args, system_prompt):
+    """(the lead's args without any `--append-system-prompt`, the flag to pass). Claude keeps the last
+    value of that flag, so a user's own copy would silently replace bw's protocol: the one flag
+    carries bw's text, then the user's, and the user's copies leave `args`."""
+    if not system_prompt:
+        return list(args), []
+    rest, mine, i = [], [], 0
+    while i < len(args):
+        a = args[i]
+        if a == "--append-system-prompt" and i + 1 < len(args):
+            mine.append(args[i + 1])
+            i += 2
+        elif a.startswith("--append-system-prompt="):
+            mine.append(a.split("=", 1)[1])
+            i += 1
+        else:
+            rest.append(a)
+            i += 1
+    return rest, ["--append-system-prompt", "\n\n".join([system_prompt] + mine)]
+
+
+def _claude_argv(lead, prompt, writable=(), client_dir=None, system_prompt=None):
+    args, system = _claude_args(lead.get("args", []), system_prompt)
+    return _with_prompt(["claude", "--model", lead["model"], *_add_dirs(writable),
+                         *autonomy_flags("claude-code", lead, client_dir), *system, *args]
+                        + (["--"] if writable and prompt else []), prompt)
+
+
 ADAPTERS = {
     "claude-code": Adapter(
-        argv=lambda lead, prompt, writable=(), client_dir=None, system_prompt=None: _with_prompt(
-            ["claude", "--model", lead["model"], *_add_dirs(writable), *autonomy_flags("claude-code", lead, client_dir),
-             *(["--append-system-prompt", system_prompt] if system_prompt else []),
-             *lead.get("args", [])] + (["--"] if writable and prompt else []), prompt),
+        argv=_claude_argv,
         contained_by="self", grants=lambda lead, client_dir=None: RuntimeGrants([], [], {}, False), prompt_mode="arg",
         version_argv=["claude", "--version"], verify_argv=None, verify_flags=lambda lead: [], system_protocol=True),
     "codex": Adapter(

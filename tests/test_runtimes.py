@@ -93,6 +93,23 @@ class Flags(unittest.TestCase):
         self.assertNotIn("--", argv)
         self.assertEqual(ad.argv(lead("claude-code"), "hi", []), ["claude", "--model", "m1", "--x", "hi"])  # unchanged
 
+    def test_a_users_own_append_system_prompt_is_merged_not_overridden(self):
+        ad = A["claude-code"]
+        for user_args in (["--append-system-prompt", "mine", "--x"], ["--x", "--append-system-prompt=mine"]):
+            ld = lead("claude-code", "native", args=user_args)
+            argv = ad.argv(ld, "hi", ["/cp"], system_prompt="RULES")
+            self.assertEqual(argv.count("--append-system-prompt"), 1, argv)
+            self.assertEqual(argv[argv.index("--append-system-prompt") + 1], "RULES\n\nmine")
+            self.assertNotIn("mine", [a for i, a in enumerate(argv) if argv[i - 1] != "--append-system-prompt"])
+            self.assertIn("--x", argv)
+            self.assertFalse([a for a in argv if a.startswith("--append-system-prompt=")])
+        two = ad.argv(lead("claude-code", args=["--append-system-prompt", "a", "--append-system-prompt", "b"]),
+                      None, [], system_prompt="RULES")
+        self.assertEqual(two, ["claude", "--model", "m1", "--append-system-prompt", "RULES\n\na\n\nb"])
+        # no bw protocol: the user's args are left exactly as they are
+        keep = ad.argv(lead("claude-code", args=["--append-system-prompt", "mine"]), "hi", [])
+        self.assertEqual(keep, ["claude", "--model", "m1", "--append-system-prompt", "mine", "hi"])
+
     def test_pi_guard_grants_include_client_dir(self):
         g = A["pi"].grants(lead("pi", "guard"), client_dir="/c")
         self.assertIn("/c", g.read)
