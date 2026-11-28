@@ -36,7 +36,7 @@ Codex `cli` quota reading is not applicable on `codex-cli 0.164.0` (see the note
 2026-11-24: one more known limit of the lead guard rules (`eval`, `trap`, and `alias` text); updated
 2026-11-27 when the metered pi seat moved from GLM 5.3 Flash (seat "ox") to DeepSeek V4.1 Flash
 (seat "flash"; see the pi section); updated 2026-11-27 again when the astra seat moved to
-`gpt-6.2-astra` (seat, lead, and driver) and GPT-6.2 Sol became a budget driver, not a seat (see the Codex section and Driver mode).*
+`gpt-6.2-astra` (seat, lead, and driver) and GPT-6.2 Sol became a budget driver, not a seat (see the Codex section and Driver mode); updated 2026-11-27 because a Claude Code lead now gets `lead/protocol/panel.md` as a system prompt (see Panel instructions).*
 
 ## The cast
 

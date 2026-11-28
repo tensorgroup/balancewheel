@@ -231,7 +231,7 @@ Lead
       export BALANCEWHEEL_CONFIG=~/.config/balancewheel/config.json
       cd ~/code/my-project || exit 1
       exec ~/.local/share/balancewheel/bin/bw lead
-  · would run: open -a Terminal ~/.local/state/balancewheel/start/98bf2f5e3750.command
+  · would run: open -a Terminal /Users/you/.local/state/balancewheel/start/98bf2f5e3750.command
 
 Also
   · would check seats in the background
@@ -243,7 +243,7 @@ information, and a `…` is a wait. Piped to a file, it prints plain lines that 
 Then run it for real. `bw start` updates your tools, re-checks containment, reads quota, and
 opens the lead. When you run it in a terminal, from inside the project and with no path, it
 starts the lead in that same terminal. With a path to another project, it opens the lead in a
-new macOS Terminal tab (set `"canvas": "ghostty"` for a Ghostty tab). On Linux, run `bw` inside
+new macOS Terminal tab (set `"canvas": "ghostty"` for a Ghostty tab; `--tab` forces the tab inside the project too). On Linux, run `bw` inside
 the repository instead.
 
 ```sh

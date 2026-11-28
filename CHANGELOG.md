@@ -20,8 +20,9 @@ not against the prose.
   steps, prints `starting here` on the lead line, then `chdir`s into the worktree and `exec`s `bw lead` with the
   same `BALANCEWHEEL_CONFIG` and `BW_STATE_DIR` as the `.command` file, as its last act. A worktree that has a
   lead is not started again. `--dry-run` prints `would start the lead here: <cmd>`. Another path, or no
-  terminal, keeps the canvas (Terminal tab, Ghostty tab, Orca pane). `start.start` takes `cwd`, `chdir`, and
-  `execve` for tests.
+  terminal, a process that does not own the terminal's foreground group (`bw start &`), or `--tab` keeps the
+  canvas (Terminal tab, Ghostty tab, Orca pane). `start.start` takes `cwd`, `chdir`, `execve`, `foreground`, and
+  `tab`.
 - **`bw start` prints sections with marks on a terminal** (`lead/startout.py`, `lead/start.py`, `lead/quota.py`,
   `lead/verify.py`, `lead/updates.py`). A header, then Updates, Checks, Quota, Lead, and Also; `✓` pass, `✗`
   failure, `·` information, `…` wait; home paths as `~`. A `…` line says what is slow before it starts: the tool

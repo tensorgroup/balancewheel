@@ -279,12 +279,12 @@ def _in_this_worktree(config, project, run, cwd):
 
 def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=False, verify=True, update=True,
           bw_path=None, env=os.environ, fetch=probes._fetch, clock=None, stdin=None, tty=None, width=None,
-          cwd=None, chdir=os.chdir, execve=os.execve, foreground=_foreground) -> int:
+          cwd=None, chdir=os.chdir, execve=os.execve, foreground=_foreground, tab=False) -> int:
     """`clock` (default time.time; a fixed `now` freezes it) is read at the start, again before
     quota (step 4, after updates and attacks that can take minutes), and again before the registry.
     `tty` (default: `out` is a terminal) picks the sectioned layout; `width` its line width.
     With stdin and stdout on a terminal and the target the worktree of `cwd` (default: the current
-    directory), the lead starts in this process (`chdir`, then `execve`, as the last step) instead of
+    directory) and `tab` is not set, the lead starts in this process (`chdir`, then `execve`, as the last step) instead of
     in a new tab."""
     if clock is None:
         clock = time.time if now is None else (lambda: now)
@@ -310,7 +310,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     tools = orca.active_tools(config)
     plans = rotation.plans_touched(config, profile, runner.read_pin(state, project.worktree_key))
     stdin = stdin or sys.stdin
-    here = (_terminal(out) and _terminal(stdin) and foreground(stdin) and _in_this_worktree(config, project, run, cwd))
+    here = (not tab and _terminal(out) and _terminal(stdin) and foreground(stdin) and _in_this_worktree(config, project, run, cwd))
     if dry_run:
         return _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify,
                         bw, env, rep, here)
@@ -409,7 +409,8 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     code, launch = _workspace(state, project, run, bw, env, rep, orca.canvas(config), decision, here, chdir, execve)
     rep.end("Lead")
 
-    # 7. the seats, in the background (after the lead opens; no seat key is read here)
+    # 7. the seats, in the background (a tab is already open by now; with the lead to start here, the check
+    # spawns before the lead does, because the exec is the last step; no seat key is read here)
     _seats(config, state, verify, bw, rep, env)
 
     # 8. pointers and checks

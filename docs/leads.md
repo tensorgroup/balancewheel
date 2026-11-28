@@ -166,7 +166,7 @@ once for each bw-contained lead runtime.
     Another agent runtime started by the lead (a second `claude`, `codex`, or `pi`) is
     outside the guard: it is gray, so it asks, and what it does inside is not judged.
     When the guard is acting, a false block is worked around by hand, outside the lead.
-- **`bw start [path] [--dry-run] [--no-update] [--no-verify]` (since 2026-10-25).** One command
+- **`bw start [path] [--dry-run] [--no-update] [--no-verify] [--tab]` (since 2026-10-25).** One command
   to begin a session in a project (the path defaults to the current directory). It refuses
   when `bw` itself lives inside the target worktree or its git directory (a lead could edit
   the next `bw lead`), then:
@@ -193,8 +193,9 @@ once for each bw-contained lead runtime.
      then changes into the worktree and replaces itself with `bw lead`, with the same
      `BALANCEWHEEL_CONFIG` and `BW_STATE_DIR` the `.command` file exports. Its `--dry-run` says
      `would start the lead here: <command>`. A worktree that already has a lead is not started
-     again. For any other path, or without a terminal (a pipe, a script), it opens the lead on the
-     canvas: by default a Terminal tab, through a small `.command`
+     again. It does this only when `bw start` owns the terminal (a job started with `&` does not,
+     and is not allowed to take it from the shell). For any other path, without a terminal (a pipe,
+     a script), or with `--tab`, it opens the lead on the canvas: by default a Terminal tab, through a small `.command`
      file under the state dir's `start/` that `open -a Terminal` runs. With `canvas: "ghostty"`,
      it opens a Ghostty tab that runs the same file through your login shell, by Ghostty's
      AppleScript (checked on Ghostty 1.4; the first run asks for macOS Automation access to

@@ -1136,6 +1136,16 @@ class StartCase(unittest.TestCase):
             start._tool_line(rep, res)
             self.assertEqual(rep.out.getvalue(), f"bw start: {want}\n")
 
+    def test_tab_forces_the_canvas_even_in_the_current_worktree(self):
+        run = FakeRun()
+        code, out, calls = self.here_start(run, tab=True)
+        self.assertEqual(calls["execve"], [])
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+        self.assertNotIn("starting here", out)
+        code, out, calls = self.here_start(FakeRun(), dry_run=True, tab=True)
+        self.assertIn("would run: open -a Terminal", out)
+        self.assertNotIn("would start the lead here", out)
+
     def test_a_path_inside_the_same_worktree_counts(self):
         sub = self.repo / "pkg"
         sub.mkdir()
