@@ -4,7 +4,7 @@
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
 Corrected the same day after review: the panel's summary line, the `bw start` prefix of the seat-check
-line, and a stale "not in v0" note on acting. Updated 2026-11-27: the `local` config section and `claude_pane`.*
+line, and a stale "not in v0" note on acting. Updated 2026-11-27: the `local` config section and `claude_pane`, and `bw run`.*
 
 The **lead** is the agent you work in for a project; it is also the moderator of every
 panel it convenes. One plan usually runs out first, so a project's **profile** (config
@@ -322,6 +322,22 @@ once for each bw-contained lead runtime.
   `improve.panel_logs` as one list, with one entry per real path. A path that is the main log is left
   out. The top-level `claude_pane` (default true) turns the automatic Claude Code pane install off
   when it is false.
+- **Track a local command (`bw run`, since 2026-11-27).** `bw run --seat NAME [--model M] [--label L]
+  [--dir D] -- COMMAND...` runs a local wrapper or tool as a tracked run. It writes a start row
+  (`source: "local"`, its own `pid` and `host`), runs the command with stdin, stdout, and stderr
+  passed through, and forwards SIGINT and SIGTERM to it. While the command runs, it writes a beat
+  row every `local.run_max_s / 2` seconds. At the end it writes an end row: `reason` is null on exit
+  0, else `exit <n>` or `signal <n>`. It exits with the command's status, `128 + n` after signal n,
+  127 when the command is not found, and 126 when it is not executable. `NAME` must match
+  `[a-z0-9-]+`. `--model` defaults to the `model` of the `local.seats[]` entry with that name. `--dir`
+  (default: the current directory) is recorded as its worktree root, else its real path. For a
+  wrapper that cannot be wrapped, `bw run start --seat NAME ...` prints only the run id (and records
+  no `pid`), and `bw run end RUN_ID (--ok | --fail [--reason R])` closes it. `bw run end` refuses a
+  run that `bw seat` started. Rows go to the metrics log first. Inside a contained lead, whose
+  sandbox does not let it write bw's state, the append fails. Then, when `BW_CHECKPOINT` is set,
+  each row goes to a request file in `<checkpoint dir>/runs/` (`<run id>.<phase>.json`, mode 0600).
+  When both fail, `bw run` prints one `bw run: not tracked (...)` line and still runs the command.
+  `start` and `end` exit 0 when tracking fails. `bw run` does not stop on a config error.
 
 ## Start leading (first run)
 

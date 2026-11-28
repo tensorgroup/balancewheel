@@ -25,6 +25,15 @@
   bw seat list [--json]                           seats, verification, caps
   bw seat verify [<id>...] [--all]                attack-test each seat (no ids: every reachable seat),
                                                   record a pass per seat id (--changed: only those without one)
+  bw run --seat <name> [--model M] [--label L] [--dir D] -- <command>...
+                                                  run a local command as a tracked run (start, beat, end rows),
+                                                  passing its exit status through
+  bw run start --seat <name> [--model M] [--label L] [--dir D]
+                                                  record a run start; prints only the run id
+  bw run end <run-id> (--ok | --fail [--reason R])
+                                                  record the end of a run that bw run start began
+  bw live --json [--dir D] [--since EPOCH] [--limit N]
+                                                  what runs now and what ran in this worktree, as JSON
   bw panel <checkpoint> [target] [--deep] [--background]   convene a review panel (leads do this for you)
   bw panel ask <panel-id> <seat> "<claim>" [--dispute ID]   relay one claim to one seat
   bw panel log <panel-id> < verdicts.json         log the panel with your verdicts
@@ -61,7 +70,7 @@ from cockpit import server as cockpit_server, views as cockpit_views  # noqa: E4
 from lead import ccswitch, inbox, probes, quota, registry, runner, sandbox, start, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, evaluate as guard_eval, install as guard_install, review as guard_review  # noqa: E402
 from lead.guard.review import safe  # noqa: E402
-from lead import improve, triage_install  # noqa: E402
+from lead import improve, run_cli, triage_install  # noqa: E402
 from seats import cli as seat_cli  # noqa: E402
 from panel import cli as panel_cli  # noqa: E402
 from packs import export as pack_export  # noqa: E402
@@ -74,7 +83,7 @@ from lead import proc  # noqa: E402
 from lead.paths import read_json, write_json_atomic  # noqa: E402
 
 COMMANDS = ("lead", "status", "registry", "probe", "start", "inbox", "answer", "cockpit", "cap", "sandbox", "guard", "triage", "improve",
-            "setup", "seat", "panel", "pack")
+            "setup", "seat", "panel", "pack", "run", "live")
 DECIDED_SEEN = "triage-seen.json"  # when `bw inbox --all` last showed the decided items
 START_STALE_S = 86400  # tools not updated by bw start for this long get a one-line nudge
 
@@ -473,6 +482,16 @@ def cmd_panel(a, config, state):
     return panel_cli.main(a.rest, config, state)
 
 
+def cmd_run(a):
+    """`bw run` handles a config error itself (it still runs the command), so it gets no config."""
+    return run_cli.main(a.rest, sys.stdout, sys.stderr)
+
+
+def cmd_live_placeholder(a):
+    print("bw live: not built yet", file=sys.stderr)
+    return 2
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="bw", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -514,8 +533,10 @@ def main(argv=None):
     st = sub.add_parser("setup"); st.add_argument("what", choices=["cc-switch"])
     sub.add_parser("seat", add_help=False)  # listed for --help; `bw seat` parses its own argv
     sub.add_parser("panel", add_help=False)  # likewise
+    sub.add_parser("run", add_help=False)  # likewise
+    sub.add_parser("live", add_help=False)  # likewise
     argv, outside = default_argv(sys.argv[1:] if argv is None else argv, os.getcwd())
-    if argv and argv[0] in ("seat", "panel"):
+    if argv and argv[0] in ("seat", "panel", "run", "live"):
         return _dispatch(argparse.Namespace(cmd=argv[0], rest=argv[1:]))
     a = ap.parse_args(argv)
     if outside:
@@ -527,6 +548,10 @@ def main(argv=None):
 
 
 def _dispatch(a):
+    if a.cmd == "run":  # handles a config error itself: the command still runs
+        return cmd_run(a)
+    if a.cmd == "live":
+        return cmd_live_placeholder(a)
     if a.cmd == "setup":  # touches only the tool's own settings file, so it needs no config
         return cmd_setup(a)
     if a.cmd == "triage":  # touches only Claude Code's settings file, so it needs no config

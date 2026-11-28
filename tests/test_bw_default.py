@@ -94,6 +94,20 @@ class DefaultCommand(Case):
         documented = set(re.findall(r"^  bw ([a-z-]+)", self.bw.__doc__, re.M))
         self.assertEqual(documented, set(self.bw.COMMANDS))
 
+    def test_run_skips_the_config_exit(self):
+        self.cfg.write_text("{ broken")
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop("BW_CHECKPOINT", None)
+            code, _, err = self.main(["run", "--seat", "s", "--", "true"], self.repo)
+        self.assertEqual(code, 0)
+        self.assertIn("bw run: not tracked", err)
+        self.assertNotIn("bw: config error", err)
+
+    def test_live_placeholder(self):  # Task 7 deletes this test
+        code, _, err = self.main(["live", "--json"], self.repo)
+        self.assertEqual(code, 2)
+        self.assertIn("not built yet", err)
+
     def test_lead_flags_outside_a_worktree_still_mean_lead(self):
         self.assertEqual(self.bw.default_argv(["--auto"], str(self.outside)), (["lead", "--auto"], False))
 

@@ -1,5 +1,10 @@
 """lead/runs.py: the run row builders, ids, and labels."""
+import json
+import os
+import shutil
+import stat
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -56,6 +61,33 @@ class Runs(unittest.TestCase):
         self.assertTrue(runs.LEAD_SESSION.fullmatch("0123456789ab"))
         self.assertFalse(runs.LEAD_SESSION.fullmatch("zz"))
         self.assertEqual(runs.END_LOOKBACK_S, 7 * 86400)
+
+
+    def test_requests_dir_is_runs_under_the_checkpoint_dir(self):
+        self.assertEqual((runs.REQUEST_DIR, runs.requests_dir("/s/handoffs/k")), ("runs", "/s/handoffs/k/runs"))
+
+    def test_write_request_names_the_file_by_run_and_phase(self):
+        tmp = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, tmp, True)
+        d = runs.requests_dir(tmp)
+        row = runs.start_row("s", None, "/w", None, "local", t=5.0)
+        path = runs.write_request(d, row)
+        self.assertEqual(path, os.path.join(d, row["run_id"] + ".start.json"))
+        self.assertEqual(json.loads(Path(path).read_text()), row)
+        self.assertEqual((stat.S_IMODE(os.stat(d).st_mode), stat.S_IMODE(os.stat(path).st_mode)), (0o700, 0o600))
+        runs.write_request(d, runs.beat_row(row["run_id"], "s", "/w", t=6.0))
+        runs.write_request(d, runs.beat_row(row["run_id"], "s", "/w", t=7.0))  # a newer beat replaces the older
+        self.assertEqual(sorted(os.listdir(d)), sorted([row["run_id"] + ".start.json", row["run_id"] + ".beat.json"]))
+        self.assertEqual(json.loads(Path(d, row["run_id"] + ".beat.json").read_text())["t"], 7.0)
+
+    def test_write_request_needs_the_checkpoint_dir(self):
+        tmp = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, tmp, True)
+        with self.assertRaises(OSError):
+            runs.write_request(runs.requests_dir(os.path.join(tmp, "gone")), runs.beat_row("r0123456789ab", "s", "/w"))
+
+    def test_beat_row(self):
+        b = runs.beat_row("r0123456789ab", "s", "/w", t=3.0)
+        self.assertEqual(b, {"type": "run", "phase": "beat", "run_id": "r0123456789ab", "t": 3.0, "seat": "s", "dir": "/w"})
+        self.assertIsInstance(runs.beat_row("r0123456789ab", "s", "/w")["t"], float)
 
 
 if __name__ == "__main__":

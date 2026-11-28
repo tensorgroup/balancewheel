@@ -50,6 +50,15 @@ not against the prose.
   (`<checkpoint> round 1`, `ask <id>`), and a stand-in's original to `bw seat` through hidden flags
   (`--panel`, `--lead-session`, `--label`, `--stand-in-for`); a bad value is dropped with one line. This
   changes `seats/run.py`, so every seat needs `bw seat verify --changed` once.
+- **`bw run` (`lead/run_cli.py`).** `bw run --seat NAME [--model M] [--label L] [--dir D] -- COMMAND...`
+  tracks a local command as a run: a start row (`source: "local"`, `pid`, `host`), a `beat` row every
+  `local.run_max_s / 2` while it runs, and an end row (`reason` null, `exit <n>`, or `signal <n>`). It passes
+  stdio through, forwards SIGINT and SIGTERM, and exits with the command's status (`128 + n` after a signal, 127
+  not found, 126 not executable). `bw run start` prints only the run id and records no `pid`; `bw run end RUN_ID
+  (--ok | --fail [--reason R])` copies `seat` and `dir` from the start and refuses a `bw seat` run. Rows go to the
+  log; when that fails and `BW_CHECKPOINT` is set, to request files `<checkpoint dir>/runs/<run id>.<phase>.json`
+  (`runs.write_request`); else one `bw run: not tracked (...)` line, and the command still runs. `bw run` and the
+  placeholder `bw live` skip `bw`'s config exit.
 - **`bw pack export --to <dir> [--dry-run]` (`packs/export.py`).** It rewrites the `# bw:catalog:begin` / `# bw:catalog:end` block of esc's `model-seats` `pack.yaml` and its version (minor on a status, model, or membership change; patch on numbers only). It refuses a wrong name, a dirty file, a `pack.yaml` git does not track (untracked or ignored), and missing markers. It saves esc's changelog bullet to `state_dir/packs/` and logs a `pack_export` event. It reads every log in `improve.panel_logs`.
 - **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.
 - **The guard review offer (`lead/guard/offer.py`).** On a terminal, before the lead opens, `bw start` offers a
