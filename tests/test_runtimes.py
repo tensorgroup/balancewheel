@@ -52,7 +52,7 @@ class Flags(unittest.TestCase):
 
     def test_legacy_argv_is_todays_byte_for_byte(self):
         want = {
-            "claude-code": ["claude", "--model", "m1", "--x", "hi"],
+            "claude-code": ["claude", "--model", "m1", "--add-dir", "/cp", "--x", "--", "hi"],
             "codex": ["codex", "-m", "m1", "--sandbox", "workspace-write", "--add-dir", "/cp", "--x", "hi"],
             "agy": ["agy", "--model", "m1", "--sandbox", "--add-dir", "/cp", "--x", "-i", "hi"],
             "pi": ["pi", "--model", "m1", "--x", "hi"],
@@ -62,6 +62,22 @@ class Flags(unittest.TestCase):
             ld = lead(rt, "native", "legacy")
             self.assertEqual(A[rt].argv(ld, "hi", ["/cp"]), argv, rt)
             self.assertEqual(A[rt].argv(lead(rt), "hi", ["/cp"]), argv, rt)  # no autonomy key at all
+
+    def test_claude_code_gets_add_dir_for_each_writable_dir(self):
+        # the Write tool could not reach the checkpoint dir without it
+        argv = A["claude-code"].argv(lead("claude-code", "native"), "hi", ["/cp", "/cp2"])
+        self.assertEqual(argv, ["claude", "--model", "m1", "--add-dir", "/cp", "--add-dir", "/cp2",
+                                "--permission-mode", "auto", "--x", "--", "hi"])
+
+    def test_claude_code_without_writable_dirs_has_no_add_dir_and_no_separator(self):
+        argv = A["claude-code"].argv(lead("claude-code", "native"), "hi", [])
+        self.assertEqual(argv, ["claude", "--model", "m1", "--permission-mode", "auto", "--x", "hi"])
+
+    def test_claude_code_prompt_follows_a_separator_so_add_dir_cannot_take_it(self):
+        # --add-dir takes a list of dirs; a bare prompt after it would be read as one more dir
+        argv = A["claude-code"].argv(lead("claude-code"), "hi", ["/cp"])
+        self.assertEqual(argv[-2:], ["--", "hi"])
+        self.assertEqual(A["claude-code"].argv(lead("claude-code"), None, ["/cp"])[-1], "--x")
 
     def test_pi_guard_grants_include_client_dir(self):
         g = A["pi"].grants(lead("pi", "guard"), client_dir="/c")

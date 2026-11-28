@@ -140,6 +140,12 @@ not against the prose.
 
 ### Fixed
 
+- **A Claude Code lead can write its checkpoint** (`lead/runtimes.py`). The claude-code adapter now passes
+  `--add-dir <dir>` for each writable dir (the checkpoint dir), as the codex adapter does. Before, the Write tool
+  failed on the checkpoint file ("Couldn't write file") and the lead fell back to the shell. `--add-dir` takes a
+  list, so the first prompt follows a `--`. This changes the lead containment key for Claude Code, so a runtime
+  re-verifies once.
+
 - **`bw pack export` reads more real packs and refuses more broken ones** (`packs/export.py`, `bin/bw`).
   A policy with `<` and `>` passes (`x<y and z>w`, `List<String>`); only a whole token such as
   `<seat policy>` or `TODO` is a placeholder. A ts may be a number in one log and a string in another. A

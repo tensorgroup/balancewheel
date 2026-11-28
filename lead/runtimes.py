@@ -62,14 +62,16 @@ def _with_prompt(base, prompt):
 
 
 def _add_dirs(writable):
-    """Extra writable dirs (the checkpoint dir) for runtimes whose own sandbox stops at the worktree."""
+    """Extra writable dirs (the checkpoint dir) for runtimes whose own sandbox stops at the worktree.
+    Claude Code's `--add-dir` takes a list, so its prompt follows a `--` (see its adapter)."""
     return [a for d in writable for a in ("--add-dir", d)]
 
 
 ADAPTERS = {
     "claude-code": Adapter(
         argv=lambda lead, prompt, writable=(), client_dir=None: _with_prompt(
-            ["claude", "--model", lead["model"], *autonomy_flags("claude-code", lead, client_dir), *lead.get("args", [])], prompt),
+            ["claude", "--model", lead["model"], *_add_dirs(writable), *autonomy_flags("claude-code", lead, client_dir),
+             *lead.get("args", [])] + (["--"] if writable and prompt else []), prompt),
         contained_by="self", grants=lambda lead, client_dir=None: RuntimeGrants([], [], {}, False), prompt_mode="arg",
         version_argv=["claude", "--version"], verify_argv=None, verify_flags=lambda lead: []),
     "codex": Adapter(
