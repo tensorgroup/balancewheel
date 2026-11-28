@@ -46,6 +46,10 @@ Sibling project: [OpenEscapement](https://github.com/tensorgroup/openescapement)
 Balancewheel *finds and justifies* a seat policy. esc *ships* that policy into repos as a
 signed rule pack. See [Working with OpenEscapement](#working-with-openescapement).
 
+See also: [Capybara Onsen](https://github.com/tensorgroup/capybara-onsen), a companion pane
+for Claude Code. Each of your agents shows up as a capybara soaking in a hot spring, so you
+can see at a glance who is working.
+
 ## What a panel looks like
 
 You normally never start a panel by hand. The lead convenes one at a checkpoint (a design,
