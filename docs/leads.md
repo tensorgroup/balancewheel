@@ -4,7 +4,8 @@
 lead protocol as a system prompt and `--add-dir` for the checkpoint dir; `bw start` prints sections with marks on
 a terminal, says what it is waiting for before a slow step and every 15 s while it runs, says when a check waits
 for a runtime lock, lists the repositories to start when the folder is not one, and starts the lead in this
-terminal when you run it there with no path.
+terminal when you run it there with no path. `bw lead` prints nothing into a running lead's terminal; a new
+question sends a desktop notification instead.
 Written 2026-11-24: moved here, unchanged, from the README's "Leads and rotation" section, so the README
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
@@ -302,7 +303,12 @@ once for each bw-contained lead runtime.
   handoff. `bw inbox` lists open asks and bw's own notices (all leads capped, a pinned lead
   capped, a guard that could not be reached, an ingest problem); `--project` limits it to
   this worktree and `--all` adds answered ones. `bw answer <id> "<text>"` answers an ask or
-  closes a notice, and `bw status` shows open items. Answers reach the lead through a file
+  closes a notice, and `bw status` shows open items. While a lead runs, `bw lead` prints nothing
+  into its terminal: a full-screen lead draws over the line, and your typing lands on top of it.
+  It keeps its lines and prints them under `bw: while the lead ran:` when the lead exits. A new
+  question also sends a desktop notification (`osascript` on macOS, `notify-send` elsewhere when
+  it is installed), so you see it while the lead runs. The notification shows the first line of the
+  question, and it can show on a locked screen. Answers reach the lead through a file
   bw rewrites (`BW_INBOX`, `inbox-view/<worktree-key>/answers.md`) that holds **only your answers**,
   never ask text, and that the lead can read but not write, so everything in it is your words; a
   lead cannot read another worktree's answers or the inbox record itself. Whatever a lead

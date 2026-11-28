@@ -44,7 +44,7 @@ import tempfile
 import time
 import uuid
 
-from . import containment, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox, triage as triagemod
+from . import containment, desktop, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox, triage as triagemod
 from .handoff import build_handoff, checkpoint_dir, open_panels_section, protocol_text, split_prompt, write_first_prompt
 from .guard import broker as brk, gate, install as guard_install, judging, launch
 from .guard.launch import GuardUnavailable
@@ -365,7 +365,7 @@ class Session:
             lines = launch.read_markers(self.markers_path)
             if lines:
                 line = launch.marker_notice(lines, "this session")
-                ctx.say(line)
+                ctx.say(line, alert=True)
                 ctx.notice("guard-unreachable", line[len("bw: "):])
                 self.marker_notice_sent = True
 
@@ -402,7 +402,7 @@ class Session:
                     if self._triage(ctx, r, mode):
                         continue
             ctx.say(f"bw: {self.lead_name} asks [{r['id']}]: {inboxmod.first_line(r['text'])} — "
-                    f"answer with bw answer {r['id']} \"…\"")
+                    f"answer with bw answer {r['id']} \"…\"", alert=True)
         if problem and ctx.notice("inbox", problem):
             ctx.say(f"bw: {problem}")
         notice = _panel_notice(ctx)
@@ -435,7 +435,8 @@ class Session:
         try:
             inboxmod.write_view(ctx.state, ctx.project.worktree_key)
         except OSError as e:  # the decision is recorded; the file catches up at the next write
-            ctx.say(f"bw: the inbox answers file could not be written ({type(e).__name__}); tell the lead to carry on")
+            ctx.say(f"bw: the inbox answers file could not be written ({type(e).__name__}); tell the lead to carry on",
+                    alert=True)
         return True
 
     def _say_decided(self, ctx, rec):
@@ -493,6 +494,9 @@ class Session:
         self.cleanup()
 
 
+HELD_MAX = 200  # lines kept while a lead owns the terminal; questions stay in the inbox past it
+
+
 class Context:
     def __init__(self, config, state, project, lock, adapters, backend, out):
         self.config, self.state, self.project, self.lock = config, state, project, lock
@@ -502,6 +506,11 @@ class Context:
         self.panels = panelsvc.Jobs()  # one per `bw lead` run: workers outlive a lead switch
         self.notice_failed = False
         self.cap_signal_failed = False
+        # Lines said while a lead owns the terminal. A full-screen lead (Claude Code, Codex) draws over
+        # them, and the user's typing lands on top: they wait here and print when bw has the terminal back.
+        self._held = None
+        self.notify = desktop.notify
+        self._notifiers = []  # started notifier processes, reaped at each say and when the terminal comes back
 
     def pass_fds(self):
         return (self.lock.fd,) + ((self.runtime_lock.fd,) if self.runtime_lock is not None else ())
@@ -534,8 +543,21 @@ class Context:
             self.runtime_lock.release()
             self.runtime_lock = None
 
-    def say(self, msg):
-        print(msg, file=self.out, flush=True)
+    def say(self, msg, alert=False):
+        """A line for the user. While a lead owns the terminal it is held, and printed when the terminal
+        comes back; `alert` (a question that waits for the user) also sends a desktop notification."""
+        if self._held is None:
+            print(msg, file=self.out, flush=True)
+            return
+        if len(self._held) < HELD_MAX:
+            self._held.append(msg)
+        elif len(self._held) == HELD_MAX:
+            self._held.append("bw: (more lines were dropped; `bw inbox` lists the questions)")
+        self._notifiers = desktop.reap(self._notifiers)
+        if alert:
+            p = self.notify("bw", msg[len("bw: "):] if msg.startswith("bw: ") else msg)
+            if p is not None:
+                self._notifiers.append(p)
 
     def notice(self, kind, text, key=None):
         """A bw notice in the inbox; the record, or None when one is already open. Never raises."""
@@ -543,7 +565,8 @@ class Context:
             return inboxmod.notice(self.state, self.project.worktree_key, kind, text, key=key)
         except OSError as e:
             if not self.notice_failed:
-                self.say(f"bw: the inbox could not be written ({type(e).__name__}); notices go only here")
+                self.say(f"bw: the inbox could not be written ({type(e).__name__}); notices go only here",
+                         alert=True)
                 self.notice_failed = True
             return None
 
@@ -563,6 +586,8 @@ class Context:
 
     def give_terminal(self, pgid):
         if self.tty is not None:
+            if self._held is None:
+                self._held = []
             try:
                 os.tcsetpgrp(self.tty, pgid)
             except OSError:
@@ -574,6 +599,12 @@ class Context:
                 os.tcsetpgrp(self.tty, os.getpgrp())
             except OSError:
                 pass
+        held, self._held = self._held, None
+        self._notifiers = desktop.reap(self._notifiers)
+        if held:
+            print("bw: while the lead ran:", file=self.out, flush=True)
+            for line in held:
+                print(f"  {line}", file=self.out, flush=True)
 
 
 def _guard_notice(ctx):

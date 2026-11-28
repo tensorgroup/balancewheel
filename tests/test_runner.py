@@ -1,4 +1,4 @@
-import json, os, pty, signal, subprocess, sys, tempfile, threading, time, unittest
+import io, json, os, pty, signal, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -967,7 +967,8 @@ class TriageDrain(unittest.TestCase):
         self.inbox = inbox
         self.said, self.logged = [], []
         project = mock.Mock(worktree_key="k", worktree="/w", profile="p")
-        self.ctx = mock.Mock(state=self.state, project=project, say=self.said.append, log=self.logged.append,
+        self.ctx = mock.Mock(state=self.state, project=project, say=lambda m, alert=False: self.said.append(m),
+                             log=self.logged.append,
                              config={"triage": {"mode": {"p": "acting"}, "model": "m", "key_env": "K", "thresholds": {}}})
         self.ctx.notice.return_value = None
         self.s = runner.Session.__new__(runner.Session)
@@ -1716,3 +1717,53 @@ class PanelRunner(RunnerCase):
         b = self.prompt("b")
         self.assertIn("@next handoff", b)
         self.assertIn(f"open panels (finish and log them):\n- {pid} design: ready", b)
+
+
+class HeldOutput(unittest.TestCase):
+    """bw lead prints nothing into a terminal a lead owns: a full-screen lead draws over the line and
+    the user's typing lands on top of it. Lines wait, and print when bw has the terminal back."""
+
+    def setUp(self):
+        from lead import runner
+        self.out = io.StringIO()
+        self.ctx = runner.Context({"leads": {}}, "/nonexistent", None, None, {}, "sandbox-exec", self.out)
+        self.ctx.tty = 99  # a terminal; tcsetpgrp is patched
+        self.sent = []
+        self.ctx.notify = lambda title, text: self.sent.append((title, text))  # returns None: nothing to reap
+        p = mock.patch("lead.runner.os.tcsetpgrp")
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_lines_wait_while_the_lead_owns_the_terminal_and_print_after(self):
+        self.ctx.say("bw: before")
+        self.ctx.give_terminal(1234)
+        self.ctx.say("bw: during")
+        self.assertEqual(self.out.getvalue(), "bw: before\n")
+        self.ctx.take_terminal()
+        self.assertEqual(self.out.getvalue(), "bw: before\nbw: while the lead ran:\n  bw: during\n")
+        self.ctx.say("bw: after")
+        self.assertTrue(self.out.getvalue().endswith("bw: after\n"))
+
+    def test_a_question_sends_a_desktop_notification_while_held(self):
+        self.ctx.give_terminal(1234)
+        self.ctx.say('bw: lead asks [a1]: When? — answer with bw answer a1 "…"', alert=True)
+        self.assertEqual(self.sent, [("bw", 'lead asks [a1]: When? — answer with bw answer a1 "…"')])
+        self.ctx.take_terminal()
+        self.ctx.say("bw: lead asks again", alert=True)  # bw owns the terminal: printed, no notification
+        self.assertEqual(len(self.sent), 1)
+
+    def test_no_terminal_prints_at_once(self):
+        self.ctx.tty = None
+        self.ctx.give_terminal(1234)
+        self.ctx.say("bw: piped")
+        self.assertEqual(self.out.getvalue(), "bw: piped\n")
+
+    def test_held_lines_are_bounded(self):
+        from lead import runner
+        self.ctx.give_terminal(1234)
+        for i in range(runner.HELD_MAX + 50):
+            self.ctx.say(f"bw: {i}")
+        self.ctx.take_terminal()
+        lines = self.out.getvalue().splitlines()
+        self.assertEqual(len(lines), 1 + runner.HELD_MAX + 1)
+        self.assertIn("more lines were dropped", lines[-1])

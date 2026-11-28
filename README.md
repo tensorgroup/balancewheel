@@ -277,7 +277,8 @@ bw inbox
 bw: inbox empty
 ```
 
-When a lead has a question for you, it shows here. Answer with `bw answer <id> "<text>"`,
+When a lead has a question for you, it shows here, and a desktop notification tells you at once.
+`bw lead` does not print into the lead's terminal while the lead runs. Answer with `bw answer <id> "<text>"`,
 then tell the lead to read its inbox.
 
 **8. Read the scoreboard.**
