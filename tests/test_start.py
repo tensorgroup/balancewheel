@@ -1053,6 +1053,27 @@ class StartCase(unittest.TestCase):
         (line,) = [ln for ln in out.getvalue().splitlines() if "run it yourself" in ln]
         self.assertIn(f"BW_STATE_DIR={self.repo / 'st'} ", line.replace("'", ""))
 
+    def test_foreground_helper_compares_the_terminal_group_with_ours(self):
+        class Stream:
+            def fileno(self):
+                return 7
+        self.assertTrue(start._foreground(Stream(), tcgetpgrp=lambda fd: 100, getpgrp=lambda: 100))
+        self.assertFalse(start._foreground(Stream(), tcgetpgrp=lambda fd: 200, getpgrp=lambda: 100))  # `bw start &`
+        def gone(fd):
+            raise OSError(25, "not a tty")
+        self.assertFalse(start._foreground(Stream(), tcgetpgrp=gone, getpgrp=lambda: 100))
+        self.assertTrue(start._foreground(Tty()))  # a stream with no descriptor (a test's) cannot be in the background
+
+    def test_a_background_start_never_takes_the_terminal(self):
+        run = FakeRun()
+        out, calls = Tty(), []
+        code = start.start(self.config, self.state, None, run=run, out=out, bw_path=self.bw, env=self.env, now=NOW,
+                           verify=False, update=False, stdin=Tty(), cwd=str(self.repo), width=88,
+                           foreground=lambda stream: False, chdir=calls.append, execve=lambda *a: calls.append(a))
+        self.assertEqual(calls, [])
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)  # the tab, as for any other start
+        self.assertNotIn("starting here", out.getvalue())
+
     def test_a_path_inside_the_same_worktree_counts(self):
         sub = self.repo / "pkg"
         sub.mkdir()

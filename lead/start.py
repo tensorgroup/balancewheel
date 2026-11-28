@@ -245,6 +245,19 @@ def _terminal(stream):
     return bool(getattr(stream, "isatty", lambda: False)())
 
 
+def _foreground(stream, tcgetpgrp=os.tcgetpgrp, getpgrp=os.getpgrp):
+    """Whether this process owns the terminal's foreground process group. A job started with `&` does not,
+    and must not take the terminal from the shell. A stream with no descriptor cannot be in the background."""
+    try:
+        fd = stream.fileno()
+    except (AttributeError, OSError, ValueError):
+        return True
+    try:
+        return tcgetpgrp(fd) == getpgrp()
+    except OSError:
+        return False
+
+
 def _in_this_worktree(config, project, run, cwd):
     """Whether the current directory is in the target's worktree (a path inside it counts)."""
     try:
@@ -255,7 +268,7 @@ def _in_this_worktree(config, project, run, cwd):
 
 def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=False, verify=True, update=True,
           bw_path=None, env=os.environ, fetch=probes._fetch, clock=None, stdin=None, tty=None, width=None,
-          cwd=None, chdir=os.chdir, execve=os.execve) -> int:
+          cwd=None, chdir=os.chdir, execve=os.execve, foreground=_foreground) -> int:
     """`clock` (default time.time; a fixed `now` freezes it) is read at the start, again before
     quota (step 4, after updates and attacks that can take minutes), and again before the registry.
     `tty` (default: `out` is a terminal) picks the sectioned layout; `width` its line width.
@@ -285,7 +298,8 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     rt_tool = runtime_tools(config)
     tools = orca.active_tools(config)
     plans = rotation.plans_touched(config, profile, runner.read_pin(state, project.worktree_key))
-    here = (_terminal(out) and _terminal(stdin or sys.stdin) and _in_this_worktree(config, project, run, cwd))
+    stdin = stdin or sys.stdin
+    here = (_terminal(out) and _terminal(stdin) and foreground(stdin) and _in_this_worktree(config, project, run, cwd))
     if dry_run:
         return _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify,
                         bw, env, rep, here)
