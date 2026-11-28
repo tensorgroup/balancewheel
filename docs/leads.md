@@ -6,7 +6,8 @@ stays a short entry point. The README's Quick start is the short path; this page
 Corrected the same day after review: the panel's summary line, the `bw start` prefix of the seat-check
 line, and a stale "not in v0" note on acting. Updated 2026-11-27: the pane's speed rule, the seat re-verify step, the plugin version rule, the `local` config section and `claude_pane`, `bw run`, run request files, `bw live`, and
 `bw setup claude-pane` with the live pane check at a Claude Code launch; after the final review, the
-`usage` row of a local wrapper.*
+`usage` row of a local wrapper, the pane's source check before every lead, the version rule,
+read grants for `bw run` under nono, `bwPath`, and `local.logs` in `bw improve` and `bw pack export`.*
 
 The **lead** is the agent you work in for a project; it is also the moderator of every
 panel it convenes. One plan usually runs out first, so a project's **profile** (config
@@ -80,20 +81,33 @@ once for each bw-contained lead runtime.
   `bw sandbox` — nono when installed, macOS `sandbox-exec` otherwise — and only after
   `bw sandbox verify` passed on their current version: writes stop at the worktree, the git
   data a commit needs, the runtime's own state, and the checkpoint dir; git hooks and
-  config stay read-only; no app launches, Apple Events, or preference writes.
+  config stay read-only; no app launches, Apple Events, or preference writes. bw's own checkout
+  and the `bw` link on `PATH` that points into it are readable (never writable), so a contained lead
+  can start `bw run` under nono, which denies reads under the home folder. The `python3` that `bw`
+  runs must be readable too: a Python under the home folder (pyenv, say) needs a read grant of its own.
+  This changed `lead/sandbox.py`, which is part of the lead containment key: after this upgrade, pi and
+  Kimi leads need `bw sandbox verify` again (`bw start` does it by itself).
 - **The live pane's source.** The live pane plugin (`claude/live-pane/`) runs unsandboxed in
   every Claude session, so its only source is bw's own checkout, outside every lead's write
   grant. `bw setup claude-pane` registers a marketplace named `balancewheel` at that checkout
-  and installs `live-pane@balancewheel`. It refuses when the checkout lies inside a configured
-  project or one of its git worktrees, and when a `balancewheel` marketplace already points
+  and installs `live-pane@balancewheel`. Claude Code reads the pane's files in place from that
+  checkout at each session start, so a change to the files reaches the next session with no install
+  step. Setup refuses when the checkout lies inside a configured project or one of its git
+  worktrees, when a worktree or the common git dir of the checkout's own repository lies inside a
+  configured project, when a git check fails (a path that holds `.git` but that git cannot read, or
+  any error other than "not a git repository"), when the config cannot be read (fix it, then run
+  setup again; `--remove` still works), and when a `balancewheel` marketplace already points
   anywhere else (remove that one first). An installed `live-pane@balancewheel` whose
   `balancewheel` marketplace is missing or points anywhere else has an unknown source: setup
   uninstalls it, and installs it again from this checkout when the marketplace was missing.
   It needs Claude Code 2.1.332 or later (the version the pane is tested on; older versions
   cannot load mods). Each step has a 20 s limit, and a second run changes nothing. `--remove`
   uninstalls the plugin (also one of unknown source) and removes the marketplace only when
-  it points at this checkout. Before `bw lead` starts a Claude Code lead, it runs the same
-  checks in one 5 s limit: it installs a missing plugin, runs `claude plugin update` when the
+  it points at this checkout. Before `bw lead` starts any lead, on every runtime and also when
+  `claude_pane` is false, it runs the same source checks for the lead's project (also one that
+  `default_profile` leads), in one 5 s limit. It also refuses when the checkout lies inside the
+  lead's worktree or common git dir, or when the lead works in the checkout's own repository. On a
+  refusal it uninstalls the plugin, with one line. Before a Claude Code lead it also installs a missing plugin, runs `claude plugin update` when the
   installed version is not bw's (`lead/version.py`), replaces or uninstalls a plugin of
   unknown source, and does nothing when `claude_pane` is false, when you disabled the plugin,
   or when a check fails. Before it changes anything it prints one `bw: setting up the live
@@ -112,7 +126,10 @@ once for each bw-contained lead runtime.
 - **The plugin version rule.** `lead/version.py` holds one version. The `live-pane` entry of
   `.claude-plugin/marketplace.json` and `claude/live-pane/.claude-plugin/plugin.json` carry the same
   string, and a test checks it. Change anything under `claude/live-pane/` and bump the prerelease number in the
-  same commit. Without a bump, `claude plugin update` finds no new version and installed panes keep the old files.
+  same commit. The bump changes the version that bw compares (it runs `claude plugin update` when the installed
+  version differs) and the version that Claude Code shows. It does not control which files load: Claude Code
+  reads the pane's files in place from bw's checkout at each session start, bumped or not. That is why the
+  checkout must stay outside every lead's reach.
 - **The pane's lanes.** The bead of a lane moves slower as the context fills (slower = fuller context). A
   lane with no known context window moves at a middle pace.
 - **Autonomy per lead (config schema 3, `bw guard`, since 2026-10-25).** Each lead has an
@@ -360,7 +377,9 @@ once for each bw-contained lead runtime.
   logs. bw reads them and never writes them. `local.run_max_s` (default 2700) is the number of seconds
   after which a local run with no end row counts as ended. `local.families` maps a word in a model
   string (`[a-z0-9][a-z0-9-]{0,31}`) to a `#rrggbb` color. bw reads `local.logs` and then
-  `improve.panel_logs` as one list, with one entry per real path. A path that is the main log is left
+  `improve.panel_logs` as one list, with one entry per real path. `bw improve` and `bw pack export` take only
+  the `usage` rows of a `local.logs` file; panels and watches come from the metrics log and
+  `improve.panel_logs` only, because a wrapper's log may be one that a contained lead can write. A path that is the main log is left
   out. The top-level `claude_pane` (default true) turns the automatic Claude Code pane install off
   when it is false.
 - **The `usage` row of a local wrapper (since 2026-11-27).** A wrapper that does not run under `bw run`

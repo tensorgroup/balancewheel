@@ -58,6 +58,27 @@ class Grants(unittest.TestCase):
         for name in (".npmrc", ".pypirc", ".git-credentials", ".config/git/credentials", ".cargo/credentials"):
             self.assertNotIn(str(home / name), rules, name)
 
+    def test_bw_checkout_and_link_are_read_only_grants(self):
+        # nono denies reads under the home folder, where bw's checkout and its link usually are: a lead must
+        # still start `bw run` (and reach its request-file fallback), and never write bw's checkout
+        bw_root = self.root / "bw"; (bw_root / "bin").mkdir(parents=True); (bw_root / "bin" / "bw").write_text("")
+        links = self.root / "links"; links.mkdir()
+        (links / "bw").symlink_to(bw_root / "bin" / "bw")
+        (links / "other").symlink_to(self.root / "rt-install")
+        self.assertEqual(sandbox.bw_reads(str(bw_root), which=lambda n: str(links / "bw")), [str(bw_root), str(links / "bw")])
+        self.assertEqual(sandbox.bw_reads(str(bw_root), which=lambda n: str(links / "other")), [str(bw_root)])
+        self.assertEqual(sandbox.bw_reads(str(bw_root), which=lambda n: None), [str(bw_root)])
+        with mock.patch.dict(os.environ, {"HOME": str(bw_root / "home")}):  # a checkout that holds the home folder
+            self.assertEqual(sandbox.bw_reads(str(bw_root), which=lambda n: str(links / "bw")), [])
+        g = self.grants(self.wt)
+        self.assertIn(sandbox.BW_ROOT, g.read)
+        self.assertFalse([p for a, _, p in g.rules if a == "allow" and sandbox._inside(sandbox.BW_ROOT, [p])])
+        with mock.patch.object(sandbox, "bw_reads", lambda: [str(bw_root), str(links / "bw")]):
+            nono = sandbox.nono_profile(self.grants(self.wt), str(self.root / "scratch"))
+        self.assertIn(str(bw_root), nono["filesystem"]["read"])
+        self.assertNotIn(str(bw_root), nono["filesystem"]["allow"])
+        self.assertIn(f'(allow file-read* (literal "{links / "bw"}"))', nono["unsafe_macos_seatbelt_rules"])
+
     def test_linked_lead_writes_worktree_runtime_state_and_handoffs_only(self):
         g = self.grants(self.wt)
         allows = [p for _, p in self.rules(g, "allow")]

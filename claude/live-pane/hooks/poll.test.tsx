@@ -14,6 +14,16 @@ test('the bwPath option names the command', { options: { bwPath: '/opt/tools/bw'
   expect(b.argvs[0]?.[0]).toBe('/opt/tools/bw')
 })
 
+for (const bwPath of ['bin/bw', './bw', '~/bin/bw', 'tools/bw']) {
+  test(`a bwPath that is not absolute (${bwPath}) is never run, and the age line says why`, { options: { bwPath } }, async ($, on) => {
+    const b = await boot($, on, { out: JSON.stringify(doc()) })
+    await b.clock.advance(15_000)
+    expect(b.argvs.length).toBe(0)
+    const ages = (await drawn($)).filter(t => t.startsWith('seat data:'))
+    expect(ages).toEqual(['seat data: none yet (bw: bwPath must be an absolute path or bw; not run)'])
+  })
+}
+
 test('it polls every 5 s while the pane is open', async ($, on) => {
   const open = await boot($, on, { out: JSON.stringify(doc()) })
   await open.clock.advance(15_000)

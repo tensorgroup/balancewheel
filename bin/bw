@@ -345,18 +345,23 @@ def _watch_last(w):
 
 def _panel_data(config):
     """The main log plus every extra log (`local.logs`, then `improve.panel_logs`): panels (first copy of an id
-    wins, sorted by ts), watches (one per id: the copy changed last wins, so its status is the latest), usage."""
+    wins, sorted by ts), watches (one per id: the copy changed last wins, so its status is the latest), usage.
+    Panels and watches come only from the main log and `improve.panel_logs` (the opt-in): a `local.logs` file
+    gives its usage rows only, because a wrapper's log may be one a contained lead can write (spec §3)."""
     main = store.log_path(config)
     data = store.load(main)
     seen = {p["id"] for p in data["panels"]}
+    opted = {os.path.realpath(p) for p in (config.get("improve") or {}).get("panel_logs", [])}
     for log in metrics_config.extra_logs(config, exclude=main):  # logs a setup keeps somewhere other than metrics_log
         extra = store.load(log)
+        data["usage"] = data["usage"] + extra["usage"]
+        if os.path.realpath(log) not in opted:
+            continue
         for p in extra["panels"]:
             if p["id"] not in seen:
                 seen.add(p["id"])
                 data["panels"] = data["panels"] + [p]
         data["watches"] = data["watches"] + extra["watches"]
-        data["usage"] = data["usage"] + extra["usage"]
     watches = {}
     for w in data["watches"]:
         if w["id"] not in watches or _watch_last(w) >= _watch_last(watches[w["id"]]):
@@ -472,12 +477,12 @@ def cmd_pack(a, config, state):
 
 def cmd_setup(a):
     if a.what == "claude-pane":
-        # Loads the config itself, for the project check only: a config error skips that check, says so,
-        # and still sets up the pane.
+        # Loads the config itself, for the project check only: on a config error the install refuses (the
+        # check cannot run; claude_pane.setup says so), and --remove still works.
         try:
             config = load_config()
         except ConfigError as e:
-            print(f"bw: config error: {e}; the project check is skipped")
+            print(f"bw: config error: {e}")
             config = None
         return claude_pane.setup(config, remove=a.remove)
     if a.remove:

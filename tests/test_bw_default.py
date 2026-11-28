@@ -196,14 +196,24 @@ class LeadNudges(Case):
             found = self.bw._suggestions({"improve": {"panel_logs": [log]}}, self.state, now)
         self.assertEqual([s["key"] for s in found], ["seat-absent:gem"])
 
-    def test_panel_data_reads_local_logs_too(self):
+    def test_panel_data_takes_only_usage_rows_from_local_logs(self):
+        # local.logs are for usage and run rows (spec §3): a wrapper's log, which a contained lead may write,
+        # never sets a panel verdict or a watch that `bw improve` or `bw pack export` acts on
         os.makedirs(self.state, exist_ok=True)
-        log = os.path.join(self.state, "local.jsonl")
-        self.bw.store.append(log, {"type": "panel", "id": "p-local", "ts": "2026-11-27T10:00:00Z",
-                                   "target": "t", "seats": ["a"]})
+        local, opted = os.path.join(self.state, "local.jsonl"), os.path.join(self.state, "panels.jsonl")
+        for log, pid in ((local, "p-local"), (opted, "p-opted")):
+            self.bw.store.append(log, {"type": "panel", "id": pid, "ts": "2026-11-27T10:00:00Z",
+                                       "target": "t", "seats": ["a"]})
+            self.bw.store.append(log, {"type": "watch", "id": f"w-{pid}", "ts": "2026-11-27T10:00:00Z",
+                                       "watch": "redundant-seat", "status": "open"})
+            self.bw.store.append(log, {"type": "usage", "seat": pid, "ts": "2026-11-27T10:00:00Z", "ok": True})
         with mock.patch.object(self.bw.store, "log_path", return_value=os.path.join(self.state, "m.jsonl")):
-            panels = self.bw._panel_data({"local": {"logs": [log]}})["panels"]
-        self.assertEqual([p["id"] for p in panels], ["p-local"])
+            data = self.bw._panel_data({"local": {"logs": [local]}, "improve": {"panel_logs": [opted]}})
+            both = self.bw._panel_data({"local": {"logs": [opted]}, "improve": {"panel_logs": [opted]}})
+        self.assertEqual([p["id"] for p in data["panels"]], ["p-opted"])
+        self.assertEqual([w["id"] for w in data["watches"]], ["w-p-opted"])
+        self.assertEqual(sorted(u["seat"] for u in data["usage"]), ["p-local", "p-opted"])
+        self.assertEqual([p["id"] for p in both["panels"]], ["p-opted"])  # named in panel_logs too: an opt-in
 
     def test_improve_refuses_a_note_with_no_text(self):
         self.assertEqual(self.improve_cmd("note")[0], 2)

@@ -1680,6 +1680,24 @@ class LivePaneRunner(RunnerCase):
         self.assertEqual(p.wait(15), 0, p.stdout.read())
         self.assertEqual(self.claude_calls(), [])
 
+    def test_an_unsafe_checkout_loses_the_pane_before_any_lead(self):
+        # Claude Code reads the pane in place from bw's checkout: when the config makes the checkout a lead
+        # target, a codex lead launch uninstalls the pane too, with one line, and the lead still starts
+        from lead import claude_pane
+        cfg = json.loads(self.cfg.read_text())
+        cfg["leads"]["la"]["runtime"] = "codex"
+        cfg["projects"] = {claude_pane.ROOT: "p"}
+        self.cfg.write_text(json.dumps(cfg))
+        p = self.start(env={"FAKE_MODE_a": "exit"})  # the fake's default: installed from this checkout
+        out = p.stdout.read()
+        self.assertEqual(p.wait(15), 0, out)
+        self.assertIsNotNone(self.fake("a"))
+        self.assertIn(["plugin", "uninstall", claude_pane.PLUGIN_ID], self.claude_calls())
+        self.assertFalse([c for c in self.claude_calls() if "install" in c or "update" in c])
+        lines = [ln for ln in out.splitlines() if "live pane" in ln]
+        self.assertEqual(len(lines), 1, out)
+        self.assertIn(f"uninstalling {claude_pane.PLUGIN_ID} (refusing: bw's checkout", lines[0])
+
     def test_other_runtimes_never_call_claude(self):
         cfg = json.loads(self.cfg.read_text())
         cfg["leads"]["la"]["runtime"] = "codex"

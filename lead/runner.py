@@ -213,10 +213,11 @@ class Session:
             path = write_first_prompt(ctx.state, ctx.project.worktree_key, prompt)
             ctx.say(f"bw: paste the first prompt from {path} into the lead")
             argv_prompt = None
-        if self.lead["runtime"] == "claude-code":
-            # The live pane plugin, installed or updated from bw's checkout (lead/claude_pane.py): bounded,
-            # nonfatal, one line only when it acts. run() already refused a bw inside the project.
-            claude_pane.ensure(ctx.config, say=ctx.say)
+        # The live pane check, before every lead (lead/claude_pane.py): bounded, nonfatal, one line only when
+        # it acts. Claude Code reads the pane's files in place from bw's checkout at each session start, so
+        # a checkout that this lead could change loses the pane on any runtime; only a claude-code lead also
+        # gets it installed or updated. run() already refused a bw inside the project.
+        claude_pane.ensure(ctx.config, say=ctx.say, project=ctx.project, install=self.lead["runtime"] == "claude-code")
         # pi/Kimi get the checkpoint dir through bw sandbox grants; self-contained runtimes whose
         # own sandbox stops at the worktree (Codex, agy) get it as an extra writable dir. The panel
         # request dir is inside it, so it needs no grant of its own.

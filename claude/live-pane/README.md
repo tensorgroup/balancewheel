@@ -87,17 +87,24 @@ the next.
 
 Run `bw setup claude-pane` from bw's own checkout. It registers the `balancewheel` marketplace (the
 `.claude-plugin/marketplace.json` at the repo root) and installs `live-pane@balancewheel`. A lead that bw
-starts on the `claude-code` runtime checks the plugin each time. The plugin's `live-pane` slash command
+starts on the `claude-code` runtime checks the plugin each time. Every lead launch, on any runtime, checks
+that the checkout is still outside the lead's reach, and uninstalls the pane when it is not. The plugin's `live-pane` slash command
 opens the pane.
 
 The plugin option `bwPath` (default `bw`) names the `bw` command. Set it when `bw` is not on the `PATH`
-that Claude Code sees.
+that Claude Code sees. It must be an absolute path (or the default `bw`): a relative path would be found
+from the session's folder, which a lead can write. The pane never runs a relative `bwPath`, and its age line
+says `bwPath must be an absolute path or bw; not run`.
 
 ## The version rule
 
 `version` in `.claude-plugin/plugin.json` and in the marketplace entry is equal to `VERSION` in
 `lead/version.py` (a test checks this). Bump the prerelease number in all three in the same commit as any
-change under `claude/live-pane/`. If you do not, installed panes do not update.
+change under `claude/live-pane/`. The bump changes the version that bw compares (bw runs `claude plugin
+update` when the installed version differs) and the version that Claude Code shows. It does not control
+which files load: Claude Code reads this folder in place from bw's checkout at each session start, with or
+without a bump. So the checkout must stay outside every lead's reach: `bw setup claude-pane` refuses, and
+every `bw lead` launch uninstalls the pane, when a lead could change the checkout.
 
 ## Tests
 

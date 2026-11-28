@@ -17,8 +17,9 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from lead import claude_pane as cp, version  # noqa: E402
+from lead import claude_pane as cp, proc, version  # noqa: E402
 from lead.proc import Result  # noqa: E402
+from lead.projects import Project  # noqa: E402
 
 FAKE_CMD = ["/nonexistent/bw-test-claude"]
 OURS = {"name": "balancewheel", "source": "directory", "path": cp.ROOT, "installLocation": cp.ROOT}
@@ -36,12 +37,14 @@ class Recorder:
     `interrupt` sends this process SIGINT (Ctrl-C at the terminal) and waits for it to land."""
 
     def __init__(self, version="2.1.332 (Claude Code)", plugins=None, markets=None, worktrees=None,
-                 timeout=False, slow_s=0, fail=(), interrupt=()):
+                 timeout=False, slow_s=0, fail=(), interrupt=(), own=None):
         self.version, self.timeout, self.slow_s, self.fail = version, timeout, slow_s, fail
         self.interrupt = interrupt
         self.plugins = [dict(p) for p in (plugins or [])]
         self.markets = [dict(m) for m in (markets or [])]
         self.worktrees = worktrees or {}  # project path -> list of worktree paths
+        # bw's own repository: its worktrees and its common git dir
+        self.own = own or {"worktrees": [cp.ROOT], "common": os.path.join(cp.ROOT, ".git")}
         self.calls, self.timeouts, self.cwds = [], [], []
 
     def __call__(self, argv, timeout, **kw):
@@ -52,6 +55,10 @@ class Recorder:
             if self.timeout:
                 return Result(124, "", "", True)
             path = argv[2]
+            if path == cp.ROOT and "rev-parse" in argv:
+                return Result(0, self.own["common"] + "\n", "", False)
+            if path == cp.ROOT:
+                return Result(0, "".join(f"worktree {w}\nHEAD 0\n\n" for w in self.own["worktrees"]), "", False)
             if path not in self.worktrees:
                 return Result(128, "", "fatal: not a git repository", False)
             return Result(0, "".join(f"worktree {w}\nHEAD 0\n\n" for w in self.worktrees[path]), "", False)
@@ -193,6 +200,84 @@ class Refusal(ClaudePaneCase):
         with tempfile.TemporaryDirectory() as d:
             msg = cp.refusal({"projects": {d: "p"}}, run=self.rec(timeout=True))
         self.assertIn("refusing", msg)
+        self.assertIn("refusing", cp.refusal({}, run=self.rec(timeout=True)))  # bw's own repository too
+
+
+class RefusalWithGit(unittest.TestCase):
+    """refusal() against real git in synthetic repos: it fails closed."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(subprocess.run, ["rm", "-rf", self.tmp])
+        self.bw = self.repo("bw")  # bw's checkout, a repo of its own
+
+    def repo(self, name):
+        path = os.path.join(self.tmp, name)
+        os.makedirs(path)
+        for args in (["init", "-q", "-b", "main"], ["-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                                                    "commit", "-q", "--allow-empty", "-m", "i"]):
+            subprocess.run(["git", "-C", path, *args], check=True, capture_output=True)
+        return path
+
+    def worktree(self, repo, path):
+        subprocess.run(["git", "-C", repo, "worktree", "add", "-q", path], check=True, capture_output=True)
+        return os.path.realpath(path)
+
+    def refusal(self, projects=(), project=None):
+        return cp.refusal({"projects": {p: "p" for p in projects}}, root=self.bw, run=proc.run, project=project)
+
+    def target(self, wt):
+        common = subprocess.run(["git", "-C", wt, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        return Project(os.path.realpath(wt), "k", os.path.realpath(common), None, "p")
+
+    def test_unrelated_repos_folders_and_missing_paths_pass(self):
+        app = self.repo("app")
+        plain = os.path.join(self.tmp, "plain"); os.makedirs(plain)
+        self.assertIsNone(self.refusal([app, plain, os.path.join(self.tmp, "gone")], project=self.target(app)))
+
+    def test_a_corrupted_head_refuses(self):  # a contained lead may write the common git dir
+        app = self.repo("app")
+        Path(app, ".git", "HEAD").write_text("garbage\n")
+        r = subprocess.run(["git", "-C", app, "worktree", "list", "--porcelain"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 128, r.stderr)
+        msg = self.refusal([app])
+        self.assertIn("refusing: the worktrees of", msg)
+        self.assertIn("may lie inside a lead target", msg)
+
+    def test_a_corrupted_head_of_bws_own_repository_refuses(self):
+        Path(self.bw, ".git", "HEAD").write_text("garbage\n")
+        self.assertIn("refusing", self.refusal())
+
+    def test_any_other_git_failure_refuses(self):
+        def run(argv, timeout, **kw):
+            return Result(1, "", "error: something else", False)
+        self.assertIn("refusing", cp.refusal({}, root=self.bw, run=run))
+        notrepo = os.path.join(self.tmp, "notrepo"); os.makedirs(notrepo)
+
+        def says_not_a_repo(argv, timeout, **kw):
+            return Result(128, "", "fatal: not a git repository", False)
+        self.assertIsNone(cp.refusal({}, root=notrepo, run=says_not_a_repo))  # no .git there: no worktrees
+        self.assertIn("refusing", cp.refusal({}, root=self.bw, run=says_not_a_repo))  # .git there: refuses
+
+    def test_a_worktree_of_bws_own_repository_inside_a_project_refuses(self):
+        area = os.path.join(self.tmp, "area"); os.makedirs(area)
+        wt = self.worktree(self.bw, os.path.join(area, "bw-wt"))
+        msg = self.refusal([area])
+        self.assertIn(f"refusing: {wt}, of the repository of bw's checkout", msg)
+        self.assertIn(f"lies inside {area}, a lead target", msg)
+
+    def test_a_lead_in_bws_own_repository_refuses_also_through_default_profile(self):
+        wt = self.worktree(self.bw, os.path.join(self.tmp, "bw-linked"))
+        msg = self.refusal(project=self.target(wt))  # no configured project names it
+        self.assertIn(f"the lead works in {wt}, of the repository of bw's checkout", msg)
+
+    def test_bw_inside_the_lead_target_refuses(self):
+        app = self.repo("app")
+        nested = os.path.join(app, "vendor", "bw"); os.makedirs(os.path.dirname(nested))
+        subprocess.run(["git", "clone", "-q", self.bw, nested], check=True, capture_output=True)
+        msg = cp.refusal({}, root=nested, run=proc.run, project=self.target(app))
+        self.assertIn(f"lies inside {app}", msg)
 
 
 class Setup(ClaudePaneCase):
@@ -201,7 +286,8 @@ class Setup(ClaudePaneCase):
         code, out = self.setup_out(rec)
         self.assertEqual(code, 0, out)
         self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT], cp.INSTALL])
-        self.assertTrue(all(t == cp.STEP_TIMEOUT_S for t in rec.timeouts), rec.timeouts)
+        claude_timeouts = [t for t, c in zip(rec.timeouts, rec.calls) if c[0] != "git"]  # git checks: CHECK_TIMEOUT_S
+        self.assertTrue(claude_timeouts and all(t == cp.STEP_TIMEOUT_S for t in claude_timeouts), rec.timeouts)
         lines = out.splitlines()
         self.assertEqual(len(lines), 2, out)
         self.assertIn(f"added the balancewheel marketplace at {cp.ROOT}", lines[0])
@@ -245,13 +331,17 @@ class Setup(ClaudePaneCase):
         self.assertIn("refusing", out)
         self.assertEqual(rec.calls, [], "a refused setup still called claude")
 
-    def test_config_none_skips_the_project_check(self):
+    def test_config_none_refuses_the_install_and_remove_still_works(self):
         rec = self.rec()
         self.assertEqual(self.setup_out(rec, config={})[0], 0)
         rec = self.rec()
         out = io.StringIO()
-        self.assertEqual(cp.setup(None, run=rec, out=out), 0)
-        self.assertFalse([c for c in rec.calls if c[0] == "git"])
+        self.assertEqual(cp.setup(None, run=rec, out=out), 1)
+        self.assertEqual(rec.calls, [])
+        self.assertIn("fix the config, then run bw setup claude-pane again", out.getvalue())
+        rec = self.rec(plugins=[entry()], markets=[OURS])
+        self.assertEqual(cp.setup(None, remove=True, run=rec, out=io.StringIO()), 0)
+        self.assertEqual(rec.verbs(), ["uninstall", "marketplace remove"])
 
     def test_a_foreign_balancewheel_marketplace_is_refused(self):
         rec = self.rec(markets=[FOREIGN], plugins=[])
@@ -367,8 +457,8 @@ class Setup(ClaudePaneCase):
 
 
 class Ensure(ClaudePaneCase):
-    def ensure(self, rec, config=None, refused=None):
-        cp.ensure(self.config if config is None else config, run=rec, say=self.said.append, refused=refused)
+    def ensure(self, rec, config=None, refused=None, **kw):
+        cp.ensure(self.config if config is None else config, run=rec, say=self.said.append, refused=refused, **kw)
 
     def test_ensure(self):
         for plugins, want in (([], "install"), ([entry("0.0.1")], "update"), ([entry()], None),
@@ -443,24 +533,40 @@ class Ensure(ClaudePaneCase):
         self.assertEqual(rec.verbs(), ["uninstall"])  # neither the add nor the install ran
         self.assertEqual(len(self.said), 2, self.said)
         self.assertIn("setting up the live pane", self.said[0])
-        self.assertIn("interrupted; the lead starts without it", self.said[1])
+        self.assertIn("interrupted; the lead starts anyway", self.said[1])
         self.assertIs(signal.getsignal(signal.SIGINT), signal.SIG_IGN)  # bw's disposition is back
 
-    def test_claude_pane_false_calls_nothing(self):
-        rec = self.rec()
-        self.ensure(rec, config={**self.config, "claude_pane": False})
-        self.assertEqual(rec.calls, [])
-        self.assertEqual(self.said, [])
+    def test_claude_pane_false_and_other_runtimes_call_no_claude(self):
+        for kw in ({"config": {**self.config, "claude_pane": False}}, {"install": False}):
+            rec = self.rec(markets=[OURS])
+            self.ensure(rec, **kw)
+            self.assertEqual([c for c in rec.calls if c[0] != "git"], [], kw)  # only the source check ran
+            self.assertEqual(self.said, [])
 
-    def test_a_refusal_does_nothing_and_says_nothing(self):
-        rec = self.rec()
-        self.ensure(rec, refused="refusing: bw (/x) lies inside /x")
-        self.assertEqual(rec.calls, [])
-        rec = self.rec()
+    def test_a_refusal_uninstalls_the_pane_on_every_runtime_and_says_so(self):
+        cases = ({"refused": "refusing: bw (/x) lies inside /x"}, {"config": {"projects": {cp.ROOT: "p"}}},
+                 {"config": {"projects": {cp.ROOT: "p"}, "claude_pane": False}},
+                 {"config": {"projects": {cp.ROOT: "p"}}, "install": False},
+                 {"project": Project(cp.ROOT, "k", os.path.join(cp.ROOT, ".git"), None, "p")})
+        for kw in cases:
+            for plugins in ([entry()], [entry(enabled=False)], [entry("0.0.1")]):
+                self.said = []
+                rec = self.rec(plugins=plugins, markets=[OURS])
+                self.ensure(rec, **kw)
+                self.assertEqual(rec.changing(), [["plugin", "uninstall", cp.PLUGIN_ID]], (kw, plugins))
+                self.assertEqual(len(self.said), 1, self.said)
+                self.assertIn(f"bw: setting up the live pane: uninstalling {cp.PLUGIN_ID} (refusing", self.said[0])
+            self.said = []
+            rec = self.rec(markets=[OURS])  # nothing installed: nothing to do, nothing said
+            self.ensure(rec, **kw)
+            self.assertEqual((rec.changing(), self.said), ([], []), kw)
+
+    def test_a_failed_uninstall_after_a_refusal_says_one_more_line(self):
+        rec = self.rec(plugins=[entry()], markets=[OURS], fail={("plugin", "uninstall", cp.PLUGIN_ID)})
         self.ensure(rec, config={"projects": {cp.ROOT: "p"}})
-        self.assertEqual(rec.changing(), [])
-        self.assertFalse([c for c in rec.calls if c[0] != "git"])
-        self.assertEqual(self.said, [])
+        self.assertEqual(len(self.said), 2, self.said)
+        self.assertIn("could not be uninstalled", self.said[1])
+        self.assertIn("bw setup claude-pane --remove", self.said[1])
 
     def test_a_foreign_marketplace_is_left_alone(self):
         for plugins in ([], [entry(enabled=False)]):
@@ -561,8 +667,14 @@ class SetupCli(unittest.TestCase):
                    "BALANCEWHEEL_CONFIG": os.path.join(d, "missing.json"), "BW_STATE_DIR": os.path.join(d, "state")}
             r = subprocess.run([sys.executable, str(ROOT / "bin" / "bw"), "setup", "claude-pane"], env=env,
                                capture_output=True, text=True, cwd=d)
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)  # a missing config: the check cannot run
+            self.assertIn("config error", r.stdout + r.stderr)
+            self.assertIn("fix the config, then run bw setup claude-pane again", r.stdout)
+            self.assertFalse(os.path.exists(log), "a refused setup called claude")
+            env["BALANCEWHEEL_CONFIG"] = str(ROOT / "balancewheel.example.json")
+            r = subprocess.run([sys.executable, str(ROOT / "bin" / "bw"), "setup", "claude-pane"], env=env,
+                               capture_output=True, text=True, cwd=d)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            self.assertIn("config error", r.stdout + r.stderr)  # a missing config: no project check, one line
             with open(log) as f:
                 calls = [json.loads(line) for line in f]
             self.assertIn(["plugin", "marketplace", "add", cp.ROOT], calls)

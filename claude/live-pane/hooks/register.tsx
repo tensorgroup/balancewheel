@@ -24,6 +24,8 @@ const KEEP_NAMES = 200
 const FINISHED: Readonly<Record<string, string>> = { completed: 'done', failed: 'failed', killed: 'stopped' }
 const RUNNING = new Set(['pending', 'running', 'waiting', 'idle'])
 const AGENT_COLOR = '#64748b'
+/** The age line's reason when the `bwPath` option is refused. */
+const BW_PATH_REFUSED = 'bwPath must be an absolute path or bw; not run'
 
 // Each tag names the idea of the value it keeps: change the tag when the value's fields change.
 const snapAtom = atom({ plugin: 'live-pane', key: 'snap' } as const, null, { shape: 'snap-1' })
@@ -67,8 +69,17 @@ async function isPaneShown($: EngineInterface): Promise<boolean> {
   return (await $.ui.panes()).some(p => p.id === PANE && p.isPlaced)
 }
 
+/**
+ * The command the pane runs: an absolute path, or the literal default `bw`; null refuses the option. A
+ * relative path would resolve against the session's folder, which a lead can write.
+ */
+function bwPathOf(option: unknown): string | null {
+  if (typeof option !== 'string' || option.trim() === '') return 'bw'
+  return option === 'bw' || option.startsWith('/') ? option : null
+}
+
 /** One second: Claude Code's figures, finished subagents, lane expiry, a chart sample, and a poll when due. */
-async function tick($: EngineInterface, bwPath: string): Promise<void> {
+async function tick($: EngineInterface, bwPath: string | null): Promise<void> {
   const now = await $.clock.now()
   const [list, usage, model] = await Promise.all([
     $.agent.list().catch((): AgentInfo[] => []),
@@ -125,7 +136,7 @@ async function tick($: EngineInterface, bwPath: string): Promise<void> {
     })
   }
 
-  if (isPollDue(now) && (await isPaneShown($))) void poll($, bwPath, startedAt)
+  if (bwPath !== null && isPollDue(now) && (await isPaneShown($))) void poll($, bwPath, startedAt)
 }
 
 /** One `bw live` call; its document replaces the seat data and settles the fallback lanes. */
@@ -189,7 +200,7 @@ async function startOver($: EngineInterface): Promise<void> {
 }
 
 export const register: Register = (on, options) => {
-  const bwPath = typeof options.bwPath === 'string' && options.bwPath.trim() !== '' ? options.bwPath : 'bw'
+  const bwPath = bwPathOf(options.bwPath)
 
   on('session.start', async ($, e, next) => {
     try {
@@ -197,6 +208,7 @@ export const register: Register = (on, options) => {
       ticker = $.clock.every(TICK_MS, () => {
         void tick($, bwPath).catch(() => undefined)
       })
+      if (bwPath === null) await update($, seatsAtom, s => ({ ...s, error: BW_PATH_REFUSED }))
       await $.command.register({
         name: 'live-pane',
         description: 'Open the live pane: the agents and seats at work, and the runs that ended',

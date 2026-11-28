@@ -2,7 +2,8 @@
 
 Date: 2026-11-27 (synced with the plan panel the same day: direct append first, the `beat`
 phase, `run_max_s` in `bw live`'s `local`; after the final review: the wrap rule in §5 has no
-2 s upper limit, and a `usage` row's `dir` may be inside the worktree). Status: approved direction (approach 1 below), revised after a design
+2 s upper limit, and a `usage` row's `dir` may be inside the worktree; §6 checks the source before every lead
+and fails closed; `bwPath` must be absolute). Status: approved direction (approach 1 below), revised after a design
 panel (astra, opus, kimi, flash) and a builder check. Clean-room: this design and the code
 built from it are written from public requirements only (see Constraints).
 
@@ -238,7 +239,8 @@ A Claude Code plugin (`.claude-plugin/plugin.json` with `version` equal to bw's 
   `$.session.model()` — subagents, context, cost, rate limits. Every 5 s while the pane is
   open: `bw live --json --dir <cwd> --since <session start>` through `$.process.spawn`, with
   at most one call in flight, a 10 s timeout, cancel on pane close, and a check of `v`. The
-  path to `bw` is the plugin option `bwPath` (default `bw`). When `bw` is missing or fails,
+  path to `bw` is the plugin option `bwPath` (default `bw`); it must be absolute or the literal
+  `bw`, and a relative value is never run (it would resolve against the session's folder). When `bw` is missing or fails,
   the pane still draws Claude's own agents and shows how old its seat data is.
 - **Fallback.** The pane observes the rows the conversation stores (a `session.append`
   hook), never the tool call: a hook that may match a tool turns off that tool's move to
@@ -290,8 +292,16 @@ A Claude Code plugin (`.claude-plugin/plugin.json` with `version` equal to bw's 
 
 ### 6. Install on every Claude start
 
-- **Source.** Only bw's own checkout (`ROOT`, the one CLAUDE.md says no lead edits). Setup
-  refuses when `ROOT` is inside any configured project worktree. This is recorded in the
+- **Source.** Only bw's own checkout (`ROOT`, the one CLAUDE.md says no lead edits). Claude
+  Code reads the plugin's files in place from `ROOT` at each session start, so the version
+  bump says only when bw runs `claude plugin update`; it does not control which files load.
+  Setup refuses when `ROOT` is inside any configured project worktree, when a worktree or the
+  common git dir of `ROOT`'s own repository is inside a configured project, when a git check
+  fails (fail closed: a path that holds `.git` that git cannot read, or any error other than
+  "not a git repository"), and on a config error. Before every lead launch, on every runtime,
+  the same check runs for the lead's project (also one led through `default_profile`); it also
+  refuses when `ROOT` is inside the lead's worktree or common git dir, or the lead works in
+  `ROOT`'s own repository; a refusal uninstalls the plugin with one line. This is recorded in the
   containment notes: the plugin runs unsandboxed in every Claude session, so its source must
   be outside every lead's write grant.
 - **`bw setup claude-pane`.** Registers a marketplace named `balancewheel` at `ROOT` (a

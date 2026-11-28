@@ -10,7 +10,9 @@ written to scratch could otherwise run unsandboxed. For the same reason they hid
 control token and refuse its socket (CANVAS_CONTROL_DIRS), and refuse connections to the
 canvas and cockpit ports on any host (denied_ports). bw's sealed copies of third-party databases are
 unreadable, and so are the inbox record (every project's asks and answers) and every other
-worktree's answers view; the lead's own view dir is readable, and no write rule covers it.
+worktree's answers view; the lead's own view dir is readable, and no write rule covers it. bw's own
+checkout and the `bw` link on PATH that points into it are readable (`bw_reads`), never writable, so a
+lead can start `bw run` and `bw-panel-wait` under nono, which denies reads under the home folder.
 
     python3 -m lead.sandbox run --worktree DIR --state-dir DIR [--read P]... [--write P]...
         [--env K=V]... [--private-home] [--deny-port N]... [--backend nono|sandbox-exec] -- argv...
@@ -31,6 +33,7 @@ Grants = namedtuple("Grants", "rules read deny_read reread tool_read extra")    
 Grants.__new__.__defaults__ = ((), (), (), ())
 RuntimeGrants = namedtuple("RuntimeGrants", "read write env private_home deny_write")
 RuntimeGrants.__new__.__defaults__ = ((),)  # deny_write: paths inside `write` that stay read-only
+BW_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))  # bw's checkout (lead.paths.ROOT)
 
 IPC_DENIES = ["(deny lsopen)", "(deny appleevent-send)", "(deny user-preference-write)",
               '(deny process-exec (literal "/usr/bin/open") (literal "/usr/bin/osascript") '
@@ -104,6 +107,21 @@ def git_config_reads():
             + [check_path(os.path.abspath(p)) for p in cfg if os.path.islink(p)])
 
 
+def bw_reads(root=BW_ROOT, which=shutil.which):
+    """Read grants that let a contained lead start `bw` (`bw run` and its request-file fallback): bw's
+    checkout, and the `bw` link on PATH when it points into the checkout (the link node itself; nono
+    resolves grants to real paths). Nothing when the checkout holds the home folder: a read grant there
+    would lift the secret denies."""
+    real = os.path.realpath(root)
+    if _inside(os.path.realpath(os.path.expanduser("~")), [real]):
+        return []
+    out = [check_path(real)]
+    link = which("bw")
+    if link and os.path.islink(link) and _inside(os.path.realpath(link), [real]):
+        out.append(check_path(os.path.abspath(link)))
+    return out
+
+
 def lead_grants(project, runtime, state_dir):
     """Ordered write rules and read grants for a lead working in `project.worktree`."""
     common, wt = project.common_dir, project.worktree
@@ -148,6 +166,7 @@ def lead_grants(project, runtime, state_dir):
     reads += [check_path(os.path.abspath(os.path.expanduser(p))) for p in runtime.read
               if os.path.islink(os.path.expanduser(p))]
     reads.append(check_path(own_view))
+    reads += bw_reads()  # read-only: no write rule names bw's checkout (refuse_inside keeps it out of the worktree)
     # Copies of third-party databases (cc-switch, Orca) bw reads, the inbox record, the answers
     # views, every panel work dir (briefs, raw seat output), and the guard's log and state (every
     # project's redacted calls and judge reasons): never readable by a lead, except its own view

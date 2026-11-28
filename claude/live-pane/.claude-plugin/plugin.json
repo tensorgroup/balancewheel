@@ -1,6 +1,6 @@
 {
   "name": "live-pane",
-  "version": "0.2.0-dev.4",
+  "version": "0.2.0-dev.5",
   "description": "A pane beside the chat: the agents and balancewheel seats that run now, the session's figures, and the runs that ended in this worktree",
   "author": {
     "name": "balancewheel"
@@ -11,7 +11,7 @@
     "bwPath": {
       "type": "string",
       "title": "Path to bw",
-      "description": "The bw command the pane runs for seat data (bw live --json)",
+      "description": "The bw command the pane runs for seat data (bw live --json): an absolute path, or bw (looked up on PATH)",
       "default": "bw"
     }
   }

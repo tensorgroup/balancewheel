@@ -20,12 +20,18 @@ not against the prose.
   (each step bounded by 20 s; one line per step; a second run changes nothing; an installed version that is not
   `lead.version.VERSION` gets `claude plugin marketplace update balancewheel` then `claude plugin update`). It
   refuses, and changes nothing, when Claude Code is older than 2.1.332 (`docs/stack.md`), when the checkout lies
-  inside a configured project or one of its git worktrees, and when a `balancewheel` marketplace points anywhere
+  inside a configured project or one of its git worktrees, when a worktree or the common git dir of the
+  checkout's own repository lies inside a configured project, when a git check fails (fails closed: a path that
+  holds `.git` and that git cannot read, or any error other than "not a git repository"), on a config error (fix
+  it, then run setup again; `--remove` still works), and when a `balancewheel` marketplace points anywhere
   else. `--remove` uninstalls the plugin and removes the marketplace only when that marketplace points at this
   checkout. A plugin whose `balancewheel` marketplace is missing or foreign has an unknown source: setup and the
   launch check uninstall it and install it again from this checkout when the marketplace was missing, and
-  `--remove` uninstalls it too. A config error skips the project check and says so. Before `bw lead` starts a
-  `claude-code` lead it runs the same checks in one 5 s limit: it installs a missing plugin, updates one at
+  `--remove` uninstalls it too. Before `bw lead` starts any lead (every runtime, also with `claude_pane`
+  false) it runs the same source checks for the lead's project (also one reached through `default_profile`), and
+  refuses when the checkout lies inside the lead's worktree or common git dir or the lead works in the
+  checkout's own repository; on a refusal it uninstalls the plugin with one line. Before a
+  `claude-code` lead it also runs the install checks in one 5 s limit: it installs a missing plugin, updates one at
   another version, and does nothing when `claude_pane` is false, the plugin is disabled, or a check fails or times
   out. Before it changes anything it prints one `bw: setting up the live pane: ...` line, and one more only on a
   failure or Ctrl-C; Ctrl-C stops the step, and the launch never stops. Every `claude` call runs with cwd set to
@@ -47,10 +53,13 @@ not against the prose.
   `bw run` that the command shows, else the lane's seat) begins at or after the lane's start less 2 s, with
   no upper limit while the lane is open (a call may wait at a permission prompt); one run drops one lane.
   Every drawn text loses terminal escape sequences and other C0 and C1 control characters. After `/clear` or a resume the timer goes on and the session's state starts over. The
-  plugin option `bwPath` (default `bw`) names the command. `lead.version.VERSION` is `0.2.0-dev.4`; the
+  plugin option `bwPath` (default `bw`) names the command; it must be absolute or the literal `bw` (a relative
+  one is never run, and the age line says why). `lead.version.VERSION` is `0.2.0-dev.5`; the
   plugin's `plugin.json` and the `live-pane` entry of the new repo-root `.claude-plugin/marketplace.json`
   (marketplace `balancewheel`) carry the same version (tested). Bump the prerelease number in the same
-  commit as any change under `claude/live-pane/`, or installed panes do not update. Tested on Claude Code
+  commit as any change under `claude/live-pane/`: the bump changes the version that bw compares and that
+  Claude Code shows. It does not control which files load: Claude Code reads the pane in place from bw's
+  checkout at each session start. Tested on Claude Code
   2.1.332. `tests/test_live_pane_plugin.py` runs `claude plugin validate` and `claude plugin test` only when
   `BW_PLUGIN_TESTS=1` is set.
 - **`balancewheel.example.json` shows `claude_pane` and `local`.** The example sets `"claude_pane": true` and a
@@ -105,6 +114,14 @@ not against the prose.
   log; when that fails and `BW_CHECKPOINT` is set, to request files `<checkpoint dir>/runs/<run id>.<phase>.json`
   (`runs.write_request`); else one `bw run: not tracked (...)` line, and the command still runs. `bw run` and `bw live`
   skip `bw`'s config exit.
+- **Contained leads can start `bw run` under nono (`lead/sandbox.py`).** nono denies reads under the home
+  folder, where bw's checkout and its link usually are, so `bw run` could not start in a pi or Kimi lead.
+  `sandbox.bw_reads()` adds read-only grants for bw's checkout and for the `bw` link on `PATH` when it points
+  into the checkout (none when the checkout holds the home folder: that would lift the secret denies). No write
+  rule names the checkout. Checked once with nono: `bw run --seat x -- true` in `bw sandbox` exits 0 and writes
+  its two request files, and a write to the checkout is refused. A `python3` under the home folder still needs a
+  read grant of its own. This changes `lead/sandbox.py`, part of the lead containment key: pi and Kimi leads need
+  `bw sandbox verify` again (`bw start` does it by itself).
 - **The panel service appends run request files (`lead/runs.py`, `panel/service.py`).** At each drain, before
   the panel requests, `runs.ingest` takes at most 50 files `<checkpoint dir>/runs/<run id>.<start|beat|end>.json`
   (starts first, then beats, then ends), checks each (`runs.validate_request`), appends it, and unlinks it. The
@@ -134,7 +151,9 @@ not against the prose.
   without it reads as `"bw"`); an end with a null `seat` or `dir` is not listed. An extra log that is not a
   regular file (a FIFO, a dir) is reported as `"not a file"` and never opened. `--since` (default: 24 h ago) is seconds; `--limit` (default 50)
   is 1 to 500. On a config error it prints an empty document with `complete: false` and `error`, and exits 0.
-- **`bw pack export --to <dir> [--dry-run]` (`packs/export.py`).** It rewrites the `# bw:catalog:begin` / `# bw:catalog:end` block of esc's `model-seats` `pack.yaml` and its version (minor on a status, model, or membership change; patch on numbers only). It refuses a wrong name, a dirty file, a `pack.yaml` git does not track (untracked or ignored), and missing markers. It saves esc's changelog bullet to `state_dir/packs/` and logs a `pack_export` event. It reads every log in `improve.panel_logs`.
+- **`bw pack export --to <dir> [--dry-run]` (`packs/export.py`).** It rewrites the `# bw:catalog:begin` / `# bw:catalog:end` block of esc's `model-seats` `pack.yaml` and its version (minor on a status, model, or membership change; patch on numbers only). It refuses a wrong name, a dirty file, a `pack.yaml` git does not track (untracked or ignored), and missing markers. It saves esc's changelog bullet to `state_dir/packs/` and logs a `pack_export` event. It reads every log in `improve.panel_logs`. Since the live pane work it also
+  reads the `usage` rows (only those) of each `local.logs` file; panels and watches come only from the metrics
+  log and `improve.panel_logs`, so a wrapper's log never sets an exported status.
 - **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.
 - **The guard review offer (`lead/guard/offer.py`).** On a terminal, before the lead opens, `bw start` offers a
   short review of unmarked guard decisions: 5 once a day while the profile is under the gate's counts (2 are

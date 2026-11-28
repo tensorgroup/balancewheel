@@ -1,18 +1,24 @@
 """claude_pane.py — `bw setup claude-pane` and the live pane check at a Claude Code launch.
 
-The live pane (`claude/live-pane/`) runs unsandboxed in every Claude session, so its only source is bw's
-own checkout (ROOT): a marketplace named `balancewheel` whose directory is ROOT, and the plugin
-`live-pane@balancewheel` from it. Setup refuses when ROOT lies inside a configured project or one of its
-worktrees (a lead there could edit the pane), and leaves a `balancewheel` marketplace that points
+The live pane (`claude/live-pane/`) runs unsandboxed in every Claude session, and Claude Code reads its
+files in place from ROOT at each session start, so a change to ROOT's files reaches the next session with
+no install step. Its only source is bw's own checkout (ROOT): a marketplace named `balancewheel` whose
+directory is ROOT, and the plugin `live-pane@balancewheel` from it. `refusal` says when ROOT is not safe:
+ROOT lies inside a configured project or one of its worktrees, a worktree or the common git dir of ROOT's
+own repository lies inside a configured project, or (at a launch) ROOT lies inside the lead's worktree or
+common git dir, or the lead works in ROOT's own repository. A git call that fails for a path that holds
+`.git`, or fails in any other way than "not a git repository", refuses too (a lead can corrupt git data
+it may write). Setup refuses on a config error, and leaves a `balancewheel` marketplace that points
 anywhere else alone. `--remove` takes out only the plugin and the marketplace that point at ROOT.
 
 An installed `live-pane@balancewheel` whose `balancewheel` marketplace is missing, or points anywhere but
 ROOT, has an unknown source and is not trusted: setup and the launch check uninstall it, and install it
 again from ROOT when the marketplace can be ROOT's (missing; a foreign one stays until the user removes it).
 
-`ensure` is the check `lead.runner` runs before it starts a `claude-code` lead: every read it makes
-shares one CHECK_TIMEOUT_S limit; it installs a missing plugin, updates one whose version is not bw's
-VERSION, replaces an untrusted one, and leaves a disabled one alone. Before it changes anything it prints
+`ensure` is the check `lead.runner` runs before it starts any lead: every read it makes shares one
+CHECK_TIMEOUT_S limit. When `refusal` refuses, it uninstalls an installed plugin (one line) on every
+runtime, also when `claude_pane` is false. Before a `claude-code` lead it also installs a missing plugin,
+updates one whose version is not bw's VERSION, replaces an untrusted one, and leaves a disabled one alone. Before it changes anything it prints
 one `bw: setting up the live pane: ...` line (and one more only on a failure or Ctrl-C). Ctrl-C stops the
 step and the launch goes on. It never raises.
 
@@ -120,25 +126,61 @@ def _ours(source, root=ROOT):
     return bool(source) and os.path.isabs(source) and os.path.realpath(source) == os.path.realpath(root)
 
 
-def refusal(config: Optional[dict], root: str = ROOT, run=proc.run) -> Optional[str]:
-    """Why the pane must not be installed from `root`, or None: `root` lies inside a configured project
-    or inside a worktree that git lists for it (each list bounded by CHECK_TIMEOUT_S; one that times out
-    refuses too, since it could not be checked). A path that is not a git repository has no worktrees."""
+class _Refused(Exception):
+    pass
+
+
+def _git(run, path, args, what):
+    """`git -C path args` output, bounded by CHECK_TIMEOUT_S; None when `path` is not a git repository
+    (git says so and `path` holds no `.git`). Any other failure raises _Refused: it fails closed."""
+    r = run(["git", "-C", path, *args], CHECK_TIMEOUT_S)
+    if r.timed_out:
+        raise _Refused(f"refusing: {what} of {path} could not be read in time")
+    if r.rc == 0:
+        return r.out
+    if "not a git repository" in (r.err or "") + (r.out or "") and not os.path.lexists(os.path.join(path, ".git")):
+        return None
+    raise _Refused(f"refusing: {what} of {path} could not be read ({_detail(r)})")
+
+
+def _worktrees(run, path):
+    out = _git(run, path, ["worktree", "list", "--porcelain"], "the worktrees")
+    return [os.path.realpath(ln[len("worktree "):]) for ln in (out or "").splitlines() if ln.startswith("worktree ")]
+
+
+def refusal(config: Optional[dict], root: str = ROOT, run=proc.run, project=None) -> Optional[str]:
+    """Why the pane must not be installed (or stay installed) from `root`, or None. Refuses when `root`
+    lies inside a configured project or a worktree that git lists for it; when a worktree or the common
+    git dir of `root`'s own repository lies inside a configured project; and, for `project` (the lead
+    target at a launch, also one reached through `default_profile`), when `root` lies inside its worktree
+    or common git dir, or the lead works in `root`'s own repository. Each git call is bounded by
+    CHECK_TIMEOUT_S and fails closed (`_git`). A configured path that is not a dir has no worktrees."""
     real = os.path.realpath(root)
-    for key in (config or {}).get("projects") or {}:
-        path = os.path.realpath(os.path.expanduser(key))
-        if _inside(real, path):
-            return _refusal_text(real, path)
-        r = run(["git", "-C", path, "worktree", "list", "--porcelain"], CHECK_TIMEOUT_S)
-        if r.timed_out:
-            return f"refusing: the worktrees of {path} could not be listed in time; bw's checkout ({real}) may lie inside one"
-        if r.rc != 0:
-            continue
-        for line in r.out.splitlines():
-            if line.startswith("worktree "):
-                wt = os.path.realpath(line[len("worktree "):])
+    try:
+        keys = [os.path.realpath(os.path.expanduser(k)) for k in (config or {}).get("projects") or {}]
+        for path in keys:
+            if _inside(real, path):
+                return _refusal_text(real, path)
+            for wt in _worktrees(run, path) if os.path.isdir(path) else []:
                 if _inside(real, wt):
                     return _refusal_text(real, wt)
+        own = _worktrees(run, real)
+        common = _git(run, real, ["rev-parse", "--path-format=absolute", "--git-common-dir"], "the git dir")
+        own += [os.path.realpath(common.strip())] if common and common.strip() else []
+        for path in keys:
+            for x in own:
+                if _inside(x, path):
+                    return (f"refusing: {x}, of the repository of bw's checkout ({real}), lies inside {path}, "
+                            "a lead target; a lead there could change the pane that runs in every Claude session")
+        if project is not None:
+            for where in (project.worktree, project.common_dir):
+                if _inside(real, os.path.realpath(where)):
+                    return _refusal_text(real, os.path.realpath(where))
+            if any(os.path.realpath(x) in own for x in (project.worktree, project.common_dir)):
+                return (f"refusing: the lead works in {project.worktree}, of the repository of bw's checkout "
+                        f"({real}); it could change the pane that runs in every Claude session")
+    except _Refused as e:
+        return f"{e}; bw's checkout ({real}) may lie inside a lead target"
     return None
 
 
@@ -168,8 +210,9 @@ def _untrusted(source):
 
 
 def setup(config: Optional[dict], remove: bool = False, run=proc.run, out=sys.stdout) -> int:
-    """`bw setup claude-pane [--remove]`. `config` None (a config error) skips the project check.
-    Prints one line per step it ran; 0 when the pane is installed and current (or removed), else 1."""
+    """`bw setup claude-pane [--remove]`. `config` None (a config error) refuses the install, because the
+    project check cannot run; `--remove` still works. Prints one line per step it ran; 0 when the pane is
+    installed and current (or removed), else 1."""
     def say(msg):
         print(f"bw: {msg}", file=out, flush=True)
 
@@ -180,6 +223,10 @@ def setup(config: Optional[dict], remove: bool = False, run=proc.run, out=sys.st
         return 1
     if remove:
         return _remove(run, say)
+    if config is None:
+        say("the config could not be read, so the project check cannot run; fix the config, then run "
+            "bw setup claude-pane again")
+        return 1
     why = refusal(config, run=run)
     if why:
         say(why)
@@ -209,7 +256,9 @@ def setup(config: Optional[dict], remove: bool = False, run=proc.run, out=sys.st
         return 1
     if source is None:
         # Uninstall before the add: if a later step fails, the next run still sees no marketplace (or no
-        # plugin) and repairs again; ROOT's marketplace beside the old files would read as trusted.
+        # plugin) and repairs again; ROOT's marketplace beside the old files would read as trusted. (The
+        # files load in place from the marketplace folder; the version bw compares says only when to
+        # run `claude plugin update`, not which files load.)
         if entry is not None:  # installed with no marketplace: its files came from somewhere unknown
             if not _step(run, ["plugin", "uninstall", PLUGIN_ID], say):
                 return 1
@@ -277,18 +326,30 @@ def _budgeted(run, seconds):
     return call
 
 
-def ensure(config: dict, run=proc.run, say=print, refused: Optional[str] = None) -> None:
-    """Make sure the live pane is installed from ROOT and current before a Claude Code lead starts. Does
-    nothing when `claude_pane` is false, when `refused` (the runner's `refuse_inside` result) or
-    `refusal(config)` refuses, when Claude Code is too old, when the plugin is disabled, or when a check
-    fails or runs out of the shared CHECK_TIMEOUT_S. With a foreign `balancewheel` marketplace it only
+def ensure(config: dict, run=proc.run, say=print, refused: Optional[str] = None, project=None,
+           install: bool = True) -> None:
+    """The live pane check before a lead starts in `project`, on every runtime. When `refused` (the
+    runner's `refuse_inside` result) or `refusal(config, project=project)` refuses, it uninstalls an
+    installed plugin, with one line before and one more on a failure or Ctrl-C, also when `claude_pane`
+    is false; it says nothing when it cannot read the plugin list. Else, only with `install` (a
+    `claude-code` lead) and `claude_pane` not false, it makes sure the pane is installed from ROOT and
+    current: it does nothing when Claude Code is too old, when the plugin is disabled, or when a check
+    fails or runs out of the shared CHECK_TIMEOUT_S, and with a foreign `balancewheel` marketplace it only
     uninstalls the plugin. One `setting up` line before it changes anything; one more on a failure or Ctrl-C."""
     try:
-        if config.get("claude_pane") is False or refused:
-            return
         claude_cmd()  # a bad BW_CLAUDE_CMD: no call at all
         check = _budgeted(run, CHECK_TIMEOUT_S)
-        if refusal(config, run=check):
+        why = refused or refusal(config, run=check, project=project)
+        if why:
+            try:
+                entry = installed(check, CHECK_TIMEOUT_S)
+            except CheckFailed:
+                return
+            if entry is not None:
+                _run_plan(run, say, f"uninstalling {PLUGIN_ID} ({why})", [["plugin", "uninstall", PLUGIN_ID]],
+                          "the live pane plugin could not be uninstalled", "bw setup claude-pane --remove")
+            return
+        if not install or config.get("claude_pane") is False:
             return
         r = check(claude_cmd() + ["--version"], CHECK_TIMEOUT_S, cwd=CLAUDE_CWD)
         v = parse_version(r.out) if r.rc == 0 and not r.timed_out else None
@@ -300,19 +361,23 @@ def ensure(config: dict, run=proc.run, say=print, refused: Optional[str] = None)
         if plan is None:
             return
         what, steps = plan
-        say(f"bw: setting up the live pane: {what}…")
-        failed = []
-        try:
-            with _ctrl_c_stops():
-                ok = all(_step(run, args, failed.append) for args in steps)
-        except KeyboardInterrupt:
-            say("bw: the live pane setup was interrupted; the lead starts without it (bw setup claude-pane "
-                "sets it up)")
-            return
-        if not ok:
-            say(f"bw: the live pane plugin was not set up: {failed[-1]}; run bw setup claude-pane")
+        _run_plan(run, say, what, steps, "the live pane plugin was not set up", "bw setup claude-pane")
     except Exception:  # nonfatal by contract: the lead starts either way
         return
+
+
+def _run_plan(run, say, what, steps, not_done, fix):
+    """One `setting up` line, the steps (Ctrl-C stops them), and one more line on a failure or Ctrl-C."""
+    say(f"bw: setting up the live pane: {what}…")
+    failed = []
+    try:
+        with _ctrl_c_stops():
+            ok = all(_step(run, args, failed.append) for args in steps)
+    except KeyboardInterrupt:
+        say(f"bw: the live pane setup was interrupted; the lead starts anyway ({fix} finishes it)")
+        return
+    if not ok:
+        say(f"bw: {not_done}: {failed[-1]}; run {fix}")
 
 
 def _ensure_plan(source, entry):

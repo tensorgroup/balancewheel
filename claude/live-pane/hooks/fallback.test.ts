@@ -220,7 +220,7 @@ for (const bg of [false, true]) {
     test(`a ${bg ? 'background' : 'foreground'} bw run whose Bash call waits ${waitS} s to start shows one lane, and its end row closes it`, async ($, on) => {
       let open: OpenRun[] = []
       let recent: RecentRun[] = []
-      const b = await boot($, on, { out: () => JSON.stringify(doc({ open, recent })) })
+      const b = await boot($, on, { out: () => JSON.stringify(doc({ open, recent, local: { ...doc().local, run_max_s: 60 } })) })
       await b.clock.advance(5000)
       const count = async () => (await laneTexts($)).filter(t => t.includes('my-seat')).length
       const t1 = b.clock.now()
@@ -240,7 +240,7 @@ for (const bg of [false, true]) {
       expect(await count()).toBe(0)
       const texts = await drawn($)
       expect(texts.filter(t => /local seat ·/.test(t)).length).toBe(1)
-      await b.clock.advance(3_000_000) // past run_max_s: nothing left to expire
+      await b.clock.advance(70_000) // past run_max_s: nothing left to expire
       expect(await count()).toBe(0)
       expect((await drawn($)).filter(t => /local seat ·/.test(t)).length).toBe(1)
     })
