@@ -46,6 +46,10 @@ Sibling project: [OpenEscapement](https://github.com/tensorgroup/openescapement)
 Balancewheel *finds and justifies* a seat policy. esc *ships* that policy into repos as a
 signed rule pack. See [Working with OpenEscapement](#working-with-openescapement).
 
+See also: [Capybara Onsen](https://github.com/tensorgroup/capybara-onsen), a companion pane
+for Claude Code. Each of your agents shows up as a capybara soaking in a hot spring, so you
+can see at a glance who is working.
+
 ## What a panel looks like
 
 You normally never start a panel by hand. The lead convenes one at a checkpoint (a design,
@@ -152,7 +156,7 @@ plans:
     no quota reading yet; rotation is using observed caps only
   …
 leads:
-  astra: codex gpt-6-astra on chatgpt-plan · contained by self
+  astra: codex gpt-6.2-astra on chatgpt-plan · contained by self
   claude: claude-code opus on claude-plan · contained by self
 inbox: empty
 guard:
@@ -173,7 +177,7 @@ bw seat list
 ```
 
 ```text
-astra  codex  gpt-6-astra  plan=chatgpt-plan  fallback=gem  tier=default  verified=no (never verified)  capped=no
+astra  codex  gpt-6.2-astra  plan=chatgpt-plan  fallback=gem  tier=default  verified=no (never verified)  capped=no
 opus  claude-code  claude-opus-5-5  plan=claude-plan  fallback=-  tier=default  verified=no (never verified)  capped=no
 …
 ```
@@ -203,7 +207,7 @@ The test spends a little model quota. A seat that is capped or not logged in sho
 `seat <id>: pending — <reason>` and does not fail the run.
 
 **5. Open a project with a lead.** Use the path of one of your git repositories in place of
-`~/code/my-project`. Try a dry run first. It changes nothing:
+`~/code/my-project` (for a new project, `git init` the folder first; no commit is needed). Try a dry run first. It changes nothing:
 
 ```sh
 bw start --dry-run ~/code/my-project
@@ -213,23 +217,50 @@ An excerpt (your output has one line per tool and per plan). Read every `would u
 before you continue:
 
 ```text
-bw start: dry run for ~/code/my-project (profile product); nothing is run or written
-bw start: would update claude: claude update · lock runtime-claude-code · installer claude
-bw start: would read quota for plan claude-plan
-bw start: would check seats in the background
-bw start: lead: claude (order)
-bw start: would ensure the live pane plugin
-bw start: would run: open -a Terminal ~/.local/state/balancewheel/start/98bf2f5e3750.command
+bw start · ~/code/my-project
+  dry run (profile product): nothing is run or written
+
+Updates
+  · would update bw: git -C ~/.local/share/balancewheel pull --ff-only --quiet (only
+    when its checkout has no local changes)
+  · would update claude: claude update · lock runtime-claude-code · installer claude
+
+Quota
+  · would read quota for plan claude-plan
+  claude-plan  unknown (Claude's status line has not reported yet) — no quota reading
+               yet; rotation is using only the limits it has already seen
+
+Lead
+  ✓ claude (first in the profile's lead order)
+  · would ensure the live pane plugin
+  · would write ~/.local/state/balancewheel/start/98bf2f5e3750.command:
+      #!/bin/sh
+      export BALANCEWHEEL_CONFIG=~/.config/balancewheel/config.json
+      cd ~/code/my-project || exit 1
+      exec ~/.local/share/balancewheel/bin/bw lead
+  · would run: open -a Terminal /Users/you/.local/state/balancewheel/start/98bf2f5e3750.command
+
+Also
+  · would check seats in the background
 ```
 
-Then run it for real. `bw start` updates your tools, re-checks containment, reads quota, and
-opens the lead in a new macOS Terminal tab. On Linux, run `bw` inside the repository instead.
+On a terminal, `bw start` prints sections. A `✓` is a pass, a `✗` is a failure, a `·` is
+information, and a `…` is a wait. While a slow step runs, a `… still waiting on: <part> (<time>)` line
+repeats every 15 s. Piped to a file, it prints plain lines that start with `bw start: `.
+
+Then run it for real. `bw start` updates bw itself (a `git pull --ff-only` of its install clone; it
+starts again once when a new version arrives), updates your tools, re-checks containment, reads quota, and
+opens the lead. When you run it in a terminal, from inside the project and with no path, it
+starts the lead in that same terminal. With a path to another project, it opens the lead in a
+new macOS Terminal tab (set `"canvas": "ghostty"` for a Ghostty tab; `--tab` forces the tab inside the project too). On Linux, run `bw` inside
+the repository instead.
 
 ```sh
-bw start ~/code/my-project
+bw start ~/code/my-project   # from anywhere else: a new tab
+cd ~/code/my-project && bw start   # inside the project: this terminal
 ```
 
-Inside a project, plain `bw` starts the lead in the terminal you are in. It does not update
+Inside a project, plain `bw` also starts the lead in the terminal you are in. It does not update
 tools or run checks.
 
 **6. Work as usual.** The lead keeps a checkpoint and convenes panels. When its plan is
@@ -250,7 +281,8 @@ bw inbox
 bw: inbox empty
 ```
 
-When a lead has a question for you, it shows here. Answer with `bw answer <id> "<text>"`,
+When a lead has a question for you, it shows here, and a desktop notification tells you at once.
+`bw lead` does not print into the lead's terminal while the lead runs. Answer with `bw answer <id> "<text>"`,
 then tell the lead to read its inbox.
 
 **8. Read the scoreboard.**
@@ -275,7 +307,7 @@ setup by your own agent, use the paste-in prompts in [Getting started](#getting-
 | I want to… | Run | You see |
 |---|---|---|
 | Work on a project | `bw` (inside the project) | the lead starts in this terminal (no updates, no checks) |
-| Open a project in a new tab | `bw start [path]` | one line per tool, quota, then `opened a Terminal tab for …` |
+| Update, check, then start a project | `bw start [path]` | sections for updates, checks, quota, and the lead; then the lead starts in this terminal (no path), or `opened a Terminal tab for …` |
 | See plans, leads, and asks | `bw status` | plans, worktrees, leads, inbox, guard |
 | Answer a lead's question | `bw inbox`, then `bw answer <id> "<text>"` | the open asks; then `… tell it to look`: tell the lead to read its inbox |
 | Use a different lead here | `bw lead --use <lead>` (undo: `bw lead --auto`) | that lead starts here; a change from the profile order is logged |

@@ -14,7 +14,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from lead import containment, probes, proc, runner, sandbox, start, status  # noqa: E402
+from lead import containment, probes, proc, progress, runner, sandbox, start, status  # noqa: E402
 from lead.proc import Result  # noqa: E402
 from lead.runtimes import ADAPTERS  # noqa: E402
 from seats import verify as seat_verify  # noqa: E402
@@ -35,8 +35,9 @@ class FakeRun:
     `versions[x]` answers `[x, "--version"]` (None: exit 1); an update argv in `updates` sets its
     tool's version to `new` after sleeping; `.sh` scripts (the attacks) PASS."""
 
-    def __init__(self, orca="stopped", create_rc=0, open_rc=0):
-        self.orca, self.create_rc, self.open_rc = orca, create_rc, open_rc
+    def __init__(self, orca="stopped", create_rc=0, open_rc=0, ghostty_rc=0):
+        self.orca, self.create_rc, self.open_rc, self.ghostty_rc = orca, create_rc, open_rc, ghostty_rc
+        self.ghostty_err = "Ghostty got an error"
         self.versions = {"pi": "pi 1.0", "kimi": "kimi 1.0", "codex": "codex 1.0"}
         self.updates = {}  # tuple(argv) -> (name, new_version, sleep_s, rc)
         self.calls = []  # (argv, start, end)
@@ -59,6 +60,10 @@ class FakeRun:
             return Result(0, (FIX / f"status_{self.orca}.json").read_text(), "", False)
         if argv[:3] == CREATE:
             return Result(self.create_rc, "", "create refused" if self.create_rc else "", False)
+        if argv[0] == "osascript":
+            if self.ghostty_rc == "timeout":
+                return Result(-9, "", "", True)
+            return Result(self.ghostty_rc, "", self.ghostty_err if self.ghostty_rc else "", False)
         if argv[0] == "open":
             return Result(self.open_rc, "", "open: no Terminal" if self.open_rc else "", False)
         if argv[0].endswith(".sh"):
@@ -278,9 +283,9 @@ class StartCase(unittest.TestCase):
             seen["refresh"] = now
             return real_refresh(config, state, now, **kw)
 
-        def ql(config, state, project, profile, plans, now, say):
+        def ql(config, state, project, profile, plans, now, rep):
             seen["decide"] = now
-            return real_ql(config, state, project, profile, plans, now, say)
+            return real_ql(config, state, project, profile, plans, now, rep)
 
         def build(config, state, now, **kw):
             seen["registry"] = now
@@ -317,6 +322,85 @@ class StartCase(unittest.TestCase):
         self.assertEqual(len(self.ran(run, CREATE)), 1)
         self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
         self.assertIn("orca terminal create failed (exit 1: create refused); opening a Terminal tab", out)
+
+    def test_ghostty_canvas_opens_a_tab_through_osascript(self):
+        self.config["canvas"] = "ghostty"
+        run = FakeRun(orca="running")
+        code, out = self.start(run, verify=False, update=False)
+        self.assertEqual(code, 0, out)
+        path = os.path.join(self.state, "start", f"{runner_key(self.repo)}.command")
+        calls = self.ran(run, ["osascript"])
+        self.assertEqual(len(calls), 1)
+        argv = calls[0][0]
+        want = shlex.join([start._login_shell(), "-l", "-i", "-c", "exec " + shlex.quote(path)])
+        self.assertEqual(argv[-2:], [want, str(self.repo)])  # data as run-handler arguments, never script text
+        script = argv[1:-2]
+        self.assertEqual(script[::2], ["-e"] * (len(script) // 2))
+        self.assertNotIn(path, " ".join(script))
+        self.assertNotIn(str(self.repo), " ".join(script))
+        self.assertIn('tell application "Ghostty"', script)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o700)
+        self.assertEqual(self.ran(run, ["open"]), [])
+        self.assertEqual([a for a in run.argvs() if a[0] == "orca"], [])
+        self.assertIn(f"opened a Ghostty tab for {self.repo}", out)
+
+    def test_ghostty_command_quotes_a_path_with_spaces_and_quotes(self):
+        path = "/st ate/it's $x/k.command"
+        cmd = start._ghostty_command(path, shell="/bin/zsh")
+        self.assertEqual(shlex.split(cmd), ["/bin/zsh", "-l", "-i", "-c", "exec " + shlex.quote(path)])
+        self.assertEqual(shlex.split(shlex.split(cmd)[-1]), ["exec", path])
+        argv = start._ghostty_argv(path, "/w t", shell="/bin/zsh")
+        self.assertEqual(argv[-2:], [cmd, "/w t"])
+        self.assertNotIn(path, " ".join(argv[1:-2]))
+
+    def test_login_shell_falls_back_to_bin_sh(self):
+        with mock.patch.object(start.pwd, "getpwuid", side_effect=KeyError("uid")):
+            self.assertEqual(start._login_shell(), "/bin/sh")
+
+    def test_ghostty_timeout_falls_back_to_terminal(self):
+        self.config["canvas"] = "ghostty"
+        run = FakeRun(ghostty_rc="timeout")
+        code, out = self.start(run, verify=False, update=False)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+        self.assertIn("ghostty: could not open a tab (timed out); opening a Terminal tab", out)
+
+    def test_ghostty_known_errors_are_explained(self):
+        for err, want in (("60:67: syntax error: Expected end of line. (-2741)", "Ghostty 1.4 or later not found"),
+                          ("execution error: Not authorized to send Apple events to Ghostty. (-1743)",
+                           "Automation access to Ghostty refused")):
+            self.config["canvas"] = "ghostty"
+            run = FakeRun(ghostty_rc=1)
+            run.ghostty_err = err
+            code, out = self.start(run, verify=False, update=False)
+            self.assertEqual(code, 0, out)
+            self.assertIn(f"ghostty: could not open a tab ({want}", out)
+
+    def test_ghostty_failure_falls_back_to_terminal(self):
+        self.config["canvas"] = "ghostty"
+        run = FakeRun(ghostty_rc=1)
+        code, out = self.start(run, verify=False, update=False)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.ran(run, ["osascript"])), 1)
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+        self.assertIn("ghostty: could not open a tab (exit 1: Ghostty got an error); opening a Terminal tab", out)
+
+    def test_ghostty_and_terminal_failing_prints_the_command_and_exits_1(self):
+        self.config["canvas"] = "ghostty"
+        code, out = self.start(FakeRun(ghostty_rc=1, open_rc=1), verify=False, update=False)
+        self.assertEqual(code, 1)
+        self.assertIn(f"run it yourself: cd {shlex.quote(str(self.repo))} && ", out)
+
+    def test_ghostty_canvas_dry_run_runs_only_git(self):
+        self.config["canvas"] = "ghostty"
+        run = FakeRun()
+        code, out = self.start(run, dry_run=True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual({a[0] for a in run.argvs()}, {"git"})
+        path = os.path.join(self.state, "start", f"{runner_key(self.repo)}.command")
+        self.assertIn(f"would open a Ghostty tab: osascript <new-tab script> "
+                      f"{shlex.join([start._ghostty_command(path), str(self.repo)])}", out)
+        self.assertFalse(os.path.exists(path))
 
     def test_neither_orca_nor_terminal_prints_the_command_and_exits_1(self):
         self.config["canvas"] = "orca"
@@ -375,13 +459,140 @@ class StartCase(unittest.TestCase):
             self.assertEqual({a[0] for a in run.argvs()}, {"git"})  # no tool update or version read ran from it
         self.assertFalse(os.path.exists(os.path.join(self.state, "start.json")))
 
+    # --- bw's own update --------------------------------------------------------------------
+
+    def install(self):
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_selfupdate import commit, git, make_install
+        writer, install = make_install(self._fresh("bw-install"))
+        return writer, install, commit, git
+
+    def _fresh(self, name):
+        d = self.root / name
+        d.mkdir()
+        return d
+
+    def test_a_pushed_bw_commit_is_pulled_and_bw_start_starts_again_once(self):
+        writer, install, commit, git = self.install()
+        commit(writer, "b")
+        git(writer, "push", "-q", "origin", "main")
+        envs = []
+        code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), self_update=True,
+                               restart=envs.append)
+        self.assertEqual(code, 0, out)
+        self.assertTrue((install / "b").exists())
+        self.assertEqual(len(envs), 1)
+        before, after = envs[0]["BW_SELF_UPDATED"].split()
+        self.assertIn(f"bw: updated {before} → {after}; starting again on the new version", out)
+        self.assertNotIn("lead:", out)  # nothing else ran on the old code
+
+    def test_after_the_restart_it_says_what_changed_and_does_not_pull_again(self):
+        writer, install, commit, git = self.install()
+        run = FakeRun()
+        code, out = self.start(run, bw_path=str(install / "bin" / "bw"), self_update=True,
+                               restart=lambda env: self.fail("restarted twice"),
+                               env={**self.env, "BW_SELF_UPDATED": "abc1234 def5678"})
+        self.assertEqual(code, 0, out)
+        self.assertIn("bw: updated abc1234 → def5678", out)
+        self.assertFalse([a for a in run.argvs() if "pull" in a])
+        self.assertNotIn("BW_SELF_UPDATED", os.environ)
+
+    def test_a_current_bw_says_so_and_goes_on(self):
+        writer, install, commit, git = self.install()
+        head = git(install, "rev-parse", "--short", "HEAD")
+        code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), self_update=True,
+                               restart=lambda env: self.fail("restarted"))
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"bw: {head}, current", out)
+
+    def test_no_update_and_the_default_never_pull_bw(self):
+        writer, install, commit, git = self.install()
+        commit(writer, "b")
+        git(writer, "push", "-q", "origin", "main")
+        for kw in ({"update": False, "self_update": True}, {}):
+            code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), restart=self.fail, **kw)
+            self.assertEqual(code, 0, out)
+            self.assertFalse((install / "b").exists(), kw)
+            self.assertNotIn("bw: ", out.replace("bw start: ", ""), kw)
+
+    def test_config_turns_the_bw_update_off(self):
+        writer, install, commit, git = self.install()
+        commit(writer, "b")
+        git(writer, "push", "-q", "origin", "main")
+        self.config["updates"]["self_update"] = False
+        for dry in (False, True):
+            code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), self_update=True,
+                                   restart=self.fail, dry_run=dry)
+            self.assertEqual(code, 0, out)
+            self.assertNotIn("update bw", out)
+            self.assertNotIn("bw: checking", out)
+        self.assertFalse((install / "b").exists())
+
+    def test_a_restarted_start_on_a_terminal_prints_no_second_header(self):
+        writer, install, commit, git = self.install()
+        code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), self_update=True, tty=True, width=100,
+                               restart=self.fail, env={**self.env, "BW_SELF_UPDATED": "abc1234 def5678"})
+        self.assertNotIn("bw start · ", out)
+        self.assertIn("✓ bw: updated abc1234 → def5678", out)
+
+    def test_dry_run_names_the_pull_and_runs_it_not(self):
+        writer, install, commit, git = self.install()
+        commit(writer, "b")
+        git(writer, "push", "-q", "origin", "main")
+        code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), self_update=True, dry_run=True)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"would update bw: git -C {install} pull --ff-only --quiet", out)
+        self.assertFalse((install / "b").exists())
+
     def test_unresolvable_path_exits_2(self):
         plain = self.root / "plain"; plain.mkdir()
         run = FakeRun()
         code, out = self.start(run, path=plain)
         self.assertEqual(code, 2)
         self.assertIn("not a git repository", out)
+        self.assertIn("Run it inside a repository, or give the repository's path", out)
+        self.assertIn("Example: bw start ~/code/my-project", out)
+        self.assertIn("New project: git init <dir>, then bw start <dir>.", out)
         self.assertEqual({a[0] for a in run.argvs()}, {"git"})
+
+    def test_folder_of_repositories_names_the_commands_to_run(self):
+        parent = self.root / "code"; parent.mkdir()
+        for name in ("alpha", "my app"):
+            (parent / name / ".git").mkdir(parents=True)
+        os.utime(parent / "alpha" / ".git", (1, 1))
+        code, out = self.start(FakeRun(), path=parent, env={**self.env, "HOME": str(self.root)})
+        self.assertEqual(code, 2)
+        self.assertIn("Repositories in this folder, most recently used first:", out)
+        self.assertLess(out.index("bw start ~/'code/my app'"), out.index("bw start ~/code/alpha"))
+        self.assertNotIn("Example:", out)
+
+    def test_folder_of_many_repositories_shows_the_first_few(self):
+        parent = self.root / "code"; parent.mkdir()
+        for i in range(start.SHOWN_REPOS + 3):
+            (parent / f"r{i}" / ".git").mkdir(parents=True)
+        code, out = self.start(FakeRun(), path=parent)
+        self.assertEqual(out.count("bw start:   bw start "), start.SHOWN_REPOS)
+        self.assertTrue(all(line.startswith("bw start: ") for line in out.splitlines()), out)
+        self.assertIn("… and 3 more", out)
+
+    def test_heartbeat_names_the_update_that_is_still_running(self):
+        run = FakeRun()
+        run.updates[tuple(CODEX_UPDATE)] = ("codex", "codex 2.0", 0.4, 0)
+        with mock.patch.object(progress, "HEARTBEAT_S", 0.05):
+            code, out = self.start(run, verify=False)
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"bw start: still waiting on: [^\n]*codex update \(0s\)")
+        heartbeats = out.index("still waiting on:")
+        self.assertLess(out.index("updating "), heartbeats)  # the wait line names the step first
+
+    def test_heartbeat_on_a_terminal_is_a_wait_line_in_the_open_section(self):
+        run = FakeRun()
+        run.updates[tuple(CODEX_UPDATE)] = ("codex", "codex 2.0", 0.4, 0)
+        with mock.patch.object(progress, "HEARTBEAT_S", 0.05):
+            code, out = self.start(run, verify=False, tty=True, width=100)
+        self.assertEqual(code, 0, out)
+        self.assertIn("  … still waiting on: ", out)
+        self.assertLess(out.index("\nUpdates\n"), out.index("still waiting on:"))
 
     # --- dry run --------------------------------------------------------------------------
 
@@ -427,9 +638,9 @@ class StartCase(unittest.TestCase):
                               else f"bw start: {tool}:", out)
             self.assertIn("would update pi: brew upgrade pi · lock runtime-pi · installer brew", out)
             self.assertIn("would update codex: npm i -g codex · lock runtime-codex · installer npm", out)
-            self.assertIn("bw start: would check keys for pi: containment", out)
+            self.assertIn("bw start: would check pi: sandbox", out)
             self.assertIn("bw start: would read quota for plan ps", out)
-            self.assertIn("bw start: lead: lp (order)", out)
+            self.assertIn("bw start: lead: lp (first in the profile's lead order)", out)
             if orca == "running":
                 self.assertIn("bw start: would run: orca terminal create --worktree", out)
             else:
@@ -446,7 +657,7 @@ class StartCase(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual([c for c in run.argvs() if tuple(c) in {tuple(PI_UPDATE), tuple(KIMI_UPDATE)}], [])
         self.assertTrue(any("lead_containment.sh" in c[0][0] for c in self.attacks(run)))
-        self.assertIn("bw start: verify pi containment: passed", out)
+        self.assertIn("bw start: pi sandbox: passed", out)
 
     def test_reverify_of_fast_tool_starts_before_slowest_update_ends(self):
         run = FakeRun()
@@ -459,14 +670,14 @@ class StartCase(unittest.TestCase):
         pi_attack = [c for c in self.attacks(run) if "--" in c[0] and "pi" in c[0][c[0].index("--") + 1:]]
         self.assertTrue(pi_attack, out)
         self.assertLess(pi_attack[0][1], codex_end)
-        self.assertIn("bw start: pi: pi 1.0 → pi 1.1 updated (", out)
+        self.assertIn("bw start: pi: updated pi 1.0 → pi 1.1", out)
 
     def test_unreadable_version_after_update_marks_pending(self):
         run = FakeRun()
         run.updates[tuple(PI_UPDATE)] = ("pi", None, 0.0, 0)
         code, out = self.start(run)
         self.assertEqual(code, 0, out)
-        self.assertIn("bw start: verify pi containment: pending — version unreadable", out)
+        self.assertIn("bw start: pi sandbox: not tested: version unreadable", out)
         self.assertFalse([c for c in self.attacks(run) if "pi" in c[0]])
 
     def test_version_ok_follows_the_after_version_not_the_result_label(self):
@@ -474,21 +685,22 @@ class StartCase(unittest.TestCase):
         run.versions["pi"] = None  # unreadable before: the label is "unreadable", the after version is not
         run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.1", 0.0, 0)
         code, out = self.start(run)
-        self.assertIn("pi: unreadable → pi 1.1 unreadable", out)
-        self.assertIn("bw start: verify pi containment: passed", out)
+        self.assertIn("bw start: pi: updated to pi 1.1; the old version could not be read", out)
+        self.assertNotIn("cannot be read", out)
+        self.assertIn("bw start: pi sandbox: passed", out)
         run = FakeRun()
         run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.2", 0.0, 3)  # failed, yet a readable version after
         code, out = self.start(run)
-        self.assertIn("pi 1.2 failed", out)
-        self.assertIn("bw start: verify pi containment: passed", out)
+        self.assertIn("bw start: pi: update failed (exit 3: boom)", out)
+        self.assertIn("bw start: pi sandbox: passed", out)
 
     def test_no_verify_marks_changed_keys_pending(self):
         self.record_pi("pi 0.9")
         run = FakeRun()
         code, out = self.start(run, verify=False)
         self.assertEqual(code, 0, out)
-        self.assertIn("bw start: verify pi containment: pending — --no-verify", out)
-        self.assertIn("bw start: verify kimi containment: pending — --no-verify", out)
+        self.assertIn("bw start: pi sandbox: not tested (--no-verify)", out)
+        self.assertIn("bw start: kimi sandbox: not tested (--no-verify)", out)
         self.assertEqual(self.attacks(run), [])
 
     def test_start_runs_the_guard_eval_when_its_key_changed(self):
@@ -502,6 +714,26 @@ class StartCase(unittest.TestCase):
         self.assertEqual(ens.call_args.kwargs["allow_run"], True)
         self.assertIs(ens.call_args.kwargs["run"], run)
         self.assertIn("bw start: guard eval pi: pass — fake", out)
+
+    def test_the_guard_eval_says_it_is_slow_before_the_judge_call_and_only_when_it_will_run(self):
+        self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
+        self.config["guard"] = {"mode": {"p": "auto"}, "model": "test/judge", "key_env": "BW_TEST_UNSET_JUDGE_KEY"}
+        out = io.StringIO()
+        seen = []
+
+        def ensure(*a, **kw):
+            seen.append(out.getvalue())
+            return "pass", "guard eval pi: pass — fake"
+        for why, expect in (("its guard settings changed since the last evaluation", True), (None, False)):
+            seen.clear(); out.seek(0); out.truncate()
+            with mock.patch.object(start.evaluate, "ensure", ensure), \
+                    mock.patch.object(start.evaluate, "will_run", return_value=why):
+                start.start(self.config, self.state, str(self.repo), run=FakeRun(), out=out, bw_path=self.bw,
+                            env=self.env, now=NOW, update=False)
+            wait = ("bw start: testing the pi guard against the judge model. This takes about a minute and uses a little "
+                    "model quota, because its guard settings changed since the last evaluation. Please wait.")
+            self.assertEqual(wait in seen[0], expect)  # printed before the judge call, not after
+            self.assertEqual("Please wait" in out.getvalue().split("guard eval pi")[0].split("pi guard:")[-1], expect)
 
     def test_no_interactive_offer_without_a_judge_model(self):  # the check alone cannot lead to promotion
         self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
@@ -529,7 +761,7 @@ class StartCase(unittest.TestCase):
     def test_start_offers_before_the_workspace_opens(self):
         order = []
         with mock.patch.object(start.offer, "maybe_offer", side_effect=lambda *a, **k: order.append("offer")) as mo, \
-                mock.patch.object(start, "_workspace", side_effect=lambda *a, **k: order.append("workspace") or 0):
+                mock.patch.object(start, "_workspace", side_effect=lambda *a, **k: order.append("workspace") or (0, None)):
             code, out = self.start(FakeRun(), update=False)
         self.assertEqual(order, ["offer", "workspace"])
         self.assertEqual(mo.call_args.args[2], "p")
@@ -598,9 +830,10 @@ class StartCase(unittest.TestCase):
         del self.config["tools"]["kimi"]
         run = FakeRun()
         code, out = self.start(run, verify=False)
-        self.assertEqual(out.count("bw start: no update lock for runtime kimi"), 1)
-        self.assertNotIn("no update lock for runtime pi", out)
-        self.assertIn("bw start: verify kimi containment: pending — --no-verify", out)
+        self.assertEqual(out.count("no tool in your config updates"), 1)
+        self.assertIn("bw start: not updated: no tool in your config updates kimi ", out)
+        self.assertNotIn("updates pi", out)
+        self.assertIn("bw start: kimi sandbox: not tested (--no-verify)", out)
 
     def test_start_writes_the_registry_with_versions_from_start_json(self):
         run = FakeRun()
@@ -627,7 +860,7 @@ class StartCase(unittest.TestCase):
         order = []
         with mock.patch.object(seat_verify, "changed_seats", side_effect=lambda *a, **k: order.append("changed")), \
                 mock.patch.object(seat_verify, "seat_key", side_effect=lambda *a, **k: order.append("key")), \
-                mock.patch.object(start, "_workspace", side_effect=lambda *a, **k: order.append("workspace") or 0), \
+                mock.patch.object(start, "_workspace", side_effect=lambda *a, **k: order.append("workspace") or (0, None)), \
                 mock.patch.object(seat_verify, "spawn_verify",
                                   side_effect=lambda *a, **k: order.append("spawn") or True):
             code, out = self.start(run, update=False, **kw)
@@ -641,7 +874,7 @@ class StartCase(unittest.TestCase):
 
     def test_spawn_line(self):
         _, out = self.calls_of(FakeRun())
-        self.assertIn("bw start: checking seats in the background (log: ", out)
+        self.assertIn("bw start: seats: checking in the background. Log: ", out)
         self.assertIn("verify-log.txt", out)
 
     def test_seat_verify_child_gets_start_env(self):
@@ -675,10 +908,10 @@ class StartCase(unittest.TestCase):
         run = FakeRun()
         code, out = self.start(run, verify=False, update=False)
         for plan in ("pp", "pk", "ps"):
-            self.assertIn(f"bw start: quota {plan}: quota unknown", out)
+            self.assertIn(f"bw start: quota {plan}: unknown (bw has no reader for this plan yet)", out)
         self.assertNotIn("quota pc:", out)  # lc is not in this profile
-        self.assertIn("bw start: lead: lp (order)", out)
-        self.assertIn("bw start: cockpit: run bw cockpit", out)
+        self.assertIn("bw start: lead: lp (first in the profile's lead order)", out)
+        self.assertIn("bw start: cockpit: run `bw cockpit` to see all of this in a browser", out)
 
     def openrouter_plan(self):
         self.config["plans"]["po"] = {"billing": "metered", "quota": "probe", "probe": "openrouter",
@@ -699,8 +932,8 @@ class StartCase(unittest.TestCase):
                                env=dict(self.env, OPENROUTER_API_KEY="sk-or-SYNTHETIC-CANARY"))
         self.assertEqual(code, 0, out)
         self.assertEqual(len(calls), 1)
-        self.assertIn("bw start: quota po: budget 75% · probe 0m", out)
-        self.assertIn("bw start: quota pp: quota unknown — probe: no probe for this plan", out)
+        self.assertIn("bw start: quota po: 25% of the monthly budget used · read just now from OpenRouter", out)
+        self.assertIn("bw start: quota pp: unknown (bw has no reader for this plan yet)", out)
         self.assertNotIn("SYNTHETIC-CANARY", out)
 
     def test_a_refresh_that_raises_is_one_line_and_start_continues(self):
@@ -763,6 +996,430 @@ class StartCase(unittest.TestCase):
         self.start(FakeRun(), verify=False, update=False)
         f = status.facts(self.config, self.state, NOW, run=FakeRun())
         self.assertIn(f"last start: {time.ctime(NOW)}", status.render(f))
+
+    # --- the terminal layout: sections with marks on a terminal, plain `bw start: ` lines elsewhere ---
+
+    def tty_start(self, run, **kw):
+        out = Tty()
+        kw.setdefault("bw_path", self.bw)
+        kw.setdefault("env", self.env)
+        kw.setdefault("now", NOW)
+        kw.setdefault("width", 88)
+        with mock.patch.dict(os.environ, {"HOME": str(self.root)}):
+            code = start.start(self.config, self.state, str(self.repo), run=run, out=out, **kw)
+        return code, out.getvalue()
+
+    def test_sections_come_in_order_under_a_header_with_the_home_path_as_tilde(self):
+        code, out = self.tty_start(FakeRun(orca="running"))
+        self.assertEqual(code, 0, out)
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "bw start · ~/app")
+        self.assertEqual([ln for ln in lines[1:] if ln and not ln.startswith(" ")],
+                         ["Updates", "Checks", "Quota", "Lead", "Also"])
+        self.assertFalse([ln for ln in lines if ln.startswith("bw start:")], out)
+        self.assertIn("  ✓ lp (first in the profile's lead order)", lines)
+        self.assertIn("  ✓ opened a Terminal tab for ~/app", lines)
+        self.assertTrue(any(ln.startswith("  · seats: checking in the background. Log: ~/state/seats/") for ln in lines), out)
+        self.assertIn("  · cockpit: run `bw cockpit` to see all of this in a browser", lines)
+        self.assertTrue(any(ln.startswith("  · registry: ~/state/registry.json") for ln in lines), out)
+
+    def test_updates_say_what_will_take_time_then_each_tool_in_plain_words(self):
+        run = FakeRun()
+        run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.1", 0.0, 0)
+        run.updates[tuple(KIMI_UPDATE)] = ("kimi", "kimi 1.0", 0.0, 7)
+        code, out = self.tty_start(run)
+        lines = out.splitlines()
+        self.assertIn("  … updating pi, kimi, codex. This can take a minute.", lines)
+        self.assertIn("  ✓ pi: updated pi 1.0 → pi 1.1", lines)
+        self.assertIn("  ✗ kimi: update failed (exit 7: boom)", lines)
+        self.assertIn("  ✗ codex: update failed (exit 127: npm: not found)", lines)
+        self.assertLess(lines.index("  … updating pi, kimi, codex. This can take a minute."), lines.index("  ✓ pi: updated pi 1.0 → pi 1.1"))
+
+    def test_a_config_with_no_update_commands_gets_one_line(self):
+        self.config["tools"] = {}
+        for tty in (True, False):
+            code, out = (self.tty_start(FakeRun()) if tty else self.start(FakeRun()))
+            want = 'skipped: your config lists no update commands (see "tools" in docs/leads.md)'
+            self.assertEqual(out.count(want), 1, out)
+            self.assertNotIn("no update lock", out)
+            self.assertIn(("  · " if tty else "bw start: ") + want, out.splitlines())
+
+    def test_the_wait_notice_is_printed_before_the_attack_starts_and_says_why(self):
+        outs = []
+
+        class Watching(FakeRun):
+            def answer(inner, argv):
+                if argv[0].endswith(".sh"):
+                    outs.append(buf.getvalue())
+                return super().answer(argv)
+        buf = Tty()
+        run = Watching()
+        self.record_pi("pi 0.9")  # recorded on another version: pi's key changed
+        with mock.patch.dict(os.environ, {"HOME": str(self.root)}):
+            start.start(self.config, self.state, str(self.repo), run=run, out=buf, bw_path=self.bw, env=self.env,
+                        now=NOW, update=False, width=100)
+        self.assertEqual(len(outs), 2)  # pi and kimi each ran an attack
+        wait_pi = ("  … testing the pi lead's sandbox. This takes about a minute and uses a little model quota, because "
+                   "pi's version changed since its last test. Please wait.")
+        wait_kimi = wait_pi.replace("pi's version changed since its last test", "kimi's sandbox has not been tested yet").replace("the pi", "the kimi")
+        flat = [" ".join(o.split()) for o in outs]  # the lines wrap at the width
+        wait_pi, wait_kimi = " ".join(wait_pi[4:].split()), " ".join(wait_kimi[4:].split())
+        self.assertTrue(all(wait_pi in o or wait_kimi in o for o in flat), flat)
+        self.assertTrue(any(wait_pi in o for o in flat) and any(wait_kimi in o for o in flat))
+        text = buf.getvalue()
+        self.assertEqual(text.count("Please wait."), 2)
+
+    def test_the_wait_notice_names_a_tool_that_was_just_updated(self):
+        self.record_pi("pi 1.0")
+        run = FakeRun()
+        run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.1", 0.0, 0)
+        code, out = self.tty_start(run)
+        self.assertIn("because pi was just updated. Please wait.", " ".join(out.split()))
+
+    def test_nothing_slow_means_no_wait_notice(self):
+        code, out = self.tty_start(FakeRun(), verify=False, update=False)
+        self.assertNotIn("Please wait", out)
+        self.assertNotIn("…", out)
+        self.assertNotIn("updating", out)
+        code, plain = self.start(FakeRun(), verify=False, update=False)
+        self.assertNotIn("Please wait", plain)
+
+    def test_a_failed_attack_names_its_evidence(self):
+        class Failing(FakeRun):
+            def answer(self, argv):
+                if argv[0].endswith(".sh"):
+                    return Result(1, "FAIL: outside-written:x — evidence in /ev/guard.1\n", "", False)
+                return super().answer(argv)
+        code, out = self.tty_start(Failing(), update=False)
+        self.assertIn("  ✗ pi sandbox: failed: the containment attack failed. Evidence: /ev/guard.1", out.splitlines())
+
+    def test_quota_rows_are_aligned_and_in_plain_words(self):
+        self.config["plans"]["pp"]["probe"] = "openrouter"
+        self.config["plans"]["pp"]["budget_usd_month"] = 100
+        body = (ROOT / "tests" / "fixtures" / "openrouter" / "key_ok.json").read_bytes()
+        code, out = self.tty_start(FakeRun(), verify=False, update=False, fetch=lambda u, k, t: (200, body, ""),
+                                   env=dict(self.env, OPENROUTER_API_KEY="k"))
+        rows = out.split("\nQuota\n")[1].split("\n\n")[0].splitlines()
+        self.assertTrue(rows[0].startswith("  pp  "), rows)
+        self.assertIn("of the monthly budget used · read just now from OpenRouter", rows[0])
+        self.assertTrue(rows[1].startswith("  pk  unknown (bw has no reader for this plan yet)"), rows)
+        self.assertTrue(rows[2].startswith("      using only"), rows)  # a wrapped row hangs under its text
+        for word in ("probe", "Task G", "observed caps", "statusline"):
+            self.assertNotIn(word, out)
+
+    def test_a_pipe_gets_plain_prefixed_lines_with_no_marks_headers_or_tilde(self):
+        for dry in (False, True):
+            code, out = self.start(FakeRun(), dry_run=dry)
+            for ln in out.splitlines():
+                self.assertTrue(ln.startswith("bw start: "), ln)
+            for mark in "✓✗…":
+                self.assertNotIn(mark, out)
+            self.assertNotIn("\nUpdates", "\n" + out)
+            self.assertIn(str(self.repo), out)
+
+    def test_only_a_warning_is_a_failure_in_the_also_section(self):
+        from lead.checks import Check
+        cases = [("unknown", "  · cc-switch: unknown — not installed (Usage view off)"),
+                 ("warn", "  ✗ cc-switch: warn — off"), ("ok", "  · cc-switch: ok")]
+        for state, want in cases:
+            with mock.patch.object(start.ccswitch, "check_settings", return_value=[Check("cc-switch", state, "not installed (Usage view off)" if state == "unknown" else "off")]):
+                code, out = self.tty_start(FakeRun(), verify=False, update=False)
+            self.assertIn(want, out.splitlines(), state)
+
+    def test_commands_the_user_may_paste_keep_their_absolute_paths(self):
+        code, out = self.tty_start(FakeRun(), dry_run=True)
+        flat = " ".join(out.split())
+        self.assertTrue(any(ln.startswith("  · would run: open -a Terminal " + self.state + "/start/") for ln in out.splitlines()), out)  # not ~/state (HOME is the temp root)
+        run = FakeRun(open_rc=1)
+        code, out = self.tty_start(run, verify=False, update=False)
+        self.assertTrue(any(f"run it yourself: cd {shlex.quote(str(self.repo))} && " in ln and ln.endswith(" lead") for ln in out.splitlines()), out)
+
+    def test_dry_run_on_a_terminal_uses_the_layout(self):
+        code, out = self.tty_start(FakeRun(), dry_run=True)
+        lines = out.splitlines()
+        self.assertEqual(lines[:2], ["bw start · ~/app", "  dry run (profile p): nothing is run or written"])
+        self.assertEqual([ln for ln in lines[2:] if ln and not ln.startswith(" ")],
+                         ["Updates", "Checks", "Quota", "Lead", "Also"])
+        self.assertIn("  · would check pi: sandbox", lines)
+        self.assertIn("  · would read quota for plan ps", lines)
+        self.assertTrue(any(ln.startswith("  · would write ~/state/start/") for ln in lines), out)
+        self.assertIn("      exec " + shlex.quote(self.bw) + " lead", lines)
+
+    def test_a_worktree_that_has_a_lead_prints_one_line_and_no_lead_line(self):
+        child = subprocess.Popen([sys.executable, "-c", HOLDER, str(ROOT), self.state, runner_key(self.repo)],
+                                 stdout=subprocess.PIPE, text=True)
+        self.addCleanup(child.kill)
+        self.assertEqual(child.stdout.readline().strip(), "ready")
+        code, out = self.tty_start(FakeRun(), verify=False, update=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("not opening another", out)
+        self.assertNotIn("first in the profile", out)
+
+    # --- start the lead in this terminal -------------------------------------------------------
+
+    def here_start(self, run=None, dry_run=False, cwd=None, path=None, stdin_tty=True, out_tty=True, **kw):
+        """`bw start` as a person at a terminal: stdin and stdout are terminals, cwd is `cwd`."""
+        calls = {"chdir": [], "execve": []}
+        out, stdin = Tty(tty=out_tty), Tty(tty=stdin_tty)
+        kw.setdefault("verify", False)
+        kw.setdefault("update", False)
+        code = start.start(self.config, self.state, path, run=run or FakeRun(), out=out, bw_path=self.bw, env=self.env,
+                           now=NOW, dry_run=dry_run, stdin=stdin, cwd=str(cwd or self.repo), width=88,
+                           chdir=lambda d: calls["chdir"].append(d),
+                           execve=lambda prog, argv, env: calls["execve"].append((prog, argv, env)), **kw)
+        return code, out.getvalue(), calls
+
+    def test_no_path_in_the_current_worktree_starts_the_lead_in_this_terminal(self):
+        run = FakeRun()
+        code, out, calls = self.here_start(run)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(calls["chdir"], [str(self.repo)])
+        (prog, argv, env), = calls["execve"]
+        self.assertEqual((prog, argv), (self.bw, [self.bw, "lead"]))
+        self.assertEqual((env["BALANCEWHEEL_CONFIG"], env["BW_STATE_DIR"]), ("/cfg dir/c.json", self.state))
+        self.assertEqual(self.ran(run, ["open"]), [])  # no new tab
+        self.assertIn("  ✓ lp (first in the profile's lead order), starting here", out.splitlines())
+        self.assertNotIn("opened a", out)
+
+    def test_the_exec_is_the_last_thing_start_does(self):
+        out, seen = Tty(), []
+        code = start.start(self.config, self.state, None, run=FakeRun(), out=out, bw_path=self.bw, env=self.env, now=NOW,
+                           verify=True, update=False, stdin=Tty(), cwd=str(self.repo), width=88, chdir=lambda d: None,
+                           execve=lambda prog, argv, env: seen.append(out.getvalue()))
+        (at_exec,) = seen
+        for part in ("seats: checking in the background", "cockpit: run `bw cockpit`", "registry:", "starting here"):
+            self.assertIn(part, at_exec)  # everything was printed before the process was replaced
+        self.assertTrue(os.path.exists(os.path.join(self.state, "start.json")))
+        self.assertEqual(self.spawn.call_count, 1)  # the seat check was started before the exec
+
+    def test_the_exec_env_is_resolved_against_the_original_cwd_before_the_chdir(self):
+        sub = self.repo / "pkg"
+        sub.mkdir()
+        (sub / "conf").mkdir()
+        (sub / "conf" / "c.json").write_text("{}")
+        seen, cwd0 = [], os.getcwd()
+        self.addCleanup(os.chdir, cwd0)
+        os.chdir(sub)  # a real chdir from a subdirectory, with relative paths
+        env = {"BALANCEWHEEL_CONFIG": "conf/c.json", "BW_STATE_DIR": "../st"}
+        real_state = str(self.repo / "st")
+        out = Tty()
+        code = start.start(self.config, real_state, None, run=FakeRun(), out=out, bw_path=self.bw, env=env, now=NOW,
+                           verify=False, update=False, stdin=Tty(), width=88,
+                           execve=lambda prog, argv, e: seen.append((os.getcwd(), e)))
+        self.assertEqual(code, 0, out.getvalue())
+        (cwd_at_exec, e), = seen
+        self.assertEqual(os.path.realpath(cwd_at_exec), str(self.repo))
+        self.assertEqual(os.path.realpath(e["BALANCEWHEEL_CONFIG"]), str(sub / "conf" / "c.json"))
+        self.assertEqual(os.path.realpath(e["BW_STATE_DIR"]), str(self.repo / "st"))
+
+    def test_the_exec_fallback_command_is_built_before_the_chdir(self):
+        sub = self.repo / "pkg"
+        sub.mkdir()
+        cwd0 = os.getcwd()
+        self.addCleanup(os.chdir, cwd0)
+        os.chdir(sub)
+        out = Tty()
+
+        def boom(prog, argv, e):
+            raise OSError(2, "gone")
+        start.start(self.config, str(self.repo / "st"), None, run=FakeRun(), out=out, bw_path=self.bw,
+                    env={"BW_STATE_DIR": "../st"}, now=NOW, verify=False, update=False, stdin=Tty(), width=500, execve=boom)
+        (line,) = [ln for ln in out.getvalue().splitlines() if "run it yourself" in ln]
+        self.assertIn(f"BW_STATE_DIR={self.repo / 'st'} ", line.replace("'", ""))
+
+    def test_foreground_helper_compares_the_terminal_group_with_ours(self):
+        class Stream:
+            def fileno(self):
+                return 7
+        self.assertTrue(start._foreground(Stream(), tcgetpgrp=lambda fd: 100, getpgrp=lambda: 100))
+        self.assertFalse(start._foreground(Stream(), tcgetpgrp=lambda fd: 200, getpgrp=lambda: 100))  # `bw start &`
+        def gone(fd):
+            raise OSError(25, "not a tty")
+        self.assertFalse(start._foreground(Stream(), tcgetpgrp=gone, getpgrp=lambda: 100))
+        self.assertTrue(start._foreground(Tty()))  # a stream with no descriptor (a test's) cannot be in the background
+
+    def test_a_background_start_never_takes_the_terminal(self):
+        run = FakeRun()
+        out, calls = Tty(), []
+        code = start.start(self.config, self.state, None, run=run, out=out, bw_path=self.bw, env=self.env, now=NOW,
+                           verify=False, update=False, stdin=Tty(), cwd=str(self.repo), width=88,
+                           foreground=lambda stream: False, chdir=calls.append, execve=lambda *a: calls.append(a))
+        self.assertEqual(calls, [])
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)  # the tab, as for any other start
+        self.assertNotIn("starting here", out.getvalue())
+
+    def test_a_wait_from_a_runtime_with_no_update_tool_does_not_open_checks_above_updates(self):
+        del self.config["tools"]["kimi"]  # kimi has no update tool: its check starts at once
+        run = FakeRun()
+        run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.1", 0.3, 0)
+        code, out = self.tty_start(run)
+        heads = [ln for ln in out.splitlines() if ln and not ln.startswith(" ")]
+        self.assertEqual(heads[1], "Updates", heads)
+        self.assertLess(heads.index("Updates"), heads.index("Checks"))
+        self.assertEqual(heads.count("Updates"), 1)
+
+    def test_failure_lines_keep_a_spaced_evidence_path_and_do_not_double_the_word_failed(self):
+        class Failing(FakeRun):
+            def answer(self, argv):
+                if argv[0].endswith(".sh"):
+                    return Result(1, "FAIL: outside-written:x — evidence in /tmp/with space/guard.1\n", "", False)
+                return super().answer(argv)
+        code, out = self.start(Failing(), update=False)
+        self.assertIn("bw start: pi sandbox: failed: the containment attack failed. Evidence: /tmp/with space/guard.1\n", out)
+        start._item_line(rep := start.Report(io.StringIO(), tty=False), start.verifymod.Item("pi", "guard", "failed", "bw: " + start.verifymod.KEY_CHANGED))
+        self.assertEqual(rep.out.getvalue(), "bw start: pi guard: failed: key changed during the attack\n")
+
+    def test_lead_reason_words_fit_the_profile(self):
+        d = start.Decision("lp", "quota-low", "")
+        self.assertEqual(start._lead_reason(d, {"lead_order": ["lp"]}), "every lead's quota is low; this one is first in the order")
+        self.assertEqual(start._lead_reason(d, {"lead_order": ["lp", "lk"]}), "every lead's quota is low; this one is first in the order")
+        self.assertEqual(start._lead_reason(start.Decision("lk", "quota-low", ""), {"lead_order": ["lp", "lk"]}),
+                         "an earlier lead's quota is low")
+        self.assertEqual(start._lead_reason(start.Decision("lk", "capped", ""), {"lead_order": ["lp", "lk"]}),
+                         "an earlier lead's plan is capped")
+        self.assertEqual(start._lead_reason(start.Decision("lp", "pinned", ""), {}), "pinned to this worktree")
+
+    def test_tool_line_for_an_unreadable_version_says_which_one(self):
+        from lead.updates import ToolResult
+        for res, want in ((ToolResult("pi", "pi", "unreadable", "pi 1.6.1", "unreadable", "version unreadable before update", 0.1),
+                           "pi: updated to pi 1.6.1; the old version could not be read"),
+                          (ToolResult("pi", "pi", "pi 1.0", "unreadable", "unreadable", "version unreadable after update", 0.1),
+                           "pi: updated, but the new version cannot be read (version unreadable after update)")):
+            rep = start.Report(io.StringIO(), tty=False)
+            start._tool_line(rep, res)
+            self.assertEqual(rep.out.getvalue(), f"bw start: {want}\n")
+
+    def test_tab_forces_the_canvas_even_in_the_current_worktree(self):
+        run = FakeRun()
+        code, out, calls = self.here_start(run, tab=True)
+        self.assertEqual(calls["execve"], [])
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+        self.assertNotIn("starting here", out)
+        code, out, calls = self.here_start(FakeRun(), dry_run=True, tab=True)
+        self.assertIn("would run: open -a Terminal", out)
+        self.assertNotIn("would start the lead here", out)
+
+    def test_a_failed_exec_prints_the_fallback_once_without_a_second_lead_heading(self):
+        out = Tty()
+
+        def boom(prog, argv, e):
+            raise OSError(2, "gone")
+        code = start.start(self.config, self.state, None, run=FakeRun(), out=out, bw_path=self.bw, env=self.env, now=NOW,
+                           verify=False, update=False, stdin=Tty(), cwd=str(self.repo), width=88, chdir=lambda d: None,
+                           execve=boom)
+        self.assertEqual(code, 1)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines.count("Lead"), 1, lines)
+        (fail,) = [i for i, ln in enumerate(lines) if "could not start the lead here" in ln]
+        self.assertGreater(fail, lines.index("Also"))
+        self.assertTrue(lines[fail].startswith("  ✗ could not start the lead here (FileNotFoundError); run it yourself: cd "))
+
+    def test_in_plain_text_with_updates_on_the_wait_line_is_written_before_the_first_attack(self):
+        buf, at_attack = io.StringIO(), []
+
+        class Watching(FakeRun):
+            def answer(inner, argv):
+                if argv[0].endswith(".sh"):
+                    at_attack.append(buf.getvalue())
+                return super().answer(argv)
+        start.start(self.config, self.state, str(self.repo), run=Watching(), out=buf, bw_path=self.bw, env=self.env, now=NOW)
+        self.assertTrue(at_attack)
+        self.assertIn("Please wait.", at_attack[0])
+        self.assertIn("updating pi, kimi, codex. This can take a minute.", at_attack[0])
+
+    def test_a_path_inside_the_same_worktree_counts(self):
+        sub = self.repo / "pkg"
+        sub.mkdir()
+        for path in (None, str(self.repo), str(sub)):
+            code, out, calls = self.here_start(path=path, cwd=sub)
+            self.assertEqual(len(calls["execve"]), 1, path)
+            self.assertEqual(calls["chdir"], [str(self.repo)], path)
+
+    def test_another_path_opens_a_tab(self):
+        other = make_repo(self.root / "other")
+        run = FakeRun()
+        code, out, calls = self.here_start(run, path=str(other))
+        self.assertEqual(calls["execve"], [])
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+        self.assertNotIn("starting here", out)
+
+    def test_cwd_in_another_worktree_opens_a_tab(self):
+        other = make_repo(self.root / "other")
+        run = FakeRun()
+        code, out, calls = self.here_start(run, cwd=other, path=str(self.repo))
+        self.assertEqual(calls["execve"], [])
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+
+    def test_not_in_a_git_repository_opens_a_tab(self):
+        plain = self.root / "plain"
+        plain.mkdir()
+        run = FakeRun()
+        code, out, calls = self.here_start(run, cwd=plain, path=str(self.repo))
+        self.assertEqual(calls["execve"], [])
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+
+    def test_without_a_terminal_on_stdin_or_stdout_it_opens_a_tab(self):
+        for stdin_tty, out_tty in ((False, True), (True, False), (False, False)):
+            run = FakeRun()
+            code, out, calls = self.here_start(run, stdin_tty=stdin_tty, out_tty=out_tty)
+            self.assertEqual(calls["execve"], [], (stdin_tty, out_tty))
+            self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1, (stdin_tty, out_tty))
+
+    def test_a_worktree_that_has_a_lead_is_not_started_again_here(self):
+        child = subprocess.Popen([sys.executable, "-c", HOLDER, str(ROOT), self.state, runner_key(self.repo)],
+                                 stdout=subprocess.PIPE, text=True)
+        self.addCleanup(child.kill)
+        self.assertEqual(child.stdout.readline().strip(), "ready")
+        code, out, calls = self.here_start()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(calls["execve"], [])
+        self.assertIn("not opening another", " ".join(out.split()))
+        self.assertNotIn("starting here", out)
+
+    def test_a_refused_start_never_execs(self):
+        code, out, calls = self.here_start(path=str(self.root / "nowhere"))
+        self.assertEqual(code, 2)
+        self.assertEqual(calls["execve"], [])
+
+    def test_an_exec_that_fails_says_how_to_run_it_by_hand(self):
+        def boom(prog, argv, env):
+            raise OSError(2, "No such file")
+        out, stdin = Tty(), Tty()
+        code = start.start(self.config, self.state, None, run=FakeRun(), out=out, bw_path=self.bw, env=self.env, now=NOW,
+                           verify=False, update=False, stdin=stdin, cwd=str(self.repo), width=88,
+                           chdir=lambda d: None, execve=boom)
+        self.assertEqual(code, 1)
+        self.assertIn("could not start the lead here (FileNotFoundError", out.getvalue())
+        (line,) = [ln for ln in out.getvalue().splitlines() if "run it yourself" in ln]  # one line, never wrapped
+        self.assertIn(f"run it yourself: cd {shlex.quote(str(self.repo))} && env ", line)
+        self.assertTrue(line.endswith(" lead"), line)
+
+    def test_dry_run_says_what_it_would_start_here(self):
+        run = FakeRun()
+        code, out, calls = self.here_start(run, dry_run=True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(calls["execve"], [])
+        cmd = shlex.join(["env", "BALANCEWHEEL_CONFIG=/cfg dir/c.json", f"BW_STATE_DIR={self.state}", self.bw, "lead"])
+        self.assertIn(f"  · would start the lead here: {cmd}", out.splitlines())  # one literal line, never wrapped
+        self.assertNotIn("starting here", out)  # a dry run starts nothing
+        self.assertNotIn(".command", out)
+        self.assertEqual({a[0] for a in run.argvs()}, {"git"})
+        self.assertFalse(os.path.exists(self.state))
+
+    def test_dry_run_in_a_pipe_keeps_the_tab_plan(self):
+        code, out, calls = self.here_start(FakeRun(), dry_run=True, out_tty=False)
+        self.assertIn("bw start: would run: open -a Terminal", out)
+        self.assertNotIn("would start the lead here", out)
+
+    def test_plain_here_start_says_so_with_the_prefix(self):
+        out = io.StringIO()
+        out.isatty = lambda: True  # a terminal on stdout, plain layout asked for
+        calls = []
+        code = start.start(self.config, self.state, None, run=FakeRun(), out=out, bw_path=self.bw, env=self.env, now=NOW,
+                           verify=False, update=False, stdin=Tty(), cwd=str(self.repo), tty=False,
+                           chdir=lambda d: None, execve=lambda *a: calls.append(a))
+        self.assertEqual(len(calls), 1)
+        self.assertIn("bw start: lead: lp (first in the profile's lead order), starting here", out.getvalue())
 
 
 HOLDER = """

@@ -10,3 +10,7 @@ node-compile-cache/
 
 # the types Claude Code writes into a plugin folder it loads (PD-11)
 claude/live-pane/.claude-plugin/types/
+
+# Claude Code: its worktree checkouts and write-scratch dir (not project config)
+.claude/worktrees/
+.claude/.cc-writes/

@@ -189,6 +189,36 @@ class Reverify(unittest.TestCase):
         for item in verify.reverify(REVERIFY_CONFIG, self.state, "pi", NOW, run=FakeRun("PASS — evidence in /e")):
             self.assertEqual(item.runtime, "pi")
 
+    def test_a_held_lock_is_said_before_the_wait(self):
+        import threading
+        from lead.locks import RuntimeLock
+        said, waiting = [], threading.Event()
+
+        def on_lock_wait(rt):
+            said.append(rt)
+            waiting.set()
+            return lambda: said.append("taken")
+
+        update = RuntimeLock(self.state, "pi")
+        self.assertTrue(update.try_exclusive())  # an update holds the lock
+        out = []
+        t = threading.Thread(target=lambda: out.extend(verify.reverify(
+            REVERIFY_CONFIG, self.state, "pi", NOW, run=FakeRun("PASS — evidence in /e"), on_lock_wait=on_lock_wait)))
+        t.start()
+        self.assertTrue(waiting.wait(5))
+        self.assertTrue(t.is_alive())  # still blocked on the lock
+        update.release()
+        t.join(10)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(said, ["pi", "taken"])
+        self.assertTrue(out)
+
+    def test_a_free_lock_is_not_reported(self):
+        said = []
+        verify.reverify(REVERIFY_CONFIG, self.state, "pi", NOW, run=FakeRun("PASS — evidence in /e"),
+                        on_lock_wait=said.append)
+        self.assertEqual(said, [])
+
     def test_lead_runtimes_lists_each_runtime_once(self):
         self.assertEqual(sorted(verify.lead_runtimes(REVERIFY_CONFIG)), ["agy", "codex", "kimi", "pi"])
 
@@ -238,6 +268,56 @@ class Reverify(unittest.TestCase):
         items = verify.reverify(REVERIFY_CONFIG, self.state, "agy", NOW, run=run)
         self.assertEqual([(i.kind, i.state, i.reason) for i in items], [("guard", "pending", guardpkg.AGY_AWAITS)])
         self.assertEqual(self.attacks(run), [])
+
+    def test_on_attack_is_told_once_before_the_first_attack_with_each_kind_and_why(self):
+        seen = []
+        order = []
+
+        class Run(FakeRun):
+            def __call__(self, argv, timeout, *a, **kw):
+                if argv[0].endswith(".sh"):
+                    order.append(("attack", len(seen)))
+                return super().__call__(argv, timeout, *a, **kw)
+        run = Run("PASS — evidence in /e")
+        verify.reverify(REVERIFY_CONFIG, self.state, "pi", NOW, run=run, on_attack=lambda rt, todo: seen.append((rt, todo)))
+        self.assertEqual(seen, [("pi", [("containment", "never tested"), ("guard", "never tested")])])
+        self.assertTrue(order and all(n == 1 for _, n in order), order)  # every attack came after the call
+
+    def test_on_attack_says_why_a_recorded_key_no_longer_matches(self):
+        self.record_current("containment", "kimi")  # recorded while the tool read "tool 1.0"
+        run = FakeRun("PASS", after="tool 2.0")
+        run.attacked = True  # every version read now says "tool 2.0": the tool updated
+        seen = []
+        verify.reverify(REVERIFY_CONFIG, self.state, "kimi", NOW, run=run, on_attack=lambda rt, todo: seen.append(todo))
+        self.assertEqual(seen, [[("containment", "version changed")]])
+        with open(os.path.join(self.state, "containment.json")) as f:
+            recorded = json.load(f)["kimi"]["key"]  # the pass this run recorded
+        self.assertEqual(containment.change_reason(self.state, "kimi", dict(recorded, adapter_sha="zz")), "settings changed")
+        self.assertEqual(containment.change_reason(self.state, "kimi", dict(recorded, runtime_version="tool 3")), "version changed")
+        self.assertEqual(containment.change_reason(self.state, "nobody", recorded), "never tested")
+
+    def test_a_cap_that_appears_during_the_first_attack_stops_the_second(self):
+        cap = self.cap
+
+        class Capping(FakeRun):
+            def __call__(inner, argv, timeout, *a, **kw):
+                res = super().__call__(argv, timeout, *a, **kw)
+                if argv[0].endswith(".sh") and len(self.attacks(inner)) == 1:
+                    cap("p", NOW + 3600)  # the guard lead's plan runs out while the containment attack runs
+                return res
+        run = Capping("PASS — evidence in /e")
+        items = verify.reverify(REVERIFY_CONFIG, self.state, "pi", NOW, run=run)
+        self.assertEqual([(i.kind, i.state) for i in items], [("containment", "passed"), ("guard", "pending")])
+        self.assertIn("plan p capped until", items[1].reason)
+        self.assertEqual(len(self.attacks(run)), 1)
+
+    def test_on_attack_is_not_called_for_verified_or_pending_items(self):
+        seen = []
+        self.record_current("containment", "kimi")
+        verify.reverify(REVERIFY_CONFIG, self.state, "kimi", NOW, run=FakeRun("PASS"), on_attack=lambda *a: seen.append(a))
+        verify.reverify(REVERIFY_CONFIG, self.state, "pi", NOW, run=FakeRun("PASS"), allow_run=False,
+                        on_attack=lambda *a: seen.append(a))
+        self.assertEqual(seen, [])
 
     def test_changed_key_runs_the_attack_and_records_the_pass(self):
         run = FakeRun("PASS — evidence in /e")

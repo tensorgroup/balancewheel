@@ -76,10 +76,37 @@ def _failure_detail(r):
     return f"exit {r.rc}" + (f": {first}" if first else "")
 
 
-def _update_one(name, tool_cfg, state, now, interval_s, previous, run):
+def interval_seconds(config):
+    return int((config.get("updates") or {}).get("min_interval_hours", 0)) * 3600
+
+
+def _last_update_at(previous, name):
+    """When `name` was last updated, from start.json's history; a damaged entry counts as missing."""
+    entry = (previous or {}).get(name)
+    return entry.get("last_update_at") if isinstance(entry, dict) else None
+
+
+def will_update(name, tool_cfg, previous, now, interval_s) -> bool:
+    """Whether `_update_one` would run this tool's update command (a lock held by a running lead is
+    not known until it tries). It lets `bw start` say what it is about to wait for."""
+    tool_cfg = tool_cfg or {}
+    if tool_cfg.get("self_updating") or not tool_cfg.get("update"):
+        return False
+    prev_at = _last_update_at(previous, name)
+    if interval_s and isinstance(prev_at, (int, float)) and now - prev_at < interval_s:
+        return False
+    return tool_runtime(name, tool_cfg) is not None or name in NON_RUNTIME_TOOLS
+
+
+def will_update_names(config, previous, now) -> list:
+    interval_s = interval_seconds(config)
+    return [n for n, t in orca.active_tools(config).items() if will_update(n, t, previous, now, interval_s)]
+
+
+def _update_one(name, tool_cfg, state, now, interval_s, previous, run, on_start=None):
     """-> (ToolResult, last_update_at)."""
     t0 = time.monotonic()
-    prev_at = (previous.get(name) or {}).get("last_update_at")
+    prev_at = _last_update_at(previous, name)
     rt = tool_runtime(name, tool_cfg)
 
     def done(before, after, result, detail, at=prev_at):
@@ -104,6 +131,8 @@ def _update_one(name, tool_cfg, state, now, interval_s, previous, run):
             v = read_version(name, tool_cfg, run)
             return done(v, v, "skipped-locked", f"{rt} is in use (a lead or a verification holds its lock)")
         before = read_version(name, tool_cfg, run)
+        if on_start is not None:
+            on_start(name)
         r = run(list(tool_cfg["update"]), tool_cfg.get("timeout_s", DEFAULT_UPDATE_TIMEOUT_S))
         after = read_version(name, tool_cfg, run)
         if r.timed_out:
@@ -121,14 +150,15 @@ def _update_one(name, tool_cfg, state, now, interval_s, previous, run):
             lock.release()
 
 
-def update_all(config, state, now, run=proc.run, on_done=None, previous=None) -> dict:
+def update_all(config, state, now, run=proc.run, on_done=None, previous=None, on_start=None) -> dict:
     """Update every configured tool; -> {tool: ToolResult as dict + "last_update_at"}.
 
     One worker per installer (tools without an update command each get their own); `on_done`
-    is called in the calling thread with each ToolResult as that tool finishes."""
+    is called in the calling thread with each ToolResult as that tool finishes; `on_start(name)` is
+    called in the worker just before that tool's update command runs."""
     tools = orca.active_tools(config)
     previous = previous or {}
-    interval_s = int((config.get("updates") or {}).get("min_interval_hours", 0)) * 3600
+    interval_s = interval_seconds(config)
     groups = {}
     for name, tcfg in tools.items():
         inst = installer_of(tcfg)
@@ -138,7 +168,7 @@ def update_all(config, state, now, run=proc.run, on_done=None, previous=None) ->
     def work(names):
         for name in names:
             try:
-                done_q.put(_update_one(name, tools[name] or {}, state, now, interval_s, previous, run))
+                done_q.put(_update_one(name, tools[name] or {}, state, now, interval_s, previous, run, on_start))
             except Exception as e:  # never raise out of a worker: the tool is reported, the rest go on
                 rt = tool_runtime(name, tools[name])
                 done_q.put((ToolResult(name, rt, UNREADABLE, UNREADABLE, "failed",

@@ -146,6 +146,8 @@ class ChecksLinesTest(unittest.TestCase):
         cs = [checks.Check("a", "ok", ""), checks.Check("b", "warn", "bad"), checks.Check("c", "unknown", "?")]
         self.assertEqual(checks.lines("t", cs), ["  b: warn — bad", "  c: unknown — ?"])
         self.assertEqual(checks.lines("t", cs[:1]), ["t: ok"])
+        self.assertEqual(checks.marked("t", cs), [("warn", "b: warn — bad"), ("unknown", "c: unknown — ?")])
+        self.assertEqual(checks.marked("t", cs[:1]), [("ok", "t: ok")])
 
 
 class SetupCommandTest(unittest.TestCase):

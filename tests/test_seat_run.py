@@ -174,10 +174,10 @@ class SeatRun(unittest.TestCase):
         row = self.usage()[-1]
         self.assertEqual({k: row[k] for k in ("type", "seat", "model", "mode", "dir", "ok", "reason", "session_id",
                                               "tokens_in", "tokens_out")},
-                         {"type": "usage", "seat": "astra", "model": "gpt-6-astra", "mode": "new", "dir": self.wt,
+                         {"type": "usage", "seat": "astra", "model": "gpt-6.2-astra", "mode": "new", "dir": self.wt,
                           "ok": True, "reason": "ok", "session_id": "sess-0001", "tokens_in": 1200, "tokens_out": 300})
         self.assertNotIn("stand_in_for", row); self.assertNotIn("cost_usd", row)
-        self.assertEqual(sessions.get(self.state, "astra", self.wt, "gpt-6-astra"), "sess-0001")
+        self.assertEqual(sessions.get(self.state, "astra", self.wt, "gpt-6.2-astra"), "sess-0001")
         self.assertEqual(len(self.usage()), 1)
 
     def test_lock_before_verification(self):  # R2
@@ -271,7 +271,7 @@ class SeatRun(unittest.TestCase):
         r = self.seat(resume=True)
         self.assertEqual(r.mode, "new")
         self.assertEqual(self.said, [f"bw seat: no session for astra in {self.wt}; starting a new one"])
-        sessions.put(self.state, "astra", self.wt, "s1", "gpt-6-astra", time.time())
+        sessions.put(self.state, "astra", self.wt, "s1", "gpt-6.2-astra", time.time())
         self.fake.queue("codex", "resume")
         r = self.seat(resume=True, brief=True, prompt="again")
         self.assertEqual(r.mode, "resume")
@@ -280,7 +280,7 @@ class SeatRun(unittest.TestCase):
         self.assertEqual(self.fake.stdin, "again")  # a resume gets the prompt only
 
     def test_explicit_session(self):
-        sessions.put(self.state, "astra", self.wt, "s1", "gpt-6-astra", time.time())
+        sessions.put(self.state, "astra", self.wt, "s1", "gpt-6.2-astra", time.time())
         r = self.seat(session_id="p1", resume=True)
         self.assertEqual(r.mode, "resume")
         self.assertIn("p1", self.fake.argv); self.assertNotIn("s1", self.fake.argv)
@@ -700,7 +700,7 @@ class SeatRun(unittest.TestCase):
         self.assertTrue(runs.RUN_ID.fullmatch(s["run_id"]))
         self.assertEqual((s["seat"], s["source"], s["pid"], s["host"], s["dir"]),
                          ("astra", "bw", os.getpid(), socket.gethostname(), self.wt))
-        self.assertEqual((s["model"], s["label"]), ("gpt-6-astra", "review x"))
+        self.assertEqual((s["model"], s["label"]), ("gpt-6.2-astra", "review x"))
         self.assertEqual((e["ok"], e["reason"], e["seat"], e["dir"]), (True, None, "astra", self.wt))
         self.assertIsInstance(e["duration_s"], float)
         u = self.usage()[-1]

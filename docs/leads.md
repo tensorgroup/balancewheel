@@ -1,6 +1,13 @@
 # Leads and rotation (`bw`, since 2026-10-24)
 
-*Written 2026-11-24: moved here, unchanged, from the README's "Leads and rotation" section, so the README
+*Updated 2026-11-27: `canvas: "ghostty"` (a Ghostty tab instead of a Terminal tab); a Claude Code lead gets the
+lead protocol as a system prompt and `--add-dir` for the checkpoint dir; `bw start` prints sections with marks on
+a terminal, says what it is waiting for before a slow step and every 15 s while it runs, says when a check waits
+for a runtime lock, lists the repositories to start when the folder is not one, and starts the lead in this
+terminal when you run it there with no path; it also pulls its own install clone and starts again on a new
+version. `bw lead` prints nothing into a running lead's terminal; a new
+question sends a desktop notification instead.
+Written 2026-11-24: moved here, unchanged, from the README's "Leads and rotation" section, so the README
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
 Corrected the same day after review: the panel's summary line, the `bw start` prefix of the seat-check
@@ -75,6 +82,14 @@ once for each bw-contained lead runtime.
   `$BW_CHECKPOINT` that `bw` picks up).
 - **One lead per worktree.** A lock the lead itself holds; a crashed `bw` cannot let a
   second writable agent in.
+- **The lead protocol (since 2026-11-27).** Every lead is told how to keep a checkpoint, how to
+  ask you something, how to take a handoff, and (with panel checkpoints) how to convene a panel
+  (`lead/protocol/`). A Claude Code lead gets that text as a system prompt
+  (`--append-system-prompt`), so the first thing you see in its session is not the rules. Its
+  first message is only the handoff from a previous lead, and there is none for a fresh lead.
+  Every other runtime gets the protocol and the handoff together as its first prompt. A
+  Claude Code lead also gets `--add-dir` for the checkpoint dir, so its Write tool can save the
+  checkpoint.
 - **Containment.** Claude Code, Codex, and agy run with their own sandboxes and your real
   configuration (`contained by self`); whether they prompt is their lead's `autonomy`
   (next bullet). pi and Kimi run under
@@ -208,10 +223,24 @@ once for each bw-contained lead runtime.
     Another agent runtime started by the lead (a second `claude`, `codex`, or `pi`) is
     outside the guard: it is gray, so it asks, and what it does inside is not judged.
     When the guard is acting, a false block is worked around by hand, outside the lead.
-- **`bw start [path] [--dry-run] [--no-update] [--no-verify]` (since 2026-10-25).** One command
-  to begin a session in a project (the path defaults to the current directory). It refuses
+- **`bw start [path] [--dry-run] [--no-update] [--no-self-update] [--no-verify] [--tab]` (since 2026-10-25).** One command
+  to begin a session in a project (the path defaults to the current directory; a new repository needs
+  only `git init`, no commit). When the folder is not in a git repository, it says so and lists the
+  repositories directly under it as `bw start <path>` commands, most recently used first. It refuses
   when `bw` itself lives inside the target worktree or its git directory (a lead could edit
   the next `bw lead`), then:
+  0. **updates bw itself**: `git pull --ff-only` on the clone `bin/bw` runs from, so only commits
+     already pushed to its branch's upstream arrive. It skips, and says why, when that clone has
+     local changes to tracked files, a detached HEAD, or no upstream; a history that diverged fails
+     and changes nothing. Git runs without your shell's `GIT_*` variables and never asks for a
+     password. When a new version arrives, `bw start` starts again once on it, so every later step,
+     the containment checks too, runs the new code. `--no-self-update` skips only this step,
+     `--no-update` skips it with the tool updates, and `updates.self_update: false` in the config
+     turns it off for good; `--dry-run` prints the command. This runs the newest commit on the
+     branch you track, unreviewed by you: track a branch you trust, or turn it off. A lead that is
+     already running in another tab keeps the code it started with. Do not point `bw` at a
+     checkout you edit: a lead could edit the next `bw lead`, and bw refuses to start a lead in the
+     repository it runs from.
   1. **updates every tool you configured** under `tools` (`update`, `version`, `app`,
      `runtime`, `self_updating`, `timeout_s`; an unknown key under a tool warns), in parallel
      across installers and one after another within one (two Homebrew casks, two npm
@@ -229,8 +258,19 @@ once for each bw-contained lead runtime.
   3. **reads and shows the quota** of every plan the profile touches (OpenRouter's key
      endpoint and, for a plan that maps it, Orca's cache; see "Quota sources") and the lead it
      would start.
-  4. **opens the worktree.** By default it opens a Terminal tab, through a small `.command`
-     file under the state dir's `start/` that `open -a Terminal` runs. With `canvas: "orca"`
+  4. **opens the worktree.** When stdin and stdout are terminals and the target is the worktree
+     of your current directory (you gave no path, or a path inside it), it starts the lead **in
+     this terminal**: it does every other step first, prints `starting here` on the lead line,
+     then changes into the worktree and replaces itself with `bw lead`, with the same
+     `BALANCEWHEEL_CONFIG` and `BW_STATE_DIR` the `.command` file exports. Its `--dry-run` says
+     `would start the lead here: <command>`. A worktree that already has a lead is not started
+     again. It does this only when `bw start` owns the terminal (a job started with `&` does not,
+     and is not allowed to take it from the shell). For any other path, without a terminal (a pipe,
+     a script), or with `--tab`, it opens the lead on the canvas: by default a Terminal tab, through a small `.command`
+     file under the state dir's `start/` that `open -a Terminal` runs. With `canvas: "ghostty"`,
+     it opens a Ghostty tab that runs the same file through your login shell, by Ghostty's
+     AppleScript (checked on Ghostty 1.4; the first run asks for macOS Automation access to
+     Ghostty). When that fails, it falls back to the Terminal tab and says why first. With `canvas: "orca"`
      and Orca running, it opens an Orca pane titled `<worktree basename> lead` instead, through
      `orca terminal create --worktree path:<worktree> --command "<bw> lead"`; when
      `orca terminal create` fails, it falls back to the Terminal tab (bw says so first). A
@@ -238,6 +278,22 @@ once for each bw-contained lead runtime.
      `orca_provider`. If no canvas works, bw prints the command and exits 1. A
      worktree that already has a lead is not opened again. `bw start` never starts the
      cockpit; it prints the `bw cockpit` hint.
+
+  **What `bw start` prints.** On a terminal it prints a header and the sections Updates, Checks,
+  Quota, Lead, and Also. A `✓` is a pass, a `✗` is a failure, a `·` is information, and a `…`
+  is a wait. Paths under your home directory print with `~`. Before a slow step it prints a `…`
+  line that says what it is doing. Before the tool updates, it names the tools. Before a
+  sandbox or guard attack test, it names the test, says it takes about a minute and uses a
+  little model quota, gives the reason (the test never ran, the tool's version changed, or its
+  settings changed), and asks you to wait. When a check must wait for its runtime's lock, because an
+  update of that runtime holds it (another `bw start`, say), it says so. While any of these still runs,
+  it prints `… still waiting on: <part> (<time>)` every 15 s, for example
+  `still waiting on: codex update (45s), pi checks (1m 30s)`. When nothing slow runs, it prints no wait line.
+  Quota lines are in plain words: `63% left in the 7-day window`,
+  `78% left in the 5-hour window`, `19% of the monthly budget used` for an OpenRouter budget,
+  the source of the reading, and its age (`read just now`, `read 12 min ago`). When stdout is
+  not a terminal (a pipe or a file), it prints the same facts as plain lines that start with
+  `bw start: `, with no header, no sections, and no marks.
 
   Runs are recorded in `start.json` in the state dir (`bw status` shows the `last start:`
   line). `--dry-run` runs only git (and `orca status` when the canvas is Orca) and changes nothing. **Runtime locks:**
@@ -314,7 +370,12 @@ once for each bw-contained lead runtime.
   handoff. `bw inbox` lists open asks and bw's own notices (all leads capped, a pinned lead
   capped, a guard that could not be reached, an ingest problem); `--project` limits it to
   this worktree and `--all` adds answered ones. `bw answer <id> "<text>"` answers an ask or
-  closes a notice, and `bw status` shows open items. Answers reach the lead through a file
+  closes a notice, and `bw status` shows open items. While a lead runs, `bw lead` prints nothing
+  into its terminal: a full-screen lead draws over the line, and your typing lands on top of it.
+  It keeps its lines and prints them under `bw: while the lead ran:` when the lead exits. A new
+  question also sends a desktop notification (`osascript` on macOS, `notify-send` elsewhere when
+  it is installed), so you see it while the lead runs. The notification shows the first line of the
+  question, and it can show on a locked screen. Answers reach the lead through a file
   bw rewrites (`BW_INBOX`, `inbox-view/<worktree-key>/answers.md`) that holds **only your answers**,
   never ask text, and that the lead can read but not write, so everything in it is your words; a
   lead cannot read another worktree's answers or the inbox record itself. Whatever a lead
@@ -469,8 +530,8 @@ once for each bw-contained lead runtime.
    lead to end the session; `bw guard review` later shows what a guarded lead's guard
    logged.
 6. **Seats.** You do not need `bw seat` in normal use: the panel runs the seats. `bw start`
-   checks changed seats in the background after the lead opens. It prints `bw start: checking
-   seats in the background (log: <path>)`. `bw seat verify` does the same check by hand, and
+   checks changed seats in the background after the lead opens. It prints `seats: checking in the
+   background. Log: <path>`. `bw seat verify` does the same check by hand, and
    `bw seat list` shows the state of each seat. Each seat has its own login step:
    - **Claude seat.** The keychain login does not carry over to the seat's private home. Run
      `claude setup-token` once. Export `CLAUDE_CODE_OAUTH_TOKEN` in the shell that runs `bw`.

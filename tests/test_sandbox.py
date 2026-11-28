@@ -245,11 +245,10 @@ class Grants(unittest.TestCase):
     def test_self_contained_leads_can_write_their_checkpoint_dir(self):
         from lead.runtimes import ADAPTERS
         lead = {"model": "m", "plan": "p"}
-        for rt in ("codex", "agy"):
+        for rt in ("codex", "agy", "claude-code"):  # Claude Code's Write tool needs it too
             argv = ADAPTERS[rt].argv(lead, "hi", ["/state/handoffs/k"])
             i = argv.index("--add-dir")
             self.assertEqual(argv[i + 1], "/state/handoffs/k", rt)
-        self.assertNotIn("--add-dir", ADAPTERS["claude-code"].argv(lead, "hi", ["/state/handoffs/k"]))
 
     def test_quote_in_path_refused(self):
         with self.assertRaises(ValueError):

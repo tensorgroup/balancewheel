@@ -9,3 +9,11 @@ def lines(title, checks):
     if not bad:
         return [f"{title}: ok"]
     return [f"  {c.name}: {c.state} — {c.detail}" for c in bad]
+
+
+def marked(title, checks):
+    """`lines`, each with the state it reports: [(state, text)]; state is "ok", "warn", or "unknown"."""
+    bad = [c for c in checks if c.state != "ok"]
+    if not bad:
+        return [("ok", f"{title}: ok")]
+    return [(c.state, f"{c.name}: {c.state} — {c.detail}") for c in bad]

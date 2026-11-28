@@ -1,4 +1,4 @@
-import json, os, pty, signal, subprocess, sys, tempfile, threading, time, unittest
+import io, json, os, pty, signal, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -970,7 +970,8 @@ class TriageDrain(unittest.TestCase):
         self.inbox = inbox
         self.said, self.logged = [], []
         project = mock.Mock(worktree_key="k", worktree="/w", profile="p")
-        self.ctx = mock.Mock(state=self.state, project=project, say=self.said.append, log=self.logged.append,
+        self.ctx = mock.Mock(state=self.state, project=project, say=lambda m, alert=False: self.said.append(m),
+                             log=self.logged.append,
                              config={"triage": {"mode": {"p": "acting"}, "model": "m", "key_env": "K", "thresholds": {}}})
         self.ctx.notice.return_value = None
         self.s = runner.Session.__new__(runner.Session)
@@ -1241,6 +1242,93 @@ class PromptFile(RunnerCase):
         self.assertEqual(p.returncode, 0, out)
         self.assertEqual(canary.read_text(), "untouched")
         self.assertFalse(os.path.islink(d / "first-prompt.md"))
+
+
+class SystemProtocol(RunnerCase):
+    """A runtime that takes the protocol as a system prompt: the first prompt is only the handoff."""
+
+    def run_lead(self, **kw):
+        p = self.start("--system-protocol", "codex", env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        return self.fake("a")["argv"]
+
+    def test_the_protocol_is_the_system_prompt_and_a_fresh_lead_gets_no_first_prompt(self):
+        argv = self.run_lead()
+        self.assertEqual(argv[2], "--system")
+        self.assertEqual(len(argv), 4, argv)  # no first prompt: nothing between the model and --system
+        self.assertIn("You are the lead for this worktree", argv[3])
+        self.assertIn("If the first message starts with `@next handoff`", argv[3])
+        self.assertNotIn("follows this message", argv[3])
+
+    def test_another_runtime_still_gets_the_protocol_as_its_first_prompt(self):
+        p = self.start("--system-protocol", "pi", env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        argv = self.fake("a")["argv"]
+        self.assertNotIn("--system", argv)
+        self.assertIn("You are the lead for this worktree", argv[2])
+        self.assertIn("If a handoff follows this message", argv[2])
+
+    def test_a_handoff_is_the_only_first_prompt(self):
+        p = self.start("--system-protocol", "pi", env={"FAKE_MODE_a": "ignore_term", "FAKE_MODE_b": "exit"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        self.assertEqual(p.wait(20), 0, p.stdout.read())
+        argv = self.fake("b")["argv"]  # lead b is pi: it takes the protocol as a system prompt
+        self.assertEqual(argv[2][:13], "@next handoff", argv)
+        self.assertEqual(argv[3], "--system")
+        self.assertIn("You are the lead for this worktree", argv[4])
+        self.assertNotIn("You are the lead", argv[2])
+
+
+class RealClaudeAdapter(RunnerCase):
+    """The real claude-code adapter through Session._launch, with Popen stopped before it starts anything."""
+
+    def config(self, root):
+        c = super().config(root)
+        c["leads"]["la"] = {"runtime": "claude-code", "model": "opus", "plan": "pa",
+                            "args": ["--append-system-prompt", "my own rule"]}
+        return c
+
+    def launched_argv(self, handoff):
+        import io
+        from lead.paths import load_config
+        from lead.projects import resolve_project
+        config = load_config(str(self.cfg))
+        project = resolve_project(str(self.repo), config)
+        ctx = runner.Context(config, str(self.state), project, runner.Lock(str(self.state), project.worktree_key),
+                             {"claude-code": runner.ADAPTERS["claude-code"]}, "sandbox-exec", io.StringIO())
+        got = {}
+
+        class Stop(Exception):
+            pass
+
+        real = subprocess.Popen
+
+        def popen(argv, *a, **kw):
+            if argv[0] != "claude":  # git, and anything else bw runs, is real
+                return real(argv, *a, **kw)
+            got["argv"] = argv
+            raise Stop
+
+        with mock.patch.object(runner.subprocess, "Popen", popen), self.assertRaises(Stop):
+            runner.Session(ctx, "la", handoff)
+        os.close(ctx.lock.fd)
+        return got["argv"]
+
+    def test_the_protocol_rides_in_one_append_system_prompt_with_the_users_text_after_it(self):
+        argv = self.launched_argv("@next handoff\nbranch: x")
+        self.assertEqual(argv.count("--append-system-prompt"), 1, argv)
+        system = argv[argv.index("--append-system-prompt") + 1]
+        self.assertTrue(system.startswith("You are the lead for this worktree"), system[:80])
+        self.assertTrue(system.endswith("\n\nmy own rule"))
+        self.assertEqual(argv[-2:], ["--", "@next handoff\nbranch: x"])  # the handoff alone is the first prompt
+        self.assertIn("--add-dir", argv)
+
+    def test_a_fresh_lead_has_no_first_prompt_at_all(self):
+        argv = self.launched_argv(None)
+        self.assertNotIn("--", argv)
+        self.assertEqual(argv[argv.index("--append-system-prompt") + 2:], [])  # nothing after the flag's value
+        self.assertTrue(argv[-1].endswith("my own rule"))
 
 
 class PinnedPlanRefresh(RunnerCase):
@@ -1671,6 +1759,34 @@ class LivePaneRunner(RunnerCase):
         self.assertIn(claude_pane.INSTALL, calls)
         self.assertEqual(len([ln for ln in out.splitlines() if "live pane" in ln]), 1, out)
 
+    def test_the_pane_line_prints_before_the_lead_owns_the_terminal(self):
+        # On a terminal, a line said while the lead owns it is held until the lead ends ("while the lead
+        # ran:"); the pane check runs before the lead starts, so its line prints at once, before the lead.
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.environ.update(self.env, FAKE_MODE_a="exit", **self.fake_state())
+            os.execv(sys.executable, [sys.executable, DRIVER, str(self.cfg), str(self.repo)])
+        buf = b""
+        end = time.time() + 30
+        while time.time() < end:
+            try:
+                chunk = os.read(fd, 1024)
+            except OSError:
+                break
+            if not chunk:
+                break
+            buf += chunk
+        _, status = os.waitpid(pid, 0)
+        out = buf.decode(errors="replace").replace("\r\n", "\n")
+        self.assertEqual(os.waitstatus_to_exitcode(status), 0, out)
+        self.assertTrue(self.fake("a")["foreground"], "lead did not get the terminal")
+        lines = out.splitlines()
+        (pane,) = [i for i, ln in enumerate(lines) if "live pane" in ln]
+        self.assertTrue(lines[pane].startswith("bw: "), out)  # not indented: not a held line
+        self.assertLess(pane, lines.index("FAKE a started"), out)
+        held = [i for i, ln in enumerate(lines) if ln == "bw: while the lead ran:"]
+        self.assertTrue(all(pane < i for i in held), out)
+
     def test_claude_pane_false_calls_nothing(self):
         cfg = json.loads(self.cfg.read_text())
         cfg["schema_version"] = 3
@@ -1706,3 +1822,53 @@ class LivePaneRunner(RunnerCase):
         self.assertEqual(p.wait(15), 0, p.stdout.read())
         self.assertIsNotNone(self.fake("a"))
         self.assertEqual(self.claude_calls(), [])
+
+
+class HeldOutput(unittest.TestCase):
+    """bw lead prints nothing into a terminal a lead owns: a full-screen lead draws over the line and
+    the user's typing lands on top of it. Lines wait, and print when bw has the terminal back."""
+
+    def setUp(self):
+        from lead import runner
+        self.out = io.StringIO()
+        self.ctx = runner.Context({"leads": {}}, "/nonexistent", None, None, {}, "sandbox-exec", self.out)
+        self.ctx.tty = 99  # a terminal; tcsetpgrp is patched
+        self.sent = []
+        self.ctx.notify = lambda title, text: self.sent.append((title, text))  # returns None: nothing to reap
+        p = mock.patch("lead.runner.os.tcsetpgrp")
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_lines_wait_while_the_lead_owns_the_terminal_and_print_after(self):
+        self.ctx.say("bw: before")
+        self.ctx.give_terminal(1234)
+        self.ctx.say("bw: during")
+        self.assertEqual(self.out.getvalue(), "bw: before\n")
+        self.ctx.take_terminal()
+        self.assertEqual(self.out.getvalue(), "bw: before\nbw: while the lead ran:\n  bw: during\n")
+        self.ctx.say("bw: after")
+        self.assertTrue(self.out.getvalue().endswith("bw: after\n"))
+
+    def test_a_question_sends_a_desktop_notification_while_held(self):
+        self.ctx.give_terminal(1234)
+        self.ctx.say('bw: lead asks [a1]: When? — answer with bw answer a1 "…"', alert=True)
+        self.assertEqual(self.sent, [("bw", 'lead asks [a1]: When? — answer with bw answer a1 "…"')])
+        self.ctx.take_terminal()
+        self.ctx.say("bw: lead asks again", alert=True)  # bw owns the terminal: printed, no notification
+        self.assertEqual(len(self.sent), 1)
+
+    def test_no_terminal_prints_at_once(self):
+        self.ctx.tty = None
+        self.ctx.give_terminal(1234)
+        self.ctx.say("bw: piped")
+        self.assertEqual(self.out.getvalue(), "bw: piped\n")
+
+    def test_held_lines_are_bounded(self):
+        from lead import runner
+        self.ctx.give_terminal(1234)
+        for i in range(runner.HELD_MAX + 50):
+            self.ctx.say(f"bw: {i}")
+        self.ctx.take_terminal()
+        lines = self.out.getvalue().splitlines()
+        self.assertEqual(len(lines), 1 + runner.HELD_MAX + 1)
+        self.assertIn("more lines were dropped", lines[-1])

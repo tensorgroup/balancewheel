@@ -19,6 +19,8 @@ process, append {"runtime", "exclusive"} to FAKE_OUT/verify-lock.jsonl, and coun
 FAKE_OUT/orca-calls.jsonl) and reports Orca's version as 9.9.9-test; without it any `orca` call fails.
 --orca-raise makes every `orca ...` shell-out (still appended to orca-calls.jsonl) raise OSError.
 --missing-binary RUNTIME makes that runtime's argv a binary that does not exist (Popen raises FileNotFoundError).
+--system-protocol RUNTIME makes that runtime's fake adapter take the protocol as a system prompt (as Claude Code does):
+the fake's argv then ends with `--system <text>`, and its first prompt is only the handoff, if any.
 --prompt-file gives every fake adapter prompt_mode "file" (bw writes the first prompt for the user to paste).
 --count-refresh appends one line to FAKE_OUT/refresh-calls.jsonl per probes.refresh call (which still runs).
 --panel-notice-raises makes every inbox notice of kind `panel` raise OSError.
@@ -51,17 +53,20 @@ auto = "--auto" in args
 bw_rt = args[args.index("--contained-by-bw") + 1] if "--contained-by-bw" in args else None
 guard_rt = args[args.index("--guard") + 1] if "--guard" in args else None
 missing_rt = args[args.index("--missing-binary") + 1] if "--missing-binary" in args else None
+system_rt = args[args.index("--system-protocol") + 1] if "--system-protocol" in args else None
 
 
 def fake(rt):
     return Adapter(
-        argv=lambda lead, prompt, writable=(), client_dir=None: (
+        argv=lambda lead, prompt, writable=(), client_dir=None, system_prompt=None: (
             ["/nonexistent/bw-fake-missing-binary"] if rt == missing_rt else
-            [sys.executable, str(HERE / "fake_lead.py"), lead["model"]] + ([prompt] if prompt else [])),
+            [sys.executable, str(HERE / "fake_lead.py"), lead["model"]] + ([prompt] if prompt else [])
+            + (["--system", system_prompt] if system_prompt else [])),
         contained_by="bw" if rt == bw_rt else "self",
         grants=lambda lead, client_dir=None: RuntimeGrants([], [os.environ["FAKE_OUT"]] if rt == bw_rt else [], {}, False),
         prompt_mode="file" if "--prompt-file" in args else "arg",
-        version_argv=[sys.executable, "--version"], verify_argv=None, verify_flags=lambda lead: [])
+        version_argv=[sys.executable, "--version"], verify_argv=None, verify_flags=lambda lead: [],
+        system_protocol=rt == system_rt)
 
 
 adapters = {rt: fake(rt) for rt in ("claude-code", "codex", "agy", "pi", "kimi")}

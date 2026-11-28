@@ -230,6 +230,25 @@ def evaluate(config, state, runtime, run=None):
     return key, result
 
 
+def will_run(config, state, runtime, allow_run=True, now=None):
+    """Why `ensure` would call the judge model now (so `bw start` can say it is about to wait), or None when
+    it would not: cached, retried only once a day, skipped for agy, or `allow_run` false."""
+    if (runtime == "agy" and not AGY_SPIKE_PASSED) or not allow_run:
+        return None
+    now = time.time() if now is None else now
+    _, set_hash = load_set()
+    key = eval_key(runtime, config.get("guard") or {}, set_hash)
+    stored = current(state, runtime, key)
+    if stored is not None and stored.get("status") != "incomplete":
+        return None
+    ts = (read(state, runtime) or {}).get("ts")
+    if stored is not None and isinstance(ts, (int, float)) and now - ts < RETRY_INCOMPLETE_S:
+        return None
+    if read(state, runtime) is None:
+        return "it has not been evaluated yet"
+    return "the last evaluation was incomplete" if stored is not None else "its guard settings changed since the last evaluation"
+
+
 def ensure(config, state, runtime, allow_run=True, run=None, now=None):
     """(state word, line): run the eval only when the stored key differs, or the stored result is
     incomplete and at least RETRY_INCOMPLETE_S old. With allow_run false (`bw start --no-verify`) no

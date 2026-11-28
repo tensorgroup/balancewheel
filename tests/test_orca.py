@@ -255,6 +255,7 @@ class GateTest(unittest.TestCase):
     def test_active_tools_drops_orca_on_the_terminal_canvas(self):
         tools = {"orca": {"self_updating": True}, "pi": {"update": ["pi", "up"]}}
         self.assertEqual(set(orca.active_tools({"canvas": "terminal", "tools": tools})), {"pi"})
+        self.assertEqual(set(orca.active_tools({"canvas": "ghostty", "tools": tools})), {"pi"})
         self.assertEqual(set(orca.active_tools({"canvas": "orca", "tools": tools})), {"orca", "pi"})
 
 

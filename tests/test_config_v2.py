@@ -75,7 +75,7 @@ class SchemaV2(unittest.TestCase):
         c = cfg.load_config(str(V2))
         self.assertEqual(c["rotation"], {"return_above_pct": 60, "cap_expiry_hours": 5, "probe_every_min": 15,
                                         "cli_fresh_min": 120})
-        self.assertEqual(c["updates"], {"min_interval_hours": 0})
+        self.assertEqual(c["updates"], {"min_interval_hours": 0, "self_update": True})
 
     def test_cli_quota_needs_schema_3(self):
         o = v2(); o["plans"]["plan-a"]["quota"] = "cli"

@@ -26,7 +26,8 @@ Revised 2026-11-22: Orca is optional; bw opens a Terminal tab unless `canvas` is
 Updated 2026-11-23: `bw panel` runs the mechanical half of the panel protocol; the lead keeps
 the judgment (see "The panel protocol"). Updated again 2026-11-23 after the review fixes: a
 worktree has up to three open panels and one running job, and bw fails work that no job holds.
-Updated 2026-11-24: `packs/` is shipped, not planned.*
+Updated 2026-11-24: `packs/` is shipped, not planned. Updated 2026-11-27: seat B is
+"flash" (DeepSeek V4.1 Flash), which replaced the GLM seat "ox".*
 
 ## The problem
 
@@ -50,7 +51,7 @@ their disagreement into signal instead of noise.
 |---|---|---|
 | Moderator / orchestrator | Primary agent (Claude Code session) | its own transcript + instruction files |
 | Seat A ("astra") | Codex CLI headless (`codex exec -p review`), pinned model, read-only sandbox | Codex session store (resumable) |
-| Seat B ("ox") | pi headless (`pi -p --tools read,grep,find,ls,bash -e guard.ts`), pinned OpenRouter model, in-process read-only guard | JSONL session file chosen by the wrapper (resumable) |
+| Seat B ("flash") | pi headless (`pi -p --tools read,grep,find,ls,bash -e guard.ts`), pinned OpenRouter model, in-process read-only guard | JSONL session file chosen by the wrapper (resumable) |
 | Seat C ("opus"; "fable" when reserved) | the moderator's own vendor CLI, headless, in a fresh session with none of the moderator's conversation; write tools disallowed plus a pre-tool guard | the CLI's own session store (resumable) |
 
 Seat C is the **same-vendor blind seat** (added to the reference roster 2026-09-02):
@@ -268,14 +269,14 @@ type `bw panel` in normal use.
 Append-only JSONL, two event types:
 
 ```jsonc
-{"type": "usage", "seat": "ox-agent", "mode": "resume", "dir": "...", "duration_s": 87, "ok": true}
-{"type": "panel", "target": "PR #123 diff", "seats": ["astra", "ox"], "rounds": 2,
+{"type": "usage", "seat": "flash", "mode": "resume", "dir": "...", "duration_s": 87, "ok": true}
+{"type": "panel", "target": "PR #123 diff", "seats": ["astra", "flash"], "rounds": 2,
  "immediate_agreement": false,
  "findings": {"astra": {"total": 4, "confirmed": 3, "refuted": 1},
-              "ox":  {"total": 5, "confirmed": 5, "refuted": 0}},
+              "flash": {"total": 5, "confirmed": 5, "refuted": 0}},
  "disputes": [{"summary": "...", "challenger": "astra",
-               "proposals": {"ox": "...", "astra": "..."},
-               "winner": "ox", "reason": "..."}]}
+               "proposals": {"flash": "...", "astra": "..."},
+               "winner": "flash", "reason": "..."}]}
 ```
 
 `confirmed`/`refuted` are the moderator's *code-verification verdicts*, not

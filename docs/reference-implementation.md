@@ -6,7 +6,7 @@ a rebuild guide: each section names the tool, the settings that took debugging t
 get right, and the traps. Written 2026-08-26 against the versions noted; updated
 2026-09-02 when the stealth seat model graduated (see the pi section); updated
 2026-09-11 when the Codex seat moved to a new model generation and gained planning duties
-(see the Codex section) and to describe the ox seat's runtime move from OpenCode to pi
+(see the Codex section) and to describe the metered seat's runtime move from OpenCode to pi
 (2026-09-03); updated 2026-09-16 with the driver-mode section (which harness may run
 which model at flat rate, first-party-harness containment, two new traps) and the pi
 version bump to 0.85.x it required; the cast table gained the same-vendor blind seat
@@ -33,15 +33,18 @@ name is rename-proof (see Seat runtimes under `bw seat`); updated 2026-11-23 a s
 now live in this repo as `bw panel` (see Panel instructions); updated 2026-11-23 a seventh time after the
 first live panel: the kimi seat runs `-p` with no `--auto` (Kimi Code 2.3.2 refuses the pair); updated 2026-11-23 with the known limits of the lead guard rules (see Lead guard rules); updated 2026-11-23 an eighth time: the
 Codex `cli` quota reading is not applicable on `codex-cli 0.164.0` (see the note under the runtime table); updated
-2026-11-24: one more known limit of the lead guard rules (`eval`, `trap`, and `alias` text).*
+2026-11-24: one more known limit of the lead guard rules (`eval`, `trap`, and `alias` text); updated
+2026-11-27 when the metered pi seat moved from GLM 5.3 Flash (seat "ox") to DeepSeek V4.1 Flash
+(seat "flash"; see the pi section); updated 2026-11-27 again when the astra seat moved to
+`gpt-6.2-astra` (seat, lead, and driver) and GPT-6.2 Sol became a budget driver, not a seat (see the Codex section and Driver mode); updated 2026-11-27 because a Claude Code lead now gets `lead/protocol/panel.md` as a system prompt (see Panel instructions).*
 
 ## The cast
 
 | Role | Software | Model | Billing |
 |---|---|---|---|
 | Moderator / primary | Claude Code (CLI) with the [superpowers](https://github.com/obra/superpowers) plugin (6.x) as the workflow skeleton | `claude-opus-5-5` at effort `medium` (raised per task); Fable only on an escalation (since 2026-11-11) | Anthropic subscription |
-| Planning + review seat ("astra") | Codex CLI ≥0.153 | `gpt-6-astra`, xhigh reasoning (was `gpt-5.6-sol`, seat "sol", until 2026-09-11) | OpenAI Pro subscription (CLI OAuth) |
-| Planning seat ("ox") | pi 0.85.x (0.74.x until 2026-09-16; was OpenCode ≥1.18 until 2026-09-03) | `z-ai/glm-5.3-flash` via OpenRouter (was `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
+| Planning + review seat ("astra") | Codex CLI ≥0.153 | `gpt-6.2-astra`, xhigh reasoning (since 2026-11-27; `gpt-6-astra` from 2026-09-11; `gpt-5.6-sol`, seat "sol", before) | OpenAI Pro subscription (CLI OAuth) |
+| Metered seat ("flash") | pi 0.85.x (0.74.x until 2026-09-16; was OpenCode ≥1.18 until 2026-09-03) | `deepseek/deepseek-v4.1-flash` via OpenRouter, thinking `medium` (since 2026-11-27; seat "ox" on `z-ai/glm-5.3-flash` before, `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
 | Same-vendor blind seat ("opus") | Claude Code headless (`claude -p`), fresh session, write tools disallowed plus a pre-tool guard hook | `claude-opus-5-5`, effort `medium` (since 2026-11-11; the on-demand seat from 2026-09-22, `claude-opus-4-8` before) | Claude subscription (flat); a fresh scoreboard |
 | Reserved same-vendor seat ("fable") | same mechanism | `claude-fable-5-2` (`claude-fable-5-1` from 2026-09-02 until 2026-11-11, when it was the default blind seat) | Claude subscription (flat), twice Opus 5.5 per token; deep panels and stuck debugging only, each run with its reason |
 | Blind one-shot fallback | plain HTTPS (`chat/completions`) | same OpenRouter model | OpenRouter API key |
@@ -51,13 +54,13 @@ storage, and subscription billing — no proxy, no prompt translation. Roles wer
 assigned from logged dispute outcomes (see architecture.md); the seat model is a
 config detail, not an interface commitment — which paid off within a week (below).
 
-## Seat: Codex CLI (`gpt-6-astra`)
+## Seat: Codex CLI (`gpt-6.2-astra`)
 
 Profile file — **`~/.codex/review.config.toml`** (Codex ≥0.149 uses per-profile
 *files*; a `[profiles.review]` table inside `config.toml` is rejected as legacy):
 
 ```toml
-model = "gpt-6-astra"
+model = "gpt-6.2-astra"
 model_reasoning_effort = "xhigh"   # this model also offers max and ultra; ultra delegates tasks — unverified read-only
 approval_policy = "never"       # headless: no interactive prompts
 sandbox_mode = "read-only"      # the load-bearing line
@@ -71,11 +74,13 @@ Invocation and traps:
   the profile via `-c key=value` overrides and `cd` to the target first. Have the wrapper
   *parse* `model`/`model_reasoning_effort` out of the profile file for those overrides
   rather than repeating the values — otherwise a model swap has two places to miss.
-- Model swaps are seat swaps when the model changes generation: the reference setup
-  retired seat "sol" and started "astra" with an empty scoreboard, because seat policy
-  (roles, rebuttal caps) was earned by the old model's dispute record and the per-seat
-  metrics would otherwise blend two models. A same-model re-pin (the stealth-id
-  graduation below) keeps the seat id and its history.
+- A move to a different model line is a seat swap: the reference setup retired seat
+  "sol" and started "astra" with an empty scoreboard, because seat policy (roles,
+  rebuttal caps) was earned by the old model's dispute record and the per-seat metrics
+  would otherwise blend two models. A newer version of the same model line keeps the
+  seat id and its history, with a dated note: `opus` kept its id from Opus 4.8 to 5.5,
+  and `astra` from `gpt-6-astra` to `gpt-6.2-astra` (2026-11-27). A same-model re-pin
+  (the stealth-id graduation below) also keeps the seat id and its history.
 - Don't name a seat after a vendor's tier name; vendors reuse them across generations.
   OpenAI shipped GPT-6 Sol (`gpt-6-sol`) on 2026-09-22, so the retired seat "sol" (which
   held `gpt-5.6-sol`) now reads like the new model. A GPT-6 Sol seat needs its own id,
@@ -87,6 +92,12 @@ Invocation and traps:
   lists what the account can actually use; check it before pinning a new model in a
   profile. As of 2026-09-25 a Pro account on Codex 0.154 did not yet have `gpt-6-sol`
   or `gpt-6-luna`, and pi 0.85.1's `openai-codex` provider did not list them either.
+- On 2026-11-27 the account's model cache listed the 6.2 generation. OpenAI calls
+  `gpt-6.2-astra` its most capable model and `gpt-6-astra` the previous generation. It
+  calls `gpt-6.2-sol` its fast everyday model and `gpt-6-sol` legacy. Both 6.2 models
+  answered a probe under a ChatGPT Pro sign-in, and the astra seat ran on `gpt-6.2-astra`.
+  The seat, the `astra` lead, and the astra driver moved to it that day. The seat kept
+  the id `astra`, because `gpt-6.2-astra` is a newer version of the same model line.
 - Set `TMPDIR` to a private scratch dir: the Rust binary extracts multi-MB temp
   `.dylib`s into `$TMPDIR` — *not* cwd, as first assumed. Some agent sandboxes point
   `TMPDIR` at the project checkout, which litters it with `.<hash>-00000000.dylib`
@@ -97,7 +108,7 @@ Invocation and traps:
   but the desktop app manages `config.toml` — expect churn there; keep your profile in
   its own file.
 
-## Seat: pi (`z-ai/glm-5.3-flash` via OpenRouter)
+## Seat: pi (`deepseek/deepseek-v4.1-flash` via OpenRouter)
 
 Runtime: [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
 (`@earendil-works/pi-coding-agent`, 0.85.x since 2026-09-16 — 0.74.x before). Re-verify the
@@ -129,16 +140,19 @@ searching them defeats the pinning; probe the manager's shim directory only. And
 pi upgrade, check the installed model catalog rather than the docs: 0.74 stopped at the
 previous model generation.
 
-**The stealth-model lesson, lived (2026-09-02):** the seat originally ran on
-`stealth/ox-alpha`, a free preview. OpenRouter ended the test period one week after
-setup; every call then returned a 404 that also revealed the model's identity (ZAI's
-GLM-5.3 Flash). Because the id was pinned in exactly one config line per component,
-re-pinning to the graduated catalog model took minutes; the logged seat history and
-policy carried over unchanged since the underlying model did not change. Two
-operational notes: the successor is paid, so the OpenRouter account must hold
-credits (a $0 balance fails identically to a missing model), and a per-key spend cap
-is the cost control — at $0.075/M input, $0.25/M output a repo-aware review round is
-about two cents.
+**History.** The seat began as OpenRouter's stealth `ox-alpha` preview (served as GLM-5.3
+Flash), ran GLM 5.3 Flash until 2026-09-26, and was replaced by DeepSeek V4.1 Flash
+(seat `flash`) on 2026-11-27. The scoreboard showed DeepSeek doing the same job (a cheap,
+metered OpenRouter reader on the same pi engine) with fewer timeouts (1% of runs against 13%)
+and more unique catches (40% against 34%), so the GLM seat was redundant.
+
+**The stealth-model lesson, lived (2026-09-02):** when OpenRouter ended the free preview one
+week after setup, every call returned a 404 that also revealed the model's identity. Because
+the id was pinned in exactly one config line per component, re-pinning took minutes; the
+2026-11-27 model change was the same one-line edit. Two operational notes: the model is
+paid, so the OpenRouter account must hold credits (a $0 balance fails identically to a
+missing model), and a per-key spend cap is the cost control. The seat is metered at
+OpenRouter's list price; a repo-aware review costs a few cents.
 
 **Read-only, in three layers** — the reason this runtime won the seat:
 
@@ -166,17 +180,19 @@ explicitly so reasoning and limits are pinned rather than inherited:
 
 ```json
 { "providers": { "openrouter": { "models": [
-  { "id": "z-ai/glm-5.3-flash", "name": "GLM-5.3 Flash (ox seat)",
+  { "id": "deepseek/deepseek-v4.1-flash", "name": "DeepSeek V4.1 Flash (flash seat)",
     "reasoning": true, "input": ["text"],
-    "contextWindow": 1310720, "maxTokens": 131072,
-    "cost": { "input": 0.075, "output": 0.25, "cacheRead": 0, "cacheWrite": 0 } }
+    "contextWindow": 1048576, "maxTokens": 131072 }
 ] } } }
 ```
+
+The model is absent from pi 0.85.1's built-in catalog, so this block is required. Add a
+`cost` block with OpenRouter's current list price if you want pi to report spend per run.
 
 Invocation (from the target directory, `OPENROUTER_API_KEY` **exported**):
 
 ```
-pi -p --model openrouter/z-ai/glm-5.3-flash --thinking medium \
+pi -p --model openrouter/deepseek/deepseek-v4.1-flash --thinking medium \
    --session-dir <seat-sessions> --session <seat-sessions>/<uuid>.jsonl \
    --no-extensions -e <guard.ts> --no-skills --no-prompt-templates --no-themes \
    --tools read,grep,find,ls,bash \
@@ -562,11 +578,17 @@ the credential, and the containment.
 
 | Driver seat | Harness | Model | Billing |
 |---|---|---|---|
-| astra | Codex CLI | `gpt-6-astra` (`gpt-6-sol`, which Codex now recommends as its everyday default, is the cheaper candidate for spec'd work once the rollout reaches the account) | OpenAI Pro, flat (CLI OAuth) |
-| astra via pi | pi ≥0.85, built-in `openai-codex` provider | `gpt-6-astra` | Same subscription, flat — OpenAI endorses third-party use ("Codex for OSS") |
-| ox | pi | `z-ai/glm-5.3-flash` via OpenRouter | ~$0.02 per session |
+| astra | Codex CLI | `gpt-6.2-astra` (since 2026-11-27; `gpt-6-astra` before) | OpenAI Pro, flat (CLI OAuth) |
+| *(budget driver, no seat id; not "sol", which is retired)* | Codex CLI | `gpt-6.2-sol` (since 2026-11-27) | OpenAI Pro, flat (CLI OAuth) |
+| astra via pi | pi ≥0.85, built-in `openai-codex` provider | `gpt-6-astra` (pi lists no 6.2 model yet, 2026-11-27) | Same subscription, flat — OpenAI endorses third-party use ("Codex for OSS") |
+| flash | pi | `deepseek/deepseek-v4.1-flash` via OpenRouter | metered at OpenRouter's list price; a few cents per session |
 | fable / opus / sonnet | Claude Code | the Claude tier named | Claude plan, flat |
 | *(not a seat)* Claude via pi | pi's Claude Pro/Max login | any Claude model | **per-token "extra usage"** — Anthropic bills third-party harnesses at API rates since 2026-04-04; only the vendor's own surfaces stay flat |
+
+**Sol is a driver, not a seat** (2026-11-27). Use `gpt-6.2-sol` to drive spec'd, mechanical
+work when the budget is low. Do not add it to a panel. It comes from the same vendor and
+family as Astra, so its blind read would correlate with Astra's. A panel gains from vendor
+diversity, not from a second OpenAI read.
 
 Which harness runs a model is therefore a billing decision first. One harness for all
 non-primary drivers works for the OpenAI models; for the Claude models it is the API
@@ -575,8 +597,8 @@ the primary harness at a cheaper tier — the first thing to reach for when the 
 budget is low, before leaving the vendor at all.
 
 **pi as a second harness for the OpenAI seat.** The subscription route only lists
-models the installed pi knows: 0.74 stopped at the previous generation, 0.85 carries the
-current one — check the installed catalog, not the docs. pi keeps its own OAuth tokens in
+models the installed pi knows: 0.74 stopped at the previous generation, 0.85 carries
+`gpt-6-astra` but, as of 2026-11-27, no 6.2 model — check the installed catalog, not the docs. pi keeps its own OAuth tokens in
 its agent directory; never copy another CLI's token file across (refresh-token rotation
 breaks whichever tool refreshes second). The login is interactive (`/login` in the TUI),
 done once, into the *driver's* agent directory — never the guarded review seat's.
@@ -755,7 +777,8 @@ file is now two parts in this repo:
 - `panel/templates/` holds the seat briefs (one per checkpoint, plus `brief-output.md` for the
   output shape) and the moderator's steps (`next.md`, `next-triage.md`, `next-follow-up.md`).
   `bw` renders them. Paths in shell commands are quoted, and seat text is escaped.
-- `lead/protocol/panel.md` is the text a lead gets in its first prompt. It holds the profile's
+- `lead/protocol/panel.md` is the text a lead gets in its first prompt (a Claude Code lead gets it as a
+  system prompt). It holds the profile's
   checkpoints, the literal request and view paths, and the rules: verify every finding, relay
   one claim at a time, log every panel, and tell the user three lines.
 

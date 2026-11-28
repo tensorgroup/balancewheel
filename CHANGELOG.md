@@ -15,6 +15,48 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **`bw start` updates bw itself, and `updates.self_update`** (`lead/selfupdate.py`, `lead/start.py`, `bin/bw`,
+  `metrics/config.py`). The first step of `bw start` is `git pull --ff-only` on the clone `bin/bw` runs from, without
+  the shell's `GIT_*` variables and with no password prompt. It skips a clone with local changes to tracked files,
+  a detached HEAD, or no upstream, and says why; a diverged history fails and changes nothing. When HEAD moved,
+  `bw start` starts again once on the new code (`BW_SELF_UPDATED`, never passed to a lead). New config key
+  `updates.self_update` (boolean, default `true`); new flag `--no-self-update`; `--no-update` skips it too.
+
+- **`bw start` starts the lead in this terminal** (`lead/start.py`). When stdin and stdout are terminals and the
+  target is the worktree of the current directory (no path, or a path inside it), `bw start` does all its
+  steps, prints `starting here` on the lead line, then `chdir`s into the worktree and `exec`s `bw lead` with the
+  same `BALANCEWHEEL_CONFIG` and `BW_STATE_DIR` as the `.command` file, as its last act. A worktree that has a
+  lead is not started again. `--dry-run` prints `would start the lead here: <cmd>`. Another path, or no
+  terminal, a process that does not own the terminal's foreground group (`bw start &`), or `--tab` keeps the
+  canvas (Terminal tab, Ghostty tab, Orca pane). `start.start` takes `cwd`, `chdir`, `execve`, `foreground`, and
+  `tab`.
+- **`bw start` prints sections with marks on a terminal** (`lead/startout.py`, `lead/start.py`, `lead/quota.py`,
+  `lead/verify.py`, `lead/updates.py`). A header, then Updates, Checks, Quota, Lead, and Also; `✓` pass, `✗`
+  failure, `·` information, `…` wait; home paths as `~`. A `…` line says what is slow before it starts: the tool
+  updates, and each runtime's sandbox or guard attack test (what is tested, "about a minute", "a little model
+  quota", why, "Please wait."). The quota lines are in plain words (`63% left in the 7-day window`, `19% of the monthly
+  budget used`, the source, the age); before, `7d 63%` meant 63% left with no word to say so, and `budget 75%` meant 75% of the budget left. The four
+  "no update lock for runtime X" lines became one Updates line. When stdout is not a terminal, the lines keep the
+  `bw start: ` prefix and carry the same facts, with no header, sections, or marks; **their wording changed**
+  (for example `verify pi containment: passed` is now `pi sandbox: passed`, and `checking seats in the background
+  (log: …)` is now `seats: checking in the background. Log: …`). `lead.verify.reverify` takes an optional
+  `on_attack` callback, and `start.start` takes `tty` and `width`.
+- **A Claude Code lead gets the lead protocol as a system prompt** (`lead/runtimes.py`, `lead/handoff.py`,
+  `lead/runner.py`). `bw lead` passes the protocol text (checkpoint, ask, inbox, and panel rules) with
+  `--append-system-prompt` instead of as the first prompt. The first prompt is only the handoff from a previous
+  lead, and there is none for a fresh lead. The protocol line about a handoff now says "If the first message
+  starts with `@next handoff`" in that case. Every other runtime is unchanged. The `Adapter` tuple has a new
+  field, `system_protocol`. As with any change to `lead/runtimes.py`, the pi and Kimi containment keys and the
+  guard keys change, so those runtimes re-run their attack tests once.
+- **`canvas: "ghostty"`.** `bw start` opens the lead in a new Ghostty tab (a new window when Ghostty has none) through
+  Ghostty's AppleScript (checked on Ghostty 1.4). The tab runs the same `.command` file as the Terminal tab, through
+  the user's login shell (`<shell> -l -i -c 'exec <file>'`), so the lead gets the same PATH and environment as in a
+  Terminal tab. The shell command and the worktree go to the script as arguments, never as script text, and bw
+  quotes the command itself. The tab stays open after the lead exits. When the script fails or times out (120 s, for
+  the first-run Automation prompt), `bw start` says why (Ghostty not found; Automation access refused) and opens a
+  Terminal tab. `--dry-run` prints `would open a Ghostty tab: …`. On the ghostty canvas, as on the terminal canvas,
+  bw does not update or version-check a configured `tools.orca`. The sandboxes bw applies (`bw sandbox` leads and
+  the seats) already deny Apple Events and `osascript`, so a bw-contained process cannot drive Ghostty.
 - **`bw setup claude-pane [--remove]` and the live pane check at a Claude Code launch (`lead/claude_pane.py`).**
   Setup registers a marketplace named `balancewheel` at bw's own checkout and installs `live-pane@balancewheel`
   (each step bounded by 20 s; one line per step; a second run changes nothing; an installed version that is not
@@ -212,7 +254,7 @@ not against the prose.
   it, and a judge model is set.
   agy is refused until its spike passes.
 - **Quota source `cli`** and **`rotation.cli_fresh_min`** (default 120), schema 3 only.
-- **`canvas`**: `terminal` or `orca`.
+- **`canvas`**: `terminal`, `orca`, or `ghostty`.
 - **`panel`**: `cap_min`, `deep_cap_min`, `max_rounds`, `max_parallel`, each an integer of at least 1
   (defaults 12, 30, 2, 4).
 - **`seats.*.tier`**: `default` or `reserved`.
@@ -269,6 +311,13 @@ not against the prose.
   verification, the reserved tier, a missing login, or a failed panel no longer counts against it.
 
 ### Fixed
+
+- **A Claude Code lead can write its checkpoint** (`lead/runtimes.py`). The claude-code adapter now passes
+  `--add-dir <dir>` for each writable dir (the checkpoint dir), as the codex adapter does. Before, the Write tool
+  failed on the checkpoint file ("Couldn't write file") and the lead fell back to the shell. `--add-dir` takes a
+  list, so the first prompt follows a `--`. Claude Code has no containment key of its own, but the pi and Kimi
+  containment keys and the guard keys include a hash of `lead/runtimes.py`, so those runtimes re-run their attack
+  tests once.
 
 - **`bw pack export` reads more real packs and refuses more broken ones** (`packs/export.py`, `bin/bw`).
   A policy with `<` and `>` passes (`x<y and z>w`, `List<String>`); only a whole token such as
@@ -425,6 +474,8 @@ not against the prose.
 
 ### Changed
 
+- **`balancewheel.example.json`: the `astra` seat and the `astra` lead now use `gpt-6.2-astra` (was `gpt-6-astra`)**, OpenAI's new most capable model, since 2026-11-27. The seat keeps its id: a newer version of the same model line keeps the id. GPT-6.2 Sol is a budget driver in the reference docs, not a seat.
+- **`balancewheel.example.json`: the metered pi seat `ox` (`openrouter/z-ai/glm-5.3-flash`) is now `flash` (`openrouter/deepseek/deepseek-v4.1-flash`, context 1,048,576)** in the seat list and both profiles' review rosters; the GLM seat was retired 2026-11-27.
 - `CLAUDE.md`: balancewheel writes esc's `pack.yaml`, only through `bw pack export`.
 - **Guard records keep the final decision and the rules' decision apart** (`lead/guard/record.py`,
   `broker.py`, `review.py`). A `guard.jsonl` decision row gains `rule_decision` (the rules' own

@@ -48,7 +48,7 @@ class SeatVerify(unittest.TestCase):
 
     def test_seat_items_example(self):
         c = load_config(str(EXAMPLE))
-        self.assertEqual(verify.seat_items(c), ["astra", "ox", "opus", "fable", "gem"])  # kimi disabled; fable reserved
+        self.assertEqual(verify.seat_items(c), ["astra", "flash", "opus", "fable", "gem"])  # kimi disabled; fable reserved
 
     def test_fallback_followed_disabled_skipped(self):
         c = {"seats": {"a": {"enabled": True, "fallback": "b"}, "b": {"enabled": True, "fallback": "c"},
@@ -72,7 +72,7 @@ class SeatVerify(unittest.TestCase):
         self.assertEqual(k["runtime_version"], "codex-cli 9.9"); self.assertNotIn("adapter_sha", k)
         for f in ("seat_adapter_sha", "codepaths_sha", "sandbox_sha", "hook_files", "denied_ports", "effort", "args"):
             self.assertIn(f, k)
-        self.assertEqual((k["seat"], k["runtime"], k["model"], k["effort"]), ("astra", "codex", "gpt-6-astra", "xhigh"))
+        self.assertEqual((k["seat"], k["runtime"], k["model"], k["effort"]), ("astra", "codex", "gpt-6.2-astra", "xhigh"))
         home = verify.seat_home(self.state, "astra")
         self.assertEqual(sorted(k["hook_files"]), sorted(os.path.join(home, n) for n in ("config.toml", "AGENTS.md", "AGENTS.override.md",
                          "prompts", "hooks.json", "skills", "rules")))
@@ -170,7 +170,7 @@ class SeatVerify(unittest.TestCase):
     def test_disabled_seat_not_in_seats_json(self):  # R16
         out = verify.write_seats_json(self.config, self.state, run=FAKE)
         self.assertNotIn("kimi", out)
-        self.assertEqual(list(out), ["astra", "ox", "opus", "fable", "gem", "astra2"])
+        self.assertEqual(list(out), ["astra", "flash", "opus", "fable", "gem", "astra2"])
 
     def test_later_failure_revokes_pass(self):  # R7
         key = verify.seat_key(self.config, self.state, "astra", run=FAKE)
@@ -186,7 +186,7 @@ class SeatVerify(unittest.TestCase):
         self.config["seats"]["astra"]["model"] = "other-model"
         key2 = verify.seat_key(self.config, self.state, "astra", run=FAKE)
         verify.record_failure(self.state, "astra", key2, "blind-write:target", 300.0)
-        self.config["seats"]["astra"]["model"] = "gpt-6-astra"
+        self.config["seats"]["astra"]["model"] = "gpt-6.2-astra"
         self.assertEqual(verify.seat_key(self.config, self.state, "astra", run=FAKE), key)
         self.assertFalse(verify.is_verified(self.config, self.state, "astra", run=FAKE))
         self.assertEqual(verify.write_seats_json(self.config, self.state, run=FAKE)["astra"]["failed_probe"], "key changed")
@@ -638,7 +638,7 @@ class SpawnVerify(unittest.TestCase):
             code = cli.main(["verify", "--changed"], self.config, self.state, run=FAKE, out=out, err=err)
         self.assertEqual(code, 0, err.getvalue())
         self.assertNotIn("astra", done)
-        self.assertIn("ox", done)
+        self.assertIn("flash", done)
 
     def test_cli_verify_ids_hold_lock(self):
         from seats import cli
