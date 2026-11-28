@@ -1,0 +1,5 @@
+{"type": "session_meta", "payload": {"id": "x", "cwd": "/w"}}
+{"type": "response_item", "payload": {"type": "message", "role": "user"}}
+{"type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 30000, "output_tokens": 500}, "total_token_usage": {"input_tokens": 30000, "output_tokens": 500}, "model_context_window": 258000}}}
+{"type": "event_msg", "payload": {"type": "token_count", "info": null}}
+{"type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 41000, "output_tokens": 700}, "total_token_usage": {"input_tokens": 90000, "output_tokens": 1200}, "model_context_window": 258000}}}

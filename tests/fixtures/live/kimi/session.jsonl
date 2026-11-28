@@ -1,0 +1,4 @@
+{"type": "turn_begin"}
+{"type": "token_counting.measured", "tokens": 3000}
+{"type": "step_end"}
+{"type": "token_counting.measured", "tokens": 7000}

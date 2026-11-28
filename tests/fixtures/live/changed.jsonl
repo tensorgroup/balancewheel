@@ -1,0 +1,4 @@
+{"type": "session_meta", "payload": {"cwd": "/w"}}
+{"kind": "note", "value": 1}
+{"type": "event_msg", "payload": {"type": "token_count", "info": {"tokens": "many"}}}
+{"type": "assistant", "message": {"usage": "none"}}

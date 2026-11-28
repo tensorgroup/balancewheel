@@ -1,0 +1,4 @@
+{"type": "user", "message": {"role": "user"}}
+{"type": "assistant", "message": {"role": "assistant", "usage": {"input_tokens": 500, "cache_creation_input_tokens": 1500, "cache_read_input_tokens": 40000, "output_tokens": 400}}}
+{"type": "user", "message": {"role": "user"}}
+{"type": "assistant", "message": {"role": "assistant", "usage": {"input_tokens": 1000, "cache_creation_input_tokens": 2000, "cache_read_input_tokens": 110000, "output_tokens": 500}}}

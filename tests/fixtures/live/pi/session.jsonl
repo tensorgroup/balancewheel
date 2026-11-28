@@ -1,0 +1,5 @@
+{"type": "session", "cwd": "/w"}
+{"type": "message", "message": {"role": "user"}}
+{"type": "message", "message": {"role": "assistant", "usage": {"input": 500, "output": 40, "cacheRead": 1000, "cacheWrite": 500, "cost": {"total": 0.01}}}}
+{"type": "message", "message": {"role": "user"}}
+{"type": "message", "message": {"role": "assistant", "usage": {"input": 1000, "output": 50, "cacheRead": 3000, "cacheWrite": 1000, "cost": {"total": 0.01}}}}

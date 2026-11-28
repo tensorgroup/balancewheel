@@ -29,6 +29,14 @@ not against the prose.
   `config.extra_logs(config, exclude=None)` gives `local.logs` and then `improve.panel_logs` as one list, with
   one entry per real path and without `exclude`. `bw`'s panel data reads that list, so a log that is also the
   main log is no longer read twice.
+- **`seats/live.py`: live context and cost from a seat CLI's own session file.** `live_usage(runtime, home,
+  session_id, dir, start, seat_cfg=None)` gives `ctx`, `window`, `ctx_peak`, `tokens_in`, `tokens_out`, and
+  `cost_usd` for codex (`token_count` events), claude-code (assistant `usage`), pi (assistant `usage` and its
+  cost; the window from the seat's `provider.contextWindow`), and kimi (`token_counting.measured`, found through
+  `session_index.jsonl`); agy gives nulls. It picks only a session whose working directory is the worktree: the
+  file whose name holds `session_id`, else the newest with an mtime at or after `start - 1`. It reads at most the
+  last 1 MiB of a file, follows no link, makes no dir, and never raises (a changed format gives nulls). `home=None`
+  reads the CLI's folder under the real home (local seats). The module is not in the seat key.
 - **`bw pack export --to <dir> [--dry-run]` (`packs/export.py`).** It rewrites the `# bw:catalog:begin` / `# bw:catalog:end` block of esc's `model-seats` `pack.yaml` and its version (minor on a status, model, or membership change; patch on numbers only). It refuses a wrong name, a dirty file, a `pack.yaml` git does not track (untracked or ignored), and missing markers. It saves esc's changelog bullet to `state_dir/packs/` and logs a `pack_export` event. It reads every log in `improve.panel_logs`.
 - **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.
 - **The guard review offer (`lead/guard/offer.py`).** On a terminal, before the lead opens, `bw start` offers a

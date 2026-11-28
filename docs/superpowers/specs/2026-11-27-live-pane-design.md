@@ -215,8 +215,8 @@ does), `--since EPOCH` (default: 24 h ago), `--limit N` (default 50). Output `v:
   state (read-only from bw's own panel files; never the mutating watchdog), plus pending
   request files from contained leads.
 - **Live usage.** For an open `bw` run, the seat's adapter reads that run's session file in
-  the seat CLI's own folder (`seats/adapters.py` gains `live_usage(session_id, dir, start)`
-  per runtime: Codex `token_count` events; Claude Code assistant `usage`; pi message `usage`
+  the seat CLI's own folder (`seats/live.py`, not hashed into the seat key, gives
+  `live_usage(runtime, home, session_id, dir, start, seat_cfg=None)` per runtime: Codex `token_count` events; Claude Code assistant `usage`; pi message `usage`
   with the provider's cost; Kimi `token_counting.measured`; agy: none known). Best effort:
   a missing file or changed format gives nulls. Local seats get the same when their entry
   names a `runtime`.
