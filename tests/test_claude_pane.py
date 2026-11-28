@@ -6,6 +6,7 @@ would fail, never reach the user's Claude config."""
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -31,11 +32,13 @@ def entry(ver=None, enabled=True):
 class Recorder:
     """A `run` for lead.claude_pane: records each argv (BW_CLAUDE_CMD stripped), answers the read-only
     checks from its state, and applies the changing steps to that state. `slow_s` makes each call take
-    that long (cut short at its timeout); `timeout` makes every call time out at once."""
+    that long (cut short at its timeout); `timeout` makes every call time out at once. A call in
+    `interrupt` sends this process SIGINT (Ctrl-C at the terminal) and waits for it to land."""
 
     def __init__(self, version="2.1.332 (Claude Code)", plugins=None, markets=None, worktrees=None,
-                 timeout=False, slow_s=0, fail=()):
+                 timeout=False, slow_s=0, fail=(), interrupt=()):
         self.version, self.timeout, self.slow_s, self.fail = version, timeout, slow_s, fail
+        self.interrupt = interrupt
         self.plugins = [dict(p) for p in (plugins or [])]
         self.markets = [dict(m) for m in (markets or [])]
         self.worktrees = worktrees or {}  # project path -> list of worktree paths
@@ -62,6 +65,10 @@ class Recorder:
             time.sleep(min(self.slow_s, timeout))
             if self.slow_s > timeout:
                 return Result(124, "", "", True)
+        if tuple(args) in self.interrupt:
+            os.kill(os.getpid(), signal.SIGINT)
+            time.sleep(2)  # KeyboardInterrupt lands here when SIGINT raises it
+            return Result(0, "", "", False)
         if tuple(args) in self.fail:
             return Result(1, "", "boom", False)
         if args == ["--version"]:
@@ -86,6 +93,10 @@ class Recorder:
     def changing(self):
         """The calls that change Claude Code's state: everything but the read-only checks."""
         return [c for c in self.calls if c[0] != "git" and "--version" not in c and "list" not in c]
+
+    def verbs(self):
+        """The changing calls as their verb tokens, e.g. "install", "uninstall", "marketplace add"."""
+        return [" ".join(c[1:3]) if c[1] == "marketplace" else c[1] for c in self.changing()]
 
 
 class ClaudePaneCase(unittest.TestCase):
@@ -237,12 +248,34 @@ class Setup(ClaudePaneCase):
         self.assertFalse([c for c in rec.calls if c[0] == "git"])
 
     def test_a_foreign_balancewheel_marketplace_is_refused(self):
-        for plugins in ([], [entry()]):
-            rec = self.rec(markets=[FOREIGN], plugins=plugins)
+        rec = self.rec(markets=[FOREIGN], plugins=[])
+        code, out = self.setup_out(rec)
+        self.assertEqual(code, 1)
+        self.assertIn("a marketplace named balancewheel points at /elsewhere, not this checkout; remove it first", out)
+        self.assertEqual(rec.changing(), [])
+
+    def test_a_plugin_from_a_foreign_marketplace_is_uninstalled_and_the_marketplace_left(self):
+        rec = self.rec(markets=[FOREIGN], plugins=[entry()])
+        code, out = self.setup_out(rec)
+        self.assertEqual(code, 1)
+        self.assertEqual(rec.changing(), [["plugin", "uninstall", cp.PLUGIN_ID]])
+        self.assertEqual(rec.markets, [FOREIGN])
+        lines = out.splitlines()
+        self.assertEqual(len(lines), 2, out)
+        self.assertIn(f"uninstalled {cp.PLUGIN_ID}: its marketplace points at /elsewhere, not this checkout", lines[0])
+        self.assertIn("remove it first", lines[1])
+
+    def test_an_orphan_plugin_is_reinstalled_from_root(self):
+        for plugins in ([entry()], [entry("0.0.1")], [entry(enabled=False)]):
+            rec = self.rec(markets=[], plugins=plugins)
             code, out = self.setup_out(rec)
-            self.assertEqual(code, 1)
-            self.assertIn("a marketplace named balancewheel points at /elsewhere, not this checkout; remove it first", out)
-            self.assertEqual(rec.changing(), [])
+            self.assertEqual(code, 0, out)
+            self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT],
+                                              ["plugin", "uninstall", cp.PLUGIN_ID],
+                                              ["plugin", "install", cp.PLUGIN_ID]], plugins)
+            self.assertIn("installed with no balancewheel marketplace, so its source is unknown", out)
+            self.assertNotIn("installed and current", out)
+            self.assertEqual(rec.plugins, [entry()])
 
     def test_a_non_directory_balancewheel_marketplace_is_refused(self):
         rec = self.rec(markets=[{"name": "balancewheel", "source": "github", "repo": "someone/balancewheel"}])
@@ -264,12 +297,18 @@ class Setup(ClaudePaneCase):
         self.assertEqual(rec.changing(), [])
 
     def test_remove_touches_only_its_own(self):
+        # Controller ruling (fix round 1): a plugin from a foreign marketplace is untrusted, so --remove
+        # uninstalls it too; the foreign marketplace itself is never removed.
         rec = self.rec(markets=[FOREIGN], plugins=[entry()])
         code, out = self.setup_out(rec, remove=True)
         self.assertEqual(code, 1)
         self.assertNotIn(["plugin", "marketplace", "remove", "balancewheel"], rec.calls)
-        self.assertFalse([c for c in rec.calls if "uninstall" in c])  # no uninstall when the marketplace is not ours
-        self.assertIn("/elsewhere", out)
+        self.assertEqual(rec.changing(), [["plugin", "uninstall", cp.PLUGIN_ID]])
+        self.assertIn(f"uninstalled {cp.PLUGIN_ID} (its marketplace points at /elsewhere", out)
+        self.assertIn("left that marketplace alone", out)
+        rec = self.rec(markets=[FOREIGN], plugins=[])
+        self.assertEqual(self.setup_out(rec, remove=True)[0], 1)
+        self.assertEqual(rec.changing(), [])
 
     def test_remove_takes_out_what_setup_added(self):
         rec = self.rec()
@@ -285,12 +324,13 @@ class Setup(ClaudePaneCase):
         self.assertEqual(len(rec.changing()), n + 2)
         self.assertIn("nothing to remove", out)
 
-    def test_remove_without_a_marketplace_leaves_the_plugin(self):
+    def test_remove_uninstalls_an_orphan_plugin(self):
         rec = self.rec(plugins=[entry()])
         code, out = self.setup_out(rec, remove=True)
         self.assertEqual(code, 0)
-        self.assertEqual(rec.changing(), [])
-        self.assertIn("nothing to remove", out)
+        self.assertEqual(rec.changing(), [["plugin", "uninstall", cp.PLUGIN_ID]])
+        self.assertIn(f"uninstalled {cp.PLUGIN_ID} (it was installed with no balancewheel marketplace", out)
+        self.assertNotIn("nothing to remove", out)
 
 
 class Ensure(ClaudePaneCase):
@@ -303,37 +343,59 @@ class Ensure(ClaudePaneCase):
             self.said = []
             rec = self.rec(plugins=plugins, markets=[OURS])
             self.ensure(rec)
-            joined = [" ".join(c) for c in rec.changing()]
+            verbs = rec.verbs()  # whole tokens: "install" never matches "uninstall"
             if want:
-                self.assertTrue(any(want in c for c in joined), (plugins, joined))
+                self.assertIn(want, verbs, (plugins, verbs))
                 self.assertEqual(len(self.said), 1, self.said)
-                self.assertTrue(self.said[0].startswith("bw: "), self.said)
+                self.assertTrue(self.said[0].startswith("bw: setting up the live pane: "), self.said)
             else:
-                self.assertFalse([c for c in joined if "install" in c or "update" in c], (plugins, joined))
+                self.assertFalse([v for v in verbs if v in ("install", "update", "uninstall")], (plugins, verbs))
                 self.assertEqual(self.said, [])
 
     def test_absent_marketplace_is_added_first(self):
         rec = self.rec()
         self.ensure(rec)
         self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT], ["plugin", "install", cp.PLUGIN_ID]])
-        self.assertEqual(len(self.said), 1)
-        self.assertIn("installed", self.said[0])
+        self.assertEqual(self.said, [f"bw: setting up the live pane: installing {cp.PLUGIN_ID} {version.VERSION} "
+                                     "from this checkout…"])
 
     def test_update_refreshes_the_marketplace_then_the_plugin(self):
         rec = self.rec(plugins=[entry("0.0.1")], markets=[OURS])
         self.ensure(rec)
         self.assertEqual(rec.changing(), [["plugin", "marketplace", "update", "balancewheel"],
                                           ["plugin", "update", cp.PLUGIN_ID]])
-        self.assertIn(f"from 0.0.1 to {version.VERSION}", self.said[0])
-
-    def test_a_stale_plugin_without_a_marketplace_gets_one_first(self):
-        rec = self.rec(plugins=[entry("0.0.1")], markets=[])
-        self.ensure(rec)
-        self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT],
-                                          ["plugin", "marketplace", "update", "balancewheel"],
-                                          ["plugin", "update", cp.PLUGIN_ID]])
         self.assertEqual(len(self.said), 1, self.said)
-        self.assertIn(f"updated the live pane plugin from 0.0.1 to {version.VERSION}", self.said[0])
+        self.assertIn(f"updating {cp.PLUGIN_ID} from 0.0.1 to {version.VERSION}", self.said[0])
+
+    def test_an_orphan_plugin_is_reinstalled_from_root(self):
+        for plugins in ([entry("0.0.1")], [entry()]):  # stale or current: its source is unknown either way
+            self.said = []
+            rec = self.rec(plugins=plugins, markets=[])
+            self.ensure(rec)
+            self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT],
+                                              ["plugin", "uninstall", cp.PLUGIN_ID],
+                                              ["plugin", "install", cp.PLUGIN_ID]], plugins)
+            self.assertEqual(len(self.said), 1, self.said)
+            self.assertIn("installing live-pane@balancewheel", self.said[0])
+            self.assertIn("so its source is unknown", self.said[0])
+            self.assertEqual(rec.plugins, [entry()])
+
+    def test_a_disabled_orphan_is_left_alone(self):
+        rec = self.rec(plugins=[entry(enabled=False)], markets=[])
+        self.ensure(rec)
+        self.assertEqual(rec.changing(), [])
+        self.assertEqual(self.said, [])
+
+    def test_ctrl_c_stops_the_step_and_the_launch_goes_on(self):
+        old = signal.signal(signal.SIGINT, signal.SIG_IGN)  # as in bw lead, which ignores SIGINT while it waits
+        self.addCleanup(signal.signal, signal.SIGINT, old)
+        rec = self.rec(plugins=[entry()], markets=[], interrupt={("plugin", "uninstall", cp.PLUGIN_ID)})
+        self.ensure(rec)  # returns: no KeyboardInterrupt escapes
+        self.assertEqual(rec.verbs(), ["marketplace add", "uninstall"])  # install never ran
+        self.assertEqual(len(self.said), 2, self.said)
+        self.assertIn("setting up the live pane", self.said[0])
+        self.assertIn("interrupted; the lead starts without it", self.said[1])
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.SIG_IGN)  # bw's disposition is back
 
     def test_claude_pane_false_calls_nothing(self):
         rec = self.rec()
@@ -352,11 +414,21 @@ class Ensure(ClaudePaneCase):
         self.assertEqual(self.said, [])
 
     def test_a_foreign_marketplace_is_left_alone(self):
-        for plugins in ([], [entry("0.0.1")], [entry()]):
+        for plugins in ([], [entry(enabled=False)]):
             rec = self.rec(markets=[FOREIGN], plugins=plugins)
             self.ensure(rec)
             self.assertEqual(rec.changing(), [], plugins)
         self.assertEqual(self.said, [])
+
+    def test_a_plugin_from_a_foreign_marketplace_is_uninstalled(self):
+        for plugins in ([entry("0.0.1")], [entry()]):
+            self.said = []
+            rec = self.rec(markets=[FOREIGN], plugins=plugins)
+            self.ensure(rec)
+            self.assertEqual(rec.changing(), [["plugin", "uninstall", cp.PLUGIN_ID]], plugins)
+            self.assertEqual(rec.markets, [FOREIGN])
+            self.assertEqual(len(self.said), 1, self.said)
+            self.assertIn("uninstalling live-pane@balancewheel (its marketplace points at /elsewhere", self.said[0])
 
     def test_an_old_claude_does_nothing(self):
         rec = self.rec(version="2.0.1 (Claude Code)")
@@ -396,11 +468,13 @@ class Ensure(ClaudePaneCase):
             self.assertEqual(rec.calls, [])
         self.assertEqual(self.said, [])
 
-    def test_a_failed_install_says_one_line(self):
+    def test_a_failed_install_says_one_more_line(self):
         rec = self.rec(markets=[OURS], fail={("plugin", "install", cp.PLUGIN_ID)})
         self.ensure(rec)
-        self.assertEqual(len(self.said), 1)
-        self.assertIn("bw setup claude-pane", self.said[0])
+        self.assertEqual(len(self.said), 2, self.said)
+        self.assertIn("setting up the live pane", self.said[0])
+        self.assertIn("was not set up", self.said[1])
+        self.assertIn("bw setup claude-pane", self.said[1])
 
 
 class FakeClaude(unittest.TestCase):

@@ -85,15 +85,20 @@ once for each bw-contained lead runtime.
   grant. `bw setup claude-pane` registers a marketplace named `balancewheel` at that checkout
   and installs `live-pane@balancewheel`. It refuses when the checkout lies inside a configured
   project or one of its git worktrees, and when a `balancewheel` marketplace already points
-  anywhere else (remove that one first). It needs Claude Code 2.1.332 or later (the version
-  the pane is tested on; older versions cannot load mods). Each step has a 20 s limit, and a
-  second run changes nothing. `--remove` uninstalls the plugin and removes the marketplace,
-  and only when the marketplace points at this checkout. Before `bw lead` starts a Claude
-  Code lead, it runs the same checks in one 5 s limit: it installs a missing plugin, runs
-  `claude plugin update` when the installed version is not bw's (`lead/version.py`), and
-  does nothing when `claude_pane` is false, when you disabled the plugin, or when a check
-  fails. It prints one line only when it acts, and the lead starts either way.
-  `bw start --dry-run` only says "would ensure the live pane plugin".
+  anywhere else (remove that one first). An installed `live-pane@balancewheel` whose
+  `balancewheel` marketplace is missing or points anywhere else has an unknown source: setup
+  uninstalls it, and installs it again from this checkout when the marketplace was missing.
+  It needs Claude Code 2.1.332 or later (the version the pane is tested on; older versions
+  cannot load mods). Each step has a 20 s limit, and a second run changes nothing. `--remove`
+  uninstalls the plugin (also one of unknown source) and removes the marketplace only when
+  it points at this checkout. Before `bw lead` starts a Claude Code lead, it runs the same
+  checks in one 5 s limit: it installs a missing plugin, runs `claude plugin update` when the
+  installed version is not bw's (`lead/version.py`), replaces or uninstalls a plugin of
+  unknown source, and does nothing when `claude_pane` is false, when you disabled the plugin,
+  or when a check fails. Before it changes anything it prints one `bw: setting up the live
+  pane: ...` line, and one more only when a step fails or you press Ctrl-C. Ctrl-C stops the
+  step; the lead starts either way. `bw start --dry-run` only says "would ensure the live
+  pane plugin".
 - **Autonomy per lead (config schema 3, `bw guard`, since 2026-10-25).** Each lead has an
   `autonomy`: `native` (Claude Code `--permission-mode auto`, Codex `--approve-for-me`: the
   runtime's own classifier decides), `guard` (bw's rules-only guard decides), `bypass`, or

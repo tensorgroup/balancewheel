@@ -6,18 +6,27 @@ own checkout (ROOT): a marketplace named `balancewheel` whose directory is ROOT,
 worktrees (a lead there could edit the pane), and leaves a `balancewheel` marketplace that points
 anywhere else alone. `--remove` takes out only the plugin and the marketplace that point at ROOT.
 
+An installed `live-pane@balancewheel` whose `balancewheel` marketplace is missing, or points anywhere but
+ROOT, has an unknown source and is not trusted: setup and the launch check uninstall it, and install it
+again from ROOT when the marketplace can be ROOT's (missing; a foreign one stays until the user removes it).
+
 `ensure` is the check `lead.runner` runs before it starts a `claude-code` lead: every read it makes
 shares one CHECK_TIMEOUT_S limit; it installs a missing plugin, updates one whose version is not bw's
-VERSION, and leaves a disabled one alone. It prints one `bw:` line only when it acts, and never raises.
+VERSION, replaces an untrusted one, and leaves a disabled one alone. Before it changes anything it prints
+one `bw: setting up the live pane: ...` line (and one more only on a failure or Ctrl-C). Ctrl-C stops the
+step and the launch goes on. It never raises.
 
 Every `claude` call goes through `claude_cmd()`: BW_CLAUDE_CMD (a JSON list; tests point it at a fake)
 or plain `claude`.
 """
 import json
 import os
+import contextlib
 import re
 import shlex
+import signal
 import sys
+import threading
 import time
 from typing import Optional
 
@@ -148,6 +157,13 @@ def _foreign(source):
     return f"a marketplace named {MARKETPLACE} points at {source}, not this checkout"
 
 
+def _untrusted(source):
+    """Why an installed plugin is not trusted: its marketplace is missing (None) or not ROOT."""
+    if source is None:
+        return f"it was installed with no {MARKETPLACE} marketplace, so its source is unknown"
+    return f"its marketplace points at {source}, not this checkout"
+
+
 def setup(config: Optional[dict], remove: bool = False, run=proc.run, out=sys.stdout) -> int:
     """`bw setup claude-pane [--remove]`. `config` None (a config error) skips the project check.
     Prints one line per step it ran; 0 when the pane is installed and current (or removed), else 1."""
@@ -176,18 +192,27 @@ def setup(config: Optional[dict], remove: bool = False, run=proc.run, out=sys.st
     except CheckFailed as e:
         say(f"could not read Claude Code's marketplaces ({e}); nothing changed")
         return 1
+    try:
+        entry = installed(run, STEP_TIMEOUT_S)
+    except CheckFailed as e:
+        say(f"could not read Claude Code's plugins ({e}); nothing changed")
+        return 1
     if source is not None and not _ours(source):
+        if entry is not None:
+            if not _step(run, ["plugin", "uninstall", PLUGIN_ID], say):
+                return 1
+            say(f"uninstalled {PLUGIN_ID}: {_untrusted(source)}")
         say(f"{_foreign(source)}; remove it first")
         return 1
     if source is None:
         if not _step(run, ["plugin", "marketplace", "add", ROOT], say):
             return 1
         say(f"added the {MARKETPLACE} marketplace at {ROOT}")
-    try:
-        entry = installed(run, STEP_TIMEOUT_S)
-    except CheckFailed as e:
-        say(f"could not read Claude Code's plugins ({e})")
-        return 1
+        if entry is not None:  # installed with no marketplace: its files came from somewhere unknown
+            if not _step(run, ["plugin", "uninstall", PLUGIN_ID], say):
+                return 1
+            say(f"uninstalled {PLUGIN_ID}: {_untrusted(None)}")
+            entry = None
     if entry is None:
         if not _step(run, ["plugin", "install", PLUGIN_ID], say):
             return 1
@@ -208,24 +233,26 @@ def setup(config: Optional[dict], remove: bool = False, run=proc.run, out=sys.st
 
 
 def _remove(run, say):
-    """Uninstall the plugin and remove the marketplace, only when the marketplace points at ROOT. With no
-    `balancewheel` marketplace, an installed `live-pane@balancewheel` did not come from this setup: left."""
+    """Uninstall the plugin (also an untrusted one: no marketplace, or a foreign one), and remove the
+    marketplace only when it points at ROOT; a foreign `balancewheel` marketplace is left alone (exit 1)."""
     try:
         source = marketplace_source(run, STEP_TIMEOUT_S)
-        entry = installed(run, STEP_TIMEOUT_S) if source is not None and _ours(source) else None
+        entry = installed(run, STEP_TIMEOUT_S)
     except CheckFailed as e:
         say(f"could not read Claude Code's plugins ({e}); nothing changed")
         return 1
-    if source is None:
-        say(f"nothing to remove: no {MARKETPLACE} marketplace")
-        return 0
-    if not _ours(source):
-        say(f"{_foreign(source)}; left it and its plugins alone")
-        return 1
+    ours = source is not None and _ours(source)
     if entry is not None:
         if not _step(run, ["plugin", "uninstall", PLUGIN_ID], say):
             return 1
-        say(f"uninstalled {PLUGIN_ID}")
+        say(f"uninstalled {PLUGIN_ID}" + ("" if ours else f" ({_untrusted(source)})"))
+    if source is None:
+        if entry is None:
+            say(f"nothing to remove: no {MARKETPLACE} marketplace and no {PLUGIN_ID}")
+        return 0
+    if not ours:
+        say(f"{_foreign(source)}; left that marketplace alone")
+        return 1
     if not _step(run, ["plugin", "marketplace", "remove", MARKETPLACE], say):
         return 1
     say(f"removed the {MARKETPLACE} marketplace")
@@ -246,10 +273,11 @@ def _budgeted(run, seconds):
 
 
 def ensure(config: dict, run=proc.run, say=print, refused: Optional[str] = None) -> None:
-    """Make sure the live pane is installed and current before a Claude Code lead starts. Does nothing
-    when `claude_pane` is false, when `refused` (the runner's `refuse_inside` result) or `refusal(config)`
-    refuses, when Claude Code is too old, when the `balancewheel` marketplace is not ROOT, when the plugin
-    is disabled, or when a check fails or runs out of the shared CHECK_TIMEOUT_S. One line when it acts."""
+    """Make sure the live pane is installed from ROOT and current before a Claude Code lead starts. Does
+    nothing when `claude_pane` is false, when `refused` (the runner's `refuse_inside` result) or
+    `refusal(config)` refuses, when Claude Code is too old, when the plugin is disabled, or when a check
+    fails or runs out of the shared CHECK_TIMEOUT_S. With a foreign `balancewheel` marketplace it only
+    uninstalls the plugin. One `setting up` line before it changes anything; one more on a failure or Ctrl-C."""
     try:
         if config.get("claude_pane") is False or refused:
             return
@@ -262,21 +290,59 @@ def ensure(config: dict, run=proc.run, say=print, refused: Optional[str] = None)
         if v is None or v < MIN_CLAUDE:
             return
         source = marketplace_source(check, CHECK_TIMEOUT_S)
-        if source is not None and not _ours(source):
-            return
         entry = installed(check, CHECK_TIMEOUT_S)
-        if entry is not None and (entry.get("enabled") is False or entry.get("version") == VERSION):
+        plan = _ensure_plan(source, entry)
+        if plan is None:
             return
+        what, steps = plan
+        say(f"bw: setting up the live pane: {what}…")
         failed = []
-        ok = source is not None or _step(run, ["plugin", "marketplace", "add", ROOT], failed.append)
-        if entry is None:
-            ok = ok and _step(run, ["plugin", "install", PLUGIN_ID], failed.append)
-            done = f"installed the live pane plugin ({PLUGIN_ID} {VERSION})"
-        else:
-            ok = (ok and _step(run, ["plugin", "marketplace", "update", MARKETPLACE], failed.append)
-                  and _step(run, ["plugin", "update", PLUGIN_ID], failed.append))
-            done = f"updated the live pane plugin from {entry.get('version')} to {VERSION}"
-        say(f"bw: {done}" if ok else
-            f"bw: the live pane plugin was not set up: {failed[-1]}; run bw setup claude-pane")
+        try:
+            with _ctrl_c_stops():
+                ok = all(_step(run, args, failed.append) for args in steps)
+        except KeyboardInterrupt:
+            say("bw: the live pane setup was interrupted; the lead starts without it (bw setup claude-pane "
+                "sets it up)")
+            return
+        if not ok:
+            say(f"bw: the live pane plugin was not set up: {failed[-1]}; run bw setup claude-pane")
     except Exception:  # nonfatal by contract: the lead starts either way
         return
+
+
+def _ensure_plan(source, entry):
+    """(what, steps) for the launch check, or None when there is nothing to do. A disabled plugin is the
+    user's choice and stays as it is; an untrusted one is uninstalled first."""
+    if entry is not None and entry.get("enabled") is False:
+        return None
+    add = [["plugin", "marketplace", "add", ROOT]] if source is None else []
+    install = [["plugin", "install", PLUGIN_ID]]
+    uninstall = [["plugin", "uninstall", PLUGIN_ID]]
+    if source is not None and not _ours(source):
+        if entry is None:
+            return None
+        return f"uninstalling {PLUGIN_ID} ({_untrusted(source)})", uninstall
+    if entry is None:
+        return f"installing {PLUGIN_ID} {VERSION} from this checkout", add + install
+    if source is None:
+        return (f"installing {PLUGIN_ID} {VERSION} again from this checkout ({_untrusted(None)})",
+                add + uninstall + install)
+    if entry.get("version") == VERSION:
+        return None
+    return (f"updating {PLUGIN_ID} from {entry.get('version')} to {VERSION}",
+            [["plugin", "marketplace", "update", MARKETPLACE], ["plugin", "update", PLUGIN_ID]])
+
+
+@contextlib.contextmanager
+def _ctrl_c_stops():
+    """Ctrl-C raises KeyboardInterrupt while the block runs, even where bw ignores SIGINT (bw lead does,
+    while it waits on a lead); proc.run then kills the step's process group. Main thread only."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    old = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, old)
