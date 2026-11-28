@@ -2,8 +2,8 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import type { Lane, OpenRun, RecentRun, UsageRow } from '../types'
-import { dropWrapped, expire, matches, pair, reconcile } from './fallback'
-import { boot, doc, drawn, paneProps, SEAT, T0 } from './fixture'
+import { bashUses, dropWrapped, expire, matches, pair, reconcile, toolResults } from './fallback'
+import { append, boot, doc, drawn, paneProps, resultRow, SEAT, T0, useRow } from './fixture'
 
 function lane(over: Partial<Lane>): Lane {
   return {
@@ -86,9 +86,19 @@ test('expire closes an unpaired lane as end unknown after run_max_s', () => {
   expect(closed?.endMs).toBe(T0 + 61_000)
 })
 
-// ---- through the engine ----------------------------------------------------------------------------
+test('bashUses reads Bash tool_use blocks; toolResults reads tool_result blocks', () => {
+  const uses = bashUses([
+    { type: 'text', text: 'running it' },
+    { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: './my-seat.sh go', description: 'review', run_in_background: true } },
+    { type: 'tool_use', id: 'toolu_2', name: 'Read', input: { file_path: 'my-seat.sh' } },
+    { type: 'tool_use', id: 'toolu_3', name: 'Bash', input: { command: 42 } },
+  ])
+  expect(uses).toEqual([{ id: 'toolu_1', command: './my-seat.sh go', description: 'review', isBackground: true }])
+  expect(toolResults([{ type: 'tool_result', tool_use_id: 'toolu_1', is_error: true }, { type: 'text', text: 'x' }]))
+    .toEqual([{ id: 'toolu_1', isError: true }])
+})
 
-const BACKGROUND = { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' } }
+// ---- through the engine: the pane observes stored rows, never the tool call -------------------------
 
 async function laneTexts($: Engine): Promise<string[]> {
   const ui = await $.ui.mount({ ...paneProps(90, 40), surface: 'terminal' })
@@ -97,22 +107,30 @@ async function laneTexts($: Engine): Promise<string[]> {
   return texts
 }
 
-test('a Bash call that matches a local seat opens a lane, and the call\'s end closes it', async ($, on) => {
-  let during: string[] = []
-  const b = await boot($, on, {
-    out: JSON.stringify(doc()),
-    tool: async () => {
-      during = await laneTexts($)
-      return { result: { stdout: 'done', stderr: '', interrupted: false } }
-    },
-  })
+test('a tool_use row of a Bash call that matches a local seat opens a lane, and its tool_result closes it', async ($, on) => {
+  const b = await boot($, on, { out: JSON.stringify(doc()) })
   await b.clock.advance(5000) // the first bw live poll gives the pane its local seats
-  await $.tool.call({ tool: 'Bash', command: './my-seat.sh review', description: 'review the diff' })
-  expect(during.some(t => t.includes('my-seat'))).toBe(true)
+  await append($, useRow('toolu_1', './my-seat.sh review', { description: 'review the diff' }))
+  await b.clock.settle()
+  expect((await laneTexts($)).some(t => t.includes('my-seat'))).toBe(true)
+  await b.clock.advance(3000)
+  await append($, resultRow('toolu_1'))
+  await b.clock.settle()
+  expect((await laneTexts($)).some(t => t.includes('my-seat'))).toBe(false)
   const ui = await $.ui.mount({ ...paneProps(90, 40), surface: 'terminal' })
-  const lanes = (await ui.findAll({ type: 'Text', text: /├/ })).map(t => t.text)
-  expect(lanes.some(t => t.includes('my-seat'))).toBe(false)
   expect((await ui.find({ type: 'Text', text: /local seat · ok/ }))?.text).toMatch(/review the diff/)
+  expect((await ui.find({ type: 'Text', text: /^my-seat.*plan$/ }))?.text).toMatch(/\b3s\b/) // its run time
+  await ui.unmount()
+})
+
+test('a failed tool_result closes the lane as failed', async ($, on) => {
+  const b = await boot($, on, { out: JSON.stringify(doc()) })
+  await b.clock.advance(5000)
+  await append($, useRow('toolu_1', './my-seat.sh review'))
+  await append($, resultRow('toolu_1', true))
+  await b.clock.settle()
+  const ui = await $.ui.mount({ ...paneProps(90, 40), surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /local seat · failed/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -120,17 +138,21 @@ test('a Bash call that does not match changes nothing', async ($, on) => {
   const b = await boot($, on, { out: JSON.stringify(doc()) })
   await b.clock.advance(5000)
   const before = await drawn($)
-  await $.tool.call({ tool: 'Bash', command: 'git status' })
-  await $.tool.call({ tool: 'Bash', command: `${'y'.repeat(4096)} ./my-seat.sh` }) // the match is past the first 4 KB
+  await append($, useRow('toolu_1', 'git status'))
+  await append($, useRow('toolu_2', `${'y'.repeat(4096)} ./my-seat.sh`)) // the match is past the first 4 KB
+  await append($, resultRow('toolu_1'))
+  await b.clock.settle()
   expect(await drawn($)).toEqual(before)
   expect(before.some(t => t.includes('my-seat'))).toBe(false)
 })
 
-test('a background lane stays open after the call, then pairs with its usage row', async ($, on) => {
+test('a background lane stays open after its tool_result, then pairs with its usage row', async ($, on) => {
   let usageRows: UsageRow[] = []
-  const b = await boot($, on, { out: () => JSON.stringify(doc({ usage: usageRows })), tool: () => BACKGROUND })
+  const b = await boot($, on, { out: () => JSON.stringify(doc({ usage: usageRows })) })
   await b.clock.advance(5000)
-  await $.tool.call({ tool: 'Bash', command: './my-seat.sh go', run_in_background: true })
+  await append($, useRow('toolu_1', './my-seat.sh go', { isBackground: true }))
+  await append($, resultRow('toolu_1')) // "running in the background"
+  await b.clock.settle()
   expect((await laneTexts($)).some(t => t.includes('my-seat'))).toBe(true)
   usageRows = [row(Math.floor(b.clock.now() / 1000) + 3, { ok: false })]
   await b.clock.advance(10_000)
@@ -141,9 +163,9 @@ test('a background lane stays open after the call, then pairs with its usage row
 })
 
 test('with local.run_max_s 60 an unpaired lane closes as end unknown after 60 s, not 2700 s', async ($, on) => {
-  const b = await boot($, on, { out: JSON.stringify(doc({ local: { ...doc().local, run_max_s: 60 } })), tool: () => BACKGROUND })
+  const b = await boot($, on, { out: JSON.stringify(doc({ local: { ...doc().local, run_max_s: 60 } })) })
   await b.clock.advance(5000)
-  await $.tool.call({ tool: 'Bash', command: './my-seat.sh go', run_in_background: true })
+  await append($, useRow('toolu_1', './my-seat.sh go', { isBackground: true }))
   await b.clock.advance(30_000)
   expect((await laneTexts($)).some(t => t.includes('my-seat'))).toBe(true)
   await b.clock.advance(32_000)
@@ -153,44 +175,12 @@ test('with local.run_max_s 60 an unpaired lane closes as end unknown after 60 s,
   await ui.unmount()
 })
 
-test('the hook returns next(e)\'s result unchanged when its own code throws', async ($, on) => {
-  const answer = { result: { stdout: 'kept', stderr: '', interrupted: false } }
-  let calls = 0
+test('the row hook keeps the row unchanged, also when its own code throws', async ($, on) => {
   on('state.get', () => {
     throw new Error('the state is down')
   })
-  on('tool.call', () => {
-    calls += 1
-    return answer
-  })
-  const ran = await $.tool.call({ tool: 'Bash', command: './my-seat.sh go' })
-  expect(calls).toBe(1)
-  expect(ran.result).toEqual(answer.result)
-  expect('deny' in ran && ran.deny !== undefined).toBe(false)
-})
-
-test('the hook returns next(e)\'s result unchanged when its code throws after the call', async ($, on) => {
-  const answer = { result: { stdout: 'kept too', stderr: '', interrupted: false } }
-  let calls = 0
-  let writesLeft = Number.POSITIVE_INFINITY
-  on('state.set', (_, e, next) => {
-    if (e.plugin === 'live-pane' && e.key === 'lanes') {
-      writesLeft -= 1
-      if (writesLeft < 0) throw new Error('the state is down')
-    }
-    return next(e)
-  })
-  const b = await boot($, on, {
-    out: JSON.stringify(doc()),
-    tool: () => {
-      calls += 1
-      return answer
-    },
-  })
-  await b.clock.advance(5000)
-  writesLeft = 1 // the lane opens; closing it throws
-  const ran = await $.tool.call({ tool: 'Bash', command: './my-seat.sh go' })
-  expect(writesLeft).toBe(-1)
-  expect(calls).toBe(1)
-  expect(ran.result).toEqual(answer.result)
+  const row1 = useRow('toolu_1', './my-seat.sh go')
+  const kept = await append($, row1)
+  expect(kept.deny).toBeUndefined()
+  expect(kept.deny === undefined ? kept.message.content : null).toEqual(row1.message.content)
 })

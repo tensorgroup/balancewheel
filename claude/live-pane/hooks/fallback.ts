@@ -1,5 +1,6 @@
-// The Bash fallback (spec §5), pure: a Bash call whose command holds a local seat's `match` opens a lane;
-// `bw live` documents close, pair, drop, or expire lanes. No `$` here. Times are milliseconds.
+// The Bash fallback (spec §5), pure: a stored tool_use row of a Bash call whose command holds a local seat's
+// `match` opens a lane; its tool_result row closes a foreground lane; `bw live` documents close, pair, drop,
+// or expire lanes. No `$` here. Times are milliseconds.
 
 import type { Lane, LaneState, LiveDoc, LocalSeat, OpenRun, RecentRun, UsageRow } from '../types'
 
@@ -29,8 +30,29 @@ export function closeLane(lanes: readonly Lane[], id: string, endMs: number, end
   return lanes.map(l => (l.id === id && l.endMs === null ? { ...l, endMs, end } : l))
 }
 
-export function setBackground(lanes: readonly Lane[], id: string): Lane[] {
-  return lanes.map(l => (l.id === id ? { ...l, background: true } : l))
+/** A Bash call as its assistant row holds it. */
+export type BashUse = { id: string; command: string; description: string | null; isBackground: boolean }
+
+type Block = { readonly type: string; readonly [field: string]: unknown }
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+/** The Bash `tool_use` blocks of a row. */
+export function bashUses(content: readonly Block[]): BashUse[] {
+  return content.flatMap(b => {
+    if (b.type !== 'tool_use' || b.name !== 'Bash' || typeof b.id !== 'string' || !isRecord(b.input)) return []
+    const { command, description, run_in_background: bg } = b.input
+    if (typeof command !== 'string') return []
+    return [{ id: b.id, command, description: typeof description === 'string' ? description : null, isBackground: bg === true }]
+  })
+}
+
+/** The `tool_result` blocks of a row: which call each answers, and whether it failed. */
+export function toolResults(content: readonly Block[]): { id: string; isError: boolean }[] {
+  return content.flatMap(b => (b.type === 'tool_result' && typeof b.tool_use_id === 'string'
+    ? [{ id: b.tool_use_id, isError: b.is_error === true }] : []))
 }
 
 /** A row's key: `seat|dir|t|n`, where n counts the rows of this poll with the same seat, dir, and t. */

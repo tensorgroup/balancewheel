@@ -62,15 +62,7 @@ export type Boot = {
   isPanePlaced?: boolean
   /** What `bw live` prints; a function answers per call; `null` gives a spawn that cannot start. */
   out?: string | null | ((n: number) => string)
-  /** The Bash tool beneath the pane. */
-  tool?: () => ToolAnswer | Promise<ToolAnswer>
 }
-
-export type ToolAnswer = {
-  result: { stdout: string; stderr: string; interrupted: boolean; backgroundTaskId?: string }
-}
-
-export const QUIET: ToolAnswer = { result: { stdout: '', stderr: '', interrupted: false } }
 
 export type Booted = {
   clock: ReturnType<typeof mock.clock>
@@ -78,6 +70,8 @@ export type Booted = {
   active: () => number
   maxActive: () => number
   agents: { list: AgentInfo[] }
+  /** What `$.session.usage()` answers; a test may change it. */
+  usage: SessionUsage
 }
 
 /** Answers every `$` call the pane makes, then starts the session (which starts the pane's timers). */
@@ -99,9 +93,9 @@ export async function boot($: Engine, on: On, b: Boot = {}): Promise<Booted> {
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
   on('session.cwd', () => ({ value: CWD }))
   on('session.model', () => ({ value: 'model-a' }))
-  on('session.usage', () => ({ value: b.usage ?? usage() }))
+  const u: SessionUsage = { ...(b.usage ?? usage()) }
+  on('session.usage', () => ({ value: u }))
   on('agent.list', () => ({ value: agents.list }))
-  on('tool.call', () => (b.tool ? b.tool() : QUIET))
   on('process.spawn', async function* (_$, e, next): AsyncGenerator<ProcessSpawnChunk, OpEventResult<'process.spawn'>> {
     argvs.push([...e.argv])
     calls += 1
@@ -124,7 +118,7 @@ export async function boot($: Engine, on: On, b: Boot = {}): Promise<Booted> {
     }
   })
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
-  return { clock, argvs, active: () => active, maxActive: () => maxActive, agents }
+  return { clock, argvs, active: () => active, maxActive: () => maxActive, agents, usage: u }
 }
 
 /** Every text the pane draws now, in order: what a test compares before and after an act. */
@@ -133,4 +127,33 @@ export async function drawn($: Engine, columns = 90, rows = 40): Promise<string[
   const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
   await ui.unmount()
   return texts
+}
+
+type Row = Parameters<Engine['session']['append']>[0]
+
+/** The assistant row that holds a Bash call. */
+export function useRow(id: string, command: string, o: { description?: string; isBackground?: boolean } = {}): Row {
+  const input: Record<string, unknown> = { command }
+  if (o.description !== undefined) input.description = o.description
+  if (o.isBackground === true) input.run_in_background = true
+  return {
+    message: { type: 'assistant', role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input }] },
+    door: 'response',
+    origin: { kind: 'model', model: 'model-a' },
+    uuid: `u-${id}`,
+  }
+}
+
+/** The user row that holds that call's result. */
+export function resultRow(id: string, isError = false): Row {
+  return {
+    message: { type: 'user', role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'done', is_error: isError }] },
+    door: 'tool-result',
+    origin: { kind: 'tool', tool: 'Bash' },
+    uuid: `r-${id}`,
+  }
+}
+
+export function append($: Engine, row: Row) {
+  return $.session.append(row)
 }

@@ -21,9 +21,11 @@ not against the prose.
   agents-at-work timeline, and the runs that ended in this worktree since the session started. It reads
   Claude Code's own agents and session figures each second, and runs `bw live --json --dir <cwd> --since
   <session start, whole seconds>` every 5 s while the pane is open (one call at a time, a 10 s limit,
-  cancelled when the session ends or the pane closes, `v` must be 1). A Bash call whose first 4 KB holds a
-  `local.seats[].match` opens a lane at once; `bw live` documents pair, drop, or expire those lanes. The
-  plugin option `bwPath` (default `bw`) names the command. `lead.version.VERSION` is `0.2.0-dev.1`; the
+  cancelled when the session ends or the pane closes, `v` must be 1). It hooks no tool call. It observes the
+  stored rows (`session.append`): a Bash `tool_use` whose first 4 KB holds a `local.seats[].match` opens a
+  lane at once, and its `tool_result` closes a foreground lane; `bw live` documents pair, drop, or expire
+  background lanes. After `/clear` or a resume the timer goes on and the session's state starts over. The
+  plugin option `bwPath` (default `bw`) names the command. `lead.version.VERSION` is `0.2.0-dev.2`; the
   plugin's `plugin.json` and the `live-pane` entry of the new repo-root `.claude-plugin/marketplace.json`
   (marketplace `balancewheel`) carry the same version (tested). Bump the prerelease number in the same
   commit as any change under `claude/live-pane/`, or installed panes do not update. Tested on Claude Code

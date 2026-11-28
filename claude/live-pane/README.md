@@ -47,12 +47,19 @@ model column.
   (document `v: 1`). One call at a time, with a 10 s limit. The call stops when the pane closes or the
   session ends. A document with another `v` is ignored. When `bw` is missing or fails, the pane still
   draws Claude's own agents and shows the age of its seat data.
-- **Bash fallback, for local seats:** when the first 4 KB of a Bash command holds a `local.seats[].match`
-  (a plain substring, never a pattern), a lane opens at once. A foreground call closes its lane when the
-  call ends. A background lane closes when `bw live` lists a `usage` row of the seat's `metric` at or
-  after the lane's start (less 1 s), or as `end unknown` after `local.run_max_s`. A lane is dropped when a
-  `run` start of the same seat is within 2 s of it (`bw run` also wraps that call). The hook calls the
-  rest of the chain once, returns its result unchanged, and catches its own errors.
+- **Bash fallback, for local seats:** the pane hooks no tool call, because a hook that may match a tool
+  turns off that tool's move to the background (ctrl+b). It observes the rows that the conversation
+  stores (`session.append`) and keeps each row unchanged. When the first 4 KB of a Bash call's command
+  holds a `local.seats[].match` (a plain substring, never a pattern), a lane opens at once. The call's
+  result row closes a foreground lane (`failed` when the result is an error). A `run_in_background` lane
+  closes when `bw live` lists a `usage` row of the seat's `metric` at or after the lane's start (less
+  1 s), or as `end unknown` after `local.run_max_s`. A lane is dropped when a `run` start of the same
+  seat is within 2 s of it (`bw run` also wraps that call).
+- **Known limit:** a foreground call that the person moves to the background closes its lane at the
+  move, because its result row comes then and does not say that the call goes on. Wrap the seat with
+  `bw run` to track such a call.
+- **After `/clear` or a resume** the timer and the polls go on, and the lanes, the history, the chart, and
+  the session start begin again.
 
 State lives in `$.state` with shape tags, so a reload keeps the history. Nothing is kept from one session to
 the next.
@@ -87,7 +94,7 @@ Claude config. `hooks/fixture.ts` answers the engine's calls with synthetic data
 
 ## Files
 
-- `hooks/register.tsx`: the entry: the pane, the Bash hook, the one-second timer, and the poll.
+- `hooks/register.tsx`: the entry: the pane, the row observer, the one-second timer, and the poll.
 - `hooks/poll.tsx`: the `bw live` call and its strict reader.
 - `hooks/fallback.ts`, `hooks/layout.ts`, `hooks/format.ts`: pure logic, with no `$`.
 - `hooks/view.tsx`: the drawing.

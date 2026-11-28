@@ -29,7 +29,7 @@ test('it draws with no data, on every surface', async $ => {
 test('it draws lanes, figures, both charts, and the history from samples and finished runs', async ($, on) => {
   const b = await boot($, on, {
     agents: [agent({ id: 'a1', type: 'Explore', status: 'running' }),
-      agent({ id: 'a2', type: 'Plan', status: 'completed', description: 'outline the steps', startTime: T0 - 90_000 })],
+      agent({ id: 'a2', type: 'Plan', status: 'completed', description: 'outline the steps', startTime: T0 })],
     out: JSON.stringify(doc({ open: [seatRun], recent: [finishedSeat] })),
   })
   await b.clock.advance(30_000)

@@ -33,6 +33,14 @@ class LivePanePlugin(unittest.TestCase):
         self.assertIsNone(re.search(r"claude-(opus|sonnet|haiku|fable)-\d|gpt-\d", text))
         self.assertIsNone(re.search(r"\b(const|let|var)\s+h\b", text))
 
+    def test_no_tool_call_or_tool_run_hook(self):
+        # a hook that may match a tool turns off its move to the background (ctrl+b): the pane observes
+        # stored rows (`session.append`) instead
+        for p in (PLUGIN / "hooks").glob("*.ts*"):
+            if ".test." in p.name or p.name == "fixture.ts":
+                continue
+            self.assertIsNone(re.search(r"\bon\(\s*['\"]tool\.", p.read_text()), p.name)
+
     def test_claude_plugin_validate_and_test(self):
         if os.environ.get("BW_PLUGIN_TESTS") != "1":    # the default suite stays hermetic
             self.skipTest("set BW_PLUGIN_TESTS=1 to run claude plugin validate and test")
@@ -43,6 +51,12 @@ class LivePanePlugin(unittest.TestCase):
                      [exe, "plugin", "test", str(PLUGIN)]):
             r = subprocess.run(argv, capture_output=True, text=True, timeout=600)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        r = subprocess.run([exe, "plugin", "validate", "--json", str(PLUGIN)], capture_output=True, text=True,
+                           timeout=600)
+        patterns = [h["pattern"] for c in json.loads(r.stdout)["contents"] for m in c.get("modules", [])
+                    for h in m.get("hooks", [])]
+        self.assertIn("session.append", patterns)
+        self.assertEqual([x for x in patterns if x.startswith("tool.") or x == "*"], [])
 
 
 if __name__ == "__main__":

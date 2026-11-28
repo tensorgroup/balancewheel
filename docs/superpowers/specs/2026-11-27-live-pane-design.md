@@ -239,15 +239,22 @@ A Claude Code plugin (`.claude-plugin/plugin.json` with `version` equal to bw's 
   at most one call in flight, a 10 s timeout, cancel on pane close, and a check of `v`. The
   path to `bw` is the plugin option `bwPath` (default `bw`). When `bw` is missing or fails,
   the pane still draws Claude's own agents and shows how old its seat data is.
-- **Fallback.** A `tool.call` hook on Bash checks `local.seats[].match` (from the last
-  `bw live`) as a substring of the command's first 4 KB. A match opens a lane at once, with
-  a millisecond start time. A foreground call closes it when the call ends. A background
+- **Fallback.** The pane observes the rows the conversation stores (a `session.append`
+  hook), never the tool call: a hook that may match a tool turns off that tool's move to
+  the background. An assistant row's Bash `tool_use` block whose `input.command` holds a
+  `local.seats[].match` (from the last `bw live`) as a substring of its first 4 KB opens a
+  lane at once, keyed by the block's id, with a millisecond start time. The user row's
+  `tool_result` for that id closes a foreground lane (`is_error` gives `failed`). A
+  `run_in_background` call keeps its lane open past its result. A background
   lane pairs with the oldest unpaired `usage` row for the same `metric` and worktree whose
   time is at or after the lane's start, less 1 s (the log's precision). If two lanes could
   take the same row, the older lane takes it. A lane that pairs with nothing is closed as
   `end unknown` after `run_max_s`. A lane is dropped when a `run` start for the same seat
   appears within 2 s of it (the wrapper is also wrapped by `bw run`). The hook always calls
-  `next(e)` once and returns its result unchanged; its own errors are caught.
+  `next(e)` once and returns the stored row unchanged; its own errors are caught.
+- **`/clear` and resume.** `session.end` with reason `clear` or `resume` is followed by no
+  `session.start`: the timer and the polls go on, and the session's state (lanes, history,
+  chart samples, session start) starts over. Any other reason stops them.
 - **Look (original).** One horizontal lane per running agent or seat, main first:
 
   ```text

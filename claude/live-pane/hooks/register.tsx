@@ -1,13 +1,15 @@
 // The live pane (spec §5): one lane per running agent or seat, session figures, a context chart, the
 // agents-at-work timeline, and the runs that ended in this worktree. It only reads: each second it reads
-// Claude Code's own agents and session figures; every 5 s while the pane is open it runs `bw live --json`;
-// a Bash call that names a local seat opens a lane at once (the fallback). Its failures leave calls untouched.
+// Claude Code's own agents and session figures; every 5 s while the pane is shown it runs `bw live --json`;
+// a stored Bash tool_use row that names a local seat opens a lane at once (the fallback). It hooks no tool
+// call: a hook that may match a tool turns off that tool's move to the background.
 
 import { atom, read, update } from 'claude-code'
 import type { AgentInfo, EngineInterface, Register, SessionUsage, Timer } from 'claude-code'
 
 import type { AgentRow, Finished, Sample, Snap } from '../types'
-import { applyDoc, closeLane, expire, matches, openLane, prune, setBackground } from './fallback'
+import { applyDoc, bashUses, closeLane, expire, matches, openLane, prune, toolResults } from './fallback'
+import type { BashUse } from './fallback'
 import { familyColor, pushSample, seatColor } from './layout'
 import { argvFor, CANCELLED, cancelPoll, isPollDue, pollOnce } from './poll'
 import { buildView, drawPane, STALE_MS } from './view'
@@ -32,6 +34,8 @@ const chartAtom = atom({ plugin: 'live-pane', key: 'chart' } as const, { periodM
 const closedAtom = atom({ plugin: 'live-pane', key: 'isClosedByPerson' } as const, false)
 
 let ticker: Timer | null = null
+// Rows are observed one after another, so a tool_result never runs ahead of its tool_use.
+let rows: Promise<void> = Promise.resolve()
 
 function agentRow(a: AgentInfo): AgentRow {
   return {
@@ -56,12 +60,6 @@ function ctxPct(u: SessionUsage | null): number | null {
   if (u === null) return null
   if (typeof u.context.percent === 'number') return u.context.percent
   return u.context.tokens === undefined || u.context.window <= 0 ? null : (100 * u.context.tokens) / u.context.window
-}
-
-/** The Bash result names a background task: the call went on after it returned (or the person moved it). */
-function isBackgrounded(result: unknown): boolean {
-  return typeof result === 'object' && result !== null && 'backgroundTaskId' in result
-    && typeof result.backgroundTaskId === 'string'
 }
 
 /** Open and drawn: a pane that waits undrawn (a narrow terminal, a `-p` run) runs no `bw live`. */
@@ -89,7 +87,8 @@ async function tick($: EngineInterface, bwPath: string): Promise<void> {
   }
   await update($, snapAtom, () => snap)
 
-  const done = list.filter(a => FINISHED[a.status] !== undefined)
+  // only this session's agents: after /clear the engine may still list the old session's
+  const done = list.filter(a => FINISHED[a.status] !== undefined && a.startTime >= startedAt - TICK_MS)
   if (done.length > 0) {
     const known = new Set((await read($, historyAtom)).map(f => f.key))
     if (done.some(a => !known.has(`a:${a.id}`))) {
@@ -150,6 +149,45 @@ async function poll($: EngineInterface, bwPath: string, startedAt: number): Prom
   }
 }
 
+/** A row's Bash calls open lanes for local seats; its results close foreground lanes. */
+async function observeRow($: EngineInterface, uses: readonly BashUse[], results: readonly { id: string; isError: boolean }[]): Promise<void> {
+  if (uses.length > 0) {
+    const seats = (await read($, seatsAtom)).doc?.local.seats ?? []
+    const opened = uses.flatMap(u => {
+      const seat = matches(u.command, seats)
+      return seat === undefined ? [] : [{ u, seat }]
+    })
+    if (opened.length > 0) {
+      const now = await $.clock.now()
+      const ids = new Set(opened.map(o => o.u.id))
+      const added = opened.map(o => openLane(o.seat, o.u.id, now, o.u.description, o.u.isBackground))
+      await update($, lanesAtom, s => ({ ...s, lanes: prune([...s.lanes.filter(l => !ids.has(l.id)), ...added]) }))
+    }
+  }
+  if (results.length > 0) {
+    const open = (await read($, lanesAtom)).lanes.filter(l => l.endMs === null && !l.background)
+    const closing = results.filter(r => open.some(l => l.id === r.id))
+    if (closing.length > 0) {
+      const now = await $.clock.now()
+      await update($, lanesAtom, s => ({
+        ...s,
+        lanes: closing.reduce((lanes, r) => closeLane(lanes, r.id, now, r.isError ? 'failed' : 'ok'), s.lanes),
+      }))
+    }
+  }
+}
+
+/** After /clear or a resume the process goes on with no session.start: the session's state starts over. */
+async function startOver($: EngineInterface): Promise<void> {
+  cancelPoll(CANCELLED)
+  await update($, snapAtom, () => null)
+  await update($, historyAtom, () => [])
+  await update($, lanesAtom, () => ({ lanes: [], taken: [] }))
+  await update($, chartAtom, () => ({ periodMs: SAMPLE_MS, samples: [], names: {} }))
+  // keep the local seats until the next poll; the old window's runs go
+  await update($, seatsAtom, s => ({ ...s, doc: s.doc === null ? null : { ...s.doc, open: [], recent: [], usage: [] } }))
+}
+
 export const register: Register = (on, options) => {
   const bwPath = typeof options.bwPath === 'string' && options.bwPath.trim() !== '' ? options.bwPath : 'bw'
 
@@ -170,10 +208,18 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('session.end', async (_, e, next) => {
-    ticker?.cancel()
-    ticker = null
-    cancelPoll(CANCELLED)
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear' || e.reason === 'resume') {
+      try {
+        await startOver($) // the timer goes on
+      } catch {
+        // the next tick reads the new session's figures anyway
+      }
+    } else {
+      ticker?.cancel()
+      ticker = null
+      cancelPoll(CANCELLED)
+    }
     return next(e)
   })
 
@@ -195,38 +241,19 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // The fallback: calls next(e) once and returns its result unchanged; its own errors are caught.
-  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    let laneId: string | null = null
+  // The fallback observes the rows the conversation stores and keeps each row as it is.
+  on('session.append', async ($, e, next) => {
+    const kept = await next(e)
     try {
-      const seat = matches(e.command, (await read($, seatsAtom)).doc?.local.seats ?? [])
-      if (seat !== undefined) {
-        const startMs = await $.clock.now()
-        const id = e.tool_use_id
-        const lane = openLane(seat, id, startMs, e.description ?? null, e.run_in_background === true)
-        await update($, lanesAtom, s => ({ ...s, lanes: prune([...s.lanes.filter(l => l.id !== id), lane]) }))
-        laneId = id
+      const uses = bashUses(e.message.content)
+      const results = toolResults(e.message.content)
+      if (uses.length + results.length > 0) {
+        rows = rows.then(() => observeRow($, uses, results)).catch(() => undefined)
       }
     } catch {
-      laneId = null
+      // a row the pane cannot read opens no lane
     }
-    const ran = await next(e)
-    if (laneId !== null) {
-      const id = laneId
-      try {
-        const endMs = await $.clock.now()
-        if (ran.deny !== undefined) {
-          await update($, lanesAtom, s => ({ ...s, lanes: s.lanes.filter(l => l.id !== id) })) // it never ran
-        } else if (e.run_in_background === true || isBackgrounded(ran.result)) {
-          await update($, lanesAtom, s => ({ ...s, lanes: setBackground(s.lanes, id) })) // a usage row closes it
-        } else {
-          await update($, lanesAtom, s => ({ ...s, lanes: closeLane(s.lanes, id, endMs, ran.isError === true ? 'failed' : 'ok') }))
-        }
-      } catch {
-        // the lane closes at run_max_s
-      }
-    }
-    return ran
+    return kept
   }).catch((_, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

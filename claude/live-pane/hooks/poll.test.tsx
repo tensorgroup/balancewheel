@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { boot, CWD, doc, drawn, paneProps, T0 } from './fixture'
+import { agent, append, boot, CWD, doc, drawn, paneProps, resultRow, T0, useRow } from './fixture'
 
 test('bw live gets its argv: bwPath, the session folder, and the session start in whole seconds', async ($, on) => {
   const b = await boot($, on, { out: JSON.stringify(doc()) })
@@ -40,7 +40,9 @@ test('a config-error document is a failed poll: the last good data stays and the
   const ui = await $.ui.mount({ ...paneProps(90, 40), surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /seat data/ }))?.text).toMatch(/s old \(bw: config error: bad key\)/)
   await ui.unmount()
-  await $.tool.call({ tool: 'Bash', command: './my-seat.sh go' }) // the seats of the last good document still match
+  await append($, useRow('toolu_1', './my-seat.sh go')) // the seats of the last good document still match
+  await append($, resultRow('toolu_1'))
+  await b.clock.settle()
   const ui2 = await $.ui.mount({ ...paneProps(90, 40), surface: 'terminal' })
   expect(await ui2.find({ type: 'Text', text: /local seat · ok/ })).toBeDefined()
   await ui2.unmount()
@@ -75,10 +77,31 @@ test('the end of the session cancels a call in flight and stops the timer', asyn
   expect(b.argvs.length).toBe(1)
 })
 
+test('after /clear the timer and the polls go on, the session state starts over, and --since moves', async ($, on) => {
+  const b = await boot($, on, {
+    agents: [agent({ id: 'a2', type: 'Plan', status: 'completed', description: 'outline the steps' })],
+    out: JSON.stringify(doc()),
+  })
+  await b.clock.advance(10_000)
+  expect((await drawn($)).some(t => t.includes('outline the steps'))).toBe(true)
+  // the old session's finished agent may still be listed: it does not come back into the history
+  b.usage.startedAt = T0 + 10_000 // the new session counts from the clear
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  const before = b.argvs.length
+  await b.clock.advance(10_000)
+  expect(b.argvs.length).toBeGreaterThan(before)
+  expect(b.argvs[b.argvs.length - 1]?.[6]).toBe(String(Math.floor((T0 + 10_000) / 1000)))
+  const texts = await drawn($)
+  expect(texts.some(t => t.includes('outline the steps'))).toBe(false)
+  expect(texts.some(t => t.includes('no finished runs yet'))).toBe(true)
+  expect(texts.some(t => /^◷ 1\ds/.test(t))).toBe(true) // about 10 s since the clear, not 20 s
+})
+
 test('a v: 2 document is ignored', async ($, on) => {
   const b = await boot($, on, { out: JSON.stringify({ ...doc(), v: 2 }) })
   await b.clock.advance(5000)
-  await $.tool.call({ tool: 'Bash', command: './my-seat.sh go' }) // the v2 seats are not read
+  await append($, useRow('toolu_1', './my-seat.sh go')) // the v2 seats are not read
+  await b.clock.settle()
   expect((await drawn($)).some(t => t.includes('my-seat'))).toBe(false)
   const ui = await $.ui.mount({ ...paneProps(90, 40), surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /seat data/ }))?.text).toMatch(/v 2/)
