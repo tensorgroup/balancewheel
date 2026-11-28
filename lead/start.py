@@ -29,8 +29,9 @@ What it prints (sections on a terminal, `bw start: ` lines elsewhere) is `lead/s
      never waits (the child reads the seat keys itself; start reads none);
   8. the cockpit hint, the cc-switch checks, the Orca checks when Orca is in use, config warnings.
 `state_dir/start.json` records what happened. `--dry-run` runs only git (and `orca status`
-when the canvas is Orca) and writes nothing; with a `claude-code` lead in the order it says it would
-ensure the live pane plugin (`bw lead` does that at the launch, `lead/claude_pane.py`).
+when the canvas is Orca) and writes nothing. For the lead that would start, it names the live pane
+check that `bw lead` runs before every lead (`lead/claude_pane.py`): the source check on every runtime,
+and the install or update for a `claude-code` lead with `claude_pane` not false.
 """
 import os
 import pwd
@@ -543,6 +544,20 @@ def _quota_and_lead(config, state, project, profile, plans, now, rep):
     return d._replace(reason=_lead_reason(d, profile))  # words from here on
 
 
+def _pane_line(rep, config, lead):
+    """The dry run's line for the live pane check that `bw lead` runs before every lead
+    (`lead/claude_pane.ensure`); nothing is called here. Every runtime gets the source check, which
+    uninstalls the pane when bw's checkout is unsafe; only a claude-code lead with `claude_pane` not
+    false also gets the install or update."""
+    if not lead:
+        return
+    if (config.get("leads") or {}).get(lead, {}).get("runtime") == "claude-code" and config.get("claude_pane") is not False:
+        rep.line("Lead", "would ensure the live pane plugin")
+    else:
+        rep.line("Lead", "would check the live pane's source before the lead starts "
+                         "(an unsafe bw checkout uninstalls the pane)")
+
+
 def _announce(rep, d, here=False):
     """The lead decision's lines (the Lead section opens here). `here`: the lead starts in this terminal."""
     if d.notice:
@@ -661,9 +676,7 @@ def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, r
         rep.line("Quota", f"would read quota for plan {p}")
     decision = _quota_and_lead(config, state, project, profile, plans, now, rep)
     _announce(rep, decision)
-    if config.get("claude_pane") is not False and any(
-            (config.get("leads") or {}).get(n, {}).get("runtime") == "claude-code" for n in profile.get("lead_order") or []):
-        rep.line("Lead", "would ensure the live pane plugin")  # bw lead runs lead/claude_pane.ensure; nothing is called here
+    _pane_line(rep, config, decision.lead)
     cmd = _lead_command(bw, env)
     up, why = orca.running(run) if orca.canvas(config) == "orca" and not here else (False, None)
     if here:

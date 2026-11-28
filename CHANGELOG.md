@@ -79,8 +79,10 @@ not against the prose.
   failure or Ctrl-C; Ctrl-C stops the step, and the launch never stops. Every `claude` call runs with cwd set to
   bw's checkout, and the install is `claude plugin install --scope user live-pane@balancewheel`. A repair
   uninstalls first, so a failed step is retried at the next run. Running bw from a second checkout uninstalls the
-  first checkout's pane (its marketplace stays). `bw start --dry-run` prints `would ensure the live pane
-  plugin` when a lead in the profile's order runs `claude-code` and `claude_pane` is not false, and calls nothing.
+  first checkout's pane (its marketplace stays). `bw start --dry-run` names the check for the lead
+  that would start, and calls nothing: `would ensure the live pane plugin` for a `claude-code` lead with
+  `claude_pane` not false, else `would check the live pane's source before the lead starts (an unsafe bw
+  checkout uninstalls the pane)`.
   `BW_CLAUDE_CMD` (a JSON list) replaces `claude` for these calls; tests point it at `tests/fixtures/fake_claude.py`.
 - **The live pane plugin (`claude/live-pane/`) and `lead/version.py`.** A Claude Code plugin that shows one
   lane per running agent or seat (main first; the bead moves slower as the context fills: slower = fuller context; a seat with no known window moves at a middle pace), the session's

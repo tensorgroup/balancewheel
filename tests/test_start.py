@@ -613,13 +613,38 @@ class StartCase(unittest.TestCase):
     def test_dry_run_says_it_would_ensure_the_live_pane(self):
         out = self.dry_run(lead_runtime="claude-code")
         self.assertIn("bw start: would ensure the live pane plugin\n", out)
+        self.assertNotIn("would check the live pane's source", out)
         self.assertFalse(self.claude_called())
         self.assertFalse(os.path.exists(self.state), "dry run wrote to the state dir")
-        self.assertNotIn("would ensure the live pane plugin", self.dry_run(lead_runtime="claude-code", claude_pane=False))
 
-    def test_dry_run_names_no_live_pane_without_a_claude_code_lead(self):
+    def test_dry_run_names_the_pane_source_check_on_every_runtime(self):
+        # bw lead checks the pane's source before every lead, and an unsafe checkout uninstalls the pane on
+        # any runtime: the dry run says so for a lead that gets no install, and with claude_pane false
+        check = ("bw start: would check the live pane's source before the lead starts "
+                 "(an unsafe bw checkout uninstalls the pane)\n")
+        for runtime in ("pi", "kimi", "codex", "agy"):
+            with self.subTest(runtime=runtime):
+                out = self.dry_run(lead_runtime=runtime)
+                self.assertIn(check, out)
+                self.assertNotIn("would ensure the live pane plugin", out)
+                self.assertFalse(self.claude_called())
+        out = self.dry_run(lead_runtime="claude-code", claude_pane=False)
+        self.assertIn(check, out)
+        self.assertNotIn("would ensure the live pane plugin", out)
+        self.assertFalse(self.claude_called())
+
+    def test_dry_run_pane_line_follows_the_lead_that_would_start(self):
         self.config["leads"]["lx"] = {"runtime": "claude-code", "model": "m", "plan": "pc"}  # not in the order
-        self.assertNotIn("live pane", self.dry_run())
+        out = self.dry_run()
+        self.assertNotIn("would ensure the live pane plugin", out)
+        self.assertIn("would check the live pane's source", out)
+        self.assertFalse(self.claude_called())
+
+    def test_dry_run_with_no_lead_names_no_pane_check(self):
+        self.config["profiles"]["p"]["lead_order"] = []
+        self.last_run = FakeRun()
+        code, out = self.start(self.last_run, dry_run=True)
+        self.assertNotIn("live pane", out)
         self.assertFalse(self.claude_called())
 
     def test_dry_run_runs_nothing_but_git_and_orca_status(self):
