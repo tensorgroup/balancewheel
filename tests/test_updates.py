@@ -70,6 +70,17 @@ class WillUpdate(unittest.TestCase):
                 self.assertEqual(updates.will_update(name, tools[name], previous, NOW, updates.interval_seconds(config)),
                                  actual, name)
 
+    def test_a_malformed_history_entry_is_treated_as_missing(self):
+        tools = {"a": {"update": ["a-up"], "runtime": "pi"}}
+        for bad in ("1.0", 5, None, ["x"]):
+            previous = {"a": bad}
+            self.assertTrue(updates.will_update("a", tools["a"], previous, NOW, 3600), bad)
+            self.assertEqual(updates.will_update_names(cfg(tools, interval=1), previous, NOW), ["a"])
+        with tempfile.TemporaryDirectory() as state:
+            run = FakeRun(updates={("a-up",): (0, 0, False)})
+            out = updates.update_all(cfg(tools, interval=1), state, NOW, run=run, previous={"a": "1.0"})
+            self.assertIn("a", out)
+
     def test_names_in_order(self):
         config = cfg({"a": {"update": ["a-up"], "runtime": "pi"}, "z": {"update": ["z-up"], "runtime": "kimi"},
                       "m": {}})

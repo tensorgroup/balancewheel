@@ -80,13 +80,19 @@ def interval_seconds(config):
     return int((config.get("updates") or {}).get("min_interval_hours", 0)) * 3600
 
 
+def _last_update_at(previous, name):
+    """When `name` was last updated, from start.json's history; a damaged entry counts as missing."""
+    entry = (previous or {}).get(name)
+    return entry.get("last_update_at") if isinstance(entry, dict) else None
+
+
 def will_update(name, tool_cfg, previous, now, interval_s) -> bool:
     """Whether `_update_one` would run this tool's update command (a lock held by a running lead is
     not known until it tries). It lets `bw start` say what it is about to wait for."""
     tool_cfg = tool_cfg or {}
     if tool_cfg.get("self_updating") or not tool_cfg.get("update"):
         return False
-    prev_at = ((previous or {}).get(name) or {}).get("last_update_at")
+    prev_at = _last_update_at(previous, name)
     if interval_s and isinstance(prev_at, (int, float)) and now - prev_at < interval_s:
         return False
     return tool_runtime(name, tool_cfg) is not None or name in NON_RUNTIME_TOOLS
@@ -100,7 +106,7 @@ def will_update_names(config, previous, now) -> list:
 def _update_one(name, tool_cfg, state, now, interval_s, previous, run):
     """-> (ToolResult, last_update_at)."""
     t0 = time.monotonic()
-    prev_at = (previous.get(name) or {}).get("last_update_at")
+    prev_at = _last_update_at(previous, name)
     rt = tool_runtime(name, tool_cfg)
 
     def done(before, after, result, detail, at=prev_at):
