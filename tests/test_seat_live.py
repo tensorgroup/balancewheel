@@ -1,4 +1,4 @@
-import json, os, shutil, sys, tempfile, unittest
+import json, os, shutil, sys, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -14,6 +14,17 @@ def _codex_lines(cwd, ctx):
             {"type": "event_msg", "payload": {"type": "token_count", "info": {
                 "last_token_usage": {"input_tokens": ctx}, "model_context_window": 258000,
                 "total_token_usage": {"input_tokens": ctx, "output_tokens": 1}}}}]
+
+
+def _iso(t):
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".250Z"
+
+
+def _claude_lines(began, ctx):
+    return [{"type": "user", "timestamp": _iso(began), "message": {"role": "user"}},
+            {"type": "assistant", "timestamp": _iso(began + 5), "message": {"id": "m", "usage": {
+                "input_tokens": ctx, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                "output_tokens": 1}}}]
 
 
 def _pi_lines(cwd, ctx):
@@ -204,6 +215,50 @@ class SeatLive(unittest.TestCase):
             self.write(f"sessions/--w--/{i:04d}.jsonl", _pi_lines("/other", 9), NEW + i)
         self.write("sessions/--w--/old.jsonl", _pi_lines("/w", 5), OLD)
         self.assertEqual(live.live_usage("pi", self.home, None, "/w", 0.0), live.EMPTY)
+
+    def test_an_older_session_in_the_same_folder_is_not_used(self):
+        # the lead's own claude-code session for this worktree: begun before start, written to just now
+        start = NEW - 50
+        self.write(".claude/projects/-w/lead.jsonl", _claude_lines(start - 3600, 1000), NEW)
+        self.write(".claude/projects/-w/seat.jsonl", _claude_lines(start + 10, 2000), NEW - 20)
+        self.assertEqual(live.live_usage("claude-code", self.home, None, "/w", start)["ctx"], 2000)
+        os.unlink(os.path.join(self.home, ".claude/projects/-w/seat.jsonl"))
+        self.assertEqual(live.live_usage("claude-code", self.home, None, "/w", start), live.EMPTY)
+        # codex: the session_meta timestamp says when the session began
+        meta = _codex_lines("/w", 1000)
+        meta[0]["payload"]["timestamp"] = _iso(start - 3600)
+        self.write("sessions/2026/11/27/rollout-old.jsonl", meta, NEW)
+        self.assertEqual(live.live_usage("codex", self.home, None, "/w", start), live.EMPTY)
+        meta[0]["payload"]["timestamp"] = _iso(start + 1)
+        self.write("sessions/2026/11/27/rollout-new.jsonl", meta, NEW - 10)
+        self.assertEqual(live.live_usage("codex", self.home, None, "/w", start)["ctx"], 1000)
+
+    def test_old_files_are_never_opened(self):
+        start = time.time() - 60
+        day = time.strftime("%Y/%m/%d", time.gmtime(start))
+        new = self.write(f"sessions/{day}/rollout-new.jsonl", _codex_lines("/w", 2000), start + 30)
+        old_here = self.write(f"sessions/{day}/rollout-stale.jsonl", _codex_lines("/w", 1), start - 3600)
+        old_day = self.write("sessions/2020/01/01/rollout-2020-01-01-oldid.jsonl", _codex_lines("/w", 3), start + 40)
+        opened, real = [], live._read
+        with mock.patch.object(live, "_read", lambda p, tail: opened.append(p) or real(p, tail)):
+            self.assertEqual(live.live_usage("codex", self.home, None, "/w", start)["ctx"], 2000)
+            self.assertNotIn(old_here, opened)
+            self.assertNotIn(old_day, opened)  # its date folder is older than start: not even listed
+            self.assertEqual(set(opened), {new})
+            # a session id still finds its file in an old folder, by name
+            self.assertEqual(live.live_usage("codex", self.home, "oldid", "/w", start)["ctx"], 3)
+
+    def test_a_short_session_id_does_not_match_inside_a_name(self):
+        self.write("sessions/2026/11/27/rollout-2026-11-27T10-00-00-abc.jsonl", _codex_lines("/w", 1000), OLD)
+        self.assertEqual(live.live_usage("codex", self.home, "2026", "/w", float(NEW)), live.EMPTY)
+        self.assertEqual(live.live_usage("codex", self.home, "abc", "/w", float(NEW))["ctx"], 1000)
+
+    def test_timestamps(self):
+        self.assertEqual(live._time("2026-11-27T10:00:00Z"), 1795773600.0)
+        self.assertEqual(live._time("2026-11-27T11:00:00.5+01:00"), 1795773600.5)
+        self.assertEqual(live._time(1795773600000), 1795773600.0)
+        self.assertIsNone(live._time("yesterday"))
+        self.assertIsNone(live._time(True))
 
     # -- paths ---------------------------------------------------------------------------------
     def test_session_root_with_a_seat_home(self):

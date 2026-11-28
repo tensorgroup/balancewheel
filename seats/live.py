@@ -18,13 +18,19 @@ Event shapes, per runtime (key names only):
   `<kimi home>/session_index.jsonl` maps each `sessionDir` to its `workDir` (newest last).
 - agy: no known session file; always `EMPTY`.
 
+With no `session_id` (or none that names a file), a session counts only when its file was written at or
+after `start - 1` and it also began then (its first record's `timestamp`, else the file's birth time).
+So the lead's own session in the same folder, begun before the run, is never read.
+
 This module is not hashed into the seat key (seats/verify.py), so a format fix here resets no seat.
 """
+import calendar
 import json
 import math
 import os
 import re
 import stat
+import time
 from typing import Optional
 
 from seats.adapters import valid_session
@@ -134,23 +140,26 @@ def _get(obj, *keys):
 
 # -- candidates ------------------------------------------------------------------------------------
 
-def _regular_mtime(path):
-    try:
-        st = os.lstat(path)
-    except OSError:
+_ISO = re.compile(r"(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):(\d\d)(\.\d+)?(Z|[+-]\d\d:?\d\d)?")
+
+
+def _time(x):
+    """An epoch from a record's timestamp: an ISO 8601 string (no zone: UTC) or a number (ms when huge)."""
+    n = _num(x)
+    if n is not None:
+        return n / 1000.0 if n > 1e11 else float(n)
+    m = _ISO.fullmatch(x) if isinstance(x, str) else None
+    if not m:
         return None
-    return st.st_mtime if stat.S_ISREG(st.st_mode) else None
-
-
-def _newest(paths):
-    """[(mtime, path, name)] of the regular files, newest first, at most MAX_CANDIDATES."""
-    out = []
-    for path, name in paths:
-        m = _regular_mtime(path)
-        if m is not None:
-            out.append((m, path, name))
-    out.sort(key=lambda x: x[0], reverse=True)
-    return out[:MAX_CANDIDATES]
+    try:
+        t = calendar.timegm(tuple(int(g) for g in m.groups()[:6]) + (0, 0, 0))
+    except (ValueError, OverflowError):
+        return None
+    tz = m.group(8)
+    if tz and tz != "Z":
+        sign = -1 if tz[0] == "-" else 1
+        t -= sign * (int(tz[1:3]) * 3600 + int(tz[-2:]) * 60)
+    return t + (float(m.group(7)) if m.group(7) else 0.0)
 
 
 def _listdir(d):
@@ -161,15 +170,23 @@ def _listdir(d):
 
 
 def _jsonl_in(d):
-    return [(os.path.join(d, n), n) for n in _listdir(d) if n.endswith(".jsonl")]
+    return [(os.path.join(d, n), n, None) for n in _listdir(d) if n.endswith(".jsonl")]
 
 
-def _codex_files(root):
+def _codex_files(root, floor):
+    """(path, name, day) of the rollout files under `Y/M/D` folders; with `floor`, only folders of that day
+    or later (a folder names the day its sessions began)."""
     out = []
     for y in _listdir(root):
         for m in _listdir(os.path.join(root, y)):
             for d in _listdir(os.path.join(root, y, m)):
-                out += [(p, n) for p, n in _jsonl_in(os.path.join(root, y, m, d)) if n.startswith("rollout-")]
+                try:
+                    day = (int(y), int(m), int(d))
+                except ValueError:
+                    continue
+                if floor is None or day >= floor:
+                    out += [(p, n, day) for p, n, _ in _jsonl_in(os.path.join(root, y, m, d))
+                            if n.startswith("rollout-")]
     return out
 
 
@@ -182,7 +199,8 @@ def _inside(path, root):
 
 
 def _kimi_files(root, dir):
-    """The wire files of the index entries whose workDir is `dir` (the index sits next to `sessions/`)."""
+    """The wire files of the index entries whose workDir is `dir` (the index sits next to `sessions/`);
+    the name is the entry's sessionId."""
     data = _read(os.path.join(os.path.dirname(root), "session_index.jsonl"), tail=True)
     if not data:
         return []
@@ -193,29 +211,83 @@ def _kimi_files(root, dir):
             continue
         sdir = os.path.join(root, sdir)  # a relative sessionDir is taken against the sessions root
         if _inside(sdir, root):
-            out.append((os.path.join(sdir, "agents", "main", "wire.jsonl"), sid if isinstance(sid, str) else ""))
-    return out[-MAX_CANDIDATES:]
+            out.append((os.path.join(sdir, "agents", "main", "wire.jsonl"), sid if isinstance(sid, str) else "", None))
+    return out
 
 
-def _candidates(runtime, root, dir):
+def _files(runtime, root, dir, floor):
     if runtime == "codex":
-        return [c for c in _newest(_codex_files(root)) if _get(_first_row(c[1]), "payload", "cwd") == dir]
-    if runtime == "claude-code":
-        return _newest(_jsonl_in(root))
-    if runtime == "pi":
-        return [c for c in _newest(_jsonl_in(root)) if _first_row(c[1]).get("cwd") == dir]
+        return _codex_files(root, floor)
+    if runtime in ("claude-code", "pi"):
+        return _jsonl_in(root)
     if runtime == "kimi":
-        return _newest(_kimi_files(root, dir))
+        return _kimi_files(root, dir)
     return []
 
 
-def _pick(cands, session_id, start):
-    if valid_session(session_id):
-        for c in cands:
-            if session_id in c[2]:
-                return c[1]
-    for m, path, _ in cands:
-        if m >= start - 1:
+def _floor_day(start):
+    """The earliest `Y/M/D` folder a session begun at `start - 1` or later can sit in, in any time zone."""
+    try:
+        return time.gmtime(start - 1 - 86400)[:3]
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _names_session(runtime, name, sid):
+    if runtime == "kimi":
+        return name == sid
+    stem = name[:-len(".jsonl")]
+    return stem == sid or stem.endswith(("-" + sid, "_" + sid))
+
+
+def _ran_in(runtime, first, dir):
+    if runtime == "codex":
+        return _get(first, "payload", "cwd") == dir
+    if runtime == "pi":
+        return first.get("cwd") == dir
+    return True  # claude-code: the slug names dir; kimi: the index's workDir did
+
+
+def _began(first, st):
+    """When the session began: its first record's timestamp, else the file's birth time (else mtime)."""
+    t = _time(first.get("timestamp"))
+    if t is None:
+        t = _time(_get(first, "payload", "timestamp"))
+    if t is None:
+        t = getattr(st, "st_birthtime", None) or st.st_mtime
+    return t
+
+
+def _lstat_reg(path):
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    return st if stat.S_ISREG(st.st_mode) else None
+
+
+def _pick(runtime, root, dir, session_id, start):
+    """The file named by `session_id` when one holds it (and ran in `dir`). Else the newest file written
+    at or after `start - 1` whose session also began then (so an older session in the same folder, such as
+    the lead's own, never counts), checked newest first; files older than that are never opened."""
+    by_id = valid_session(session_id)
+    files = _files(runtime, root, dir, None if by_id else _floor_day(start))
+    if by_id:
+        for path, name, _ in files:
+            if _names_session(runtime, name, session_id) and _lstat_reg(path) and \
+                    _ran_in(runtime, _first_row(path), dir):
+                return path
+        floor = _floor_day(start)
+        files = [f for f in files if f[2] is None or floor is None or f[2] >= floor]
+    recent = []
+    for path, _, _ in files:
+        st = _lstat_reg(path)
+        if st is not None and st.st_mtime >= start - 1:
+            recent.append((st.st_mtime, path, st))
+    recent.sort(key=lambda x: x[0], reverse=True)
+    for _, path, st in recent[:MAX_CANDIDATES]:
+        first = _first_row(path)
+        if _ran_in(runtime, first, dir) and _began(first, st) >= start - 1:
             return path
     return None
 
@@ -287,7 +359,7 @@ def live_usage(runtime: str, home: Optional[str], session_id: Optional[str], dir
         root = session_root(runtime, home, dir) if isinstance(dir, str) else None
         if root is None:
             return dict(EMPTY)
-        path = _pick(_candidates(runtime, root, dir), session_id, start)
+        path = _pick(runtime, root, dir, session_id, start)
         data = _read(path, tail=True) if path else None
         return _usage(runtime, _rows(data), seat_cfg) if data else dict(EMPTY)
     except Exception:  # best effort: a vendor format change must never break bw live
