@@ -7,3 +7,7 @@ __pycache__/
 node-compile-cache/
 .tmp??????
 .worktrees/
+
+# Claude Code: its worktree checkouts and write-scratch dir (not project config)
+.claude/worktrees/
+.claude/.cc-writes/
