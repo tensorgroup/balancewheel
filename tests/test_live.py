@@ -222,9 +222,19 @@ class Live(unittest.TestCase):
         self.assertEqual([o["run_id"] for o in d["open"]], [s["run_id"]])
         self.assertEqual(d["recent"], [])
 
-    def test_an_end_with_no_start_in_reach_opens_nothing_and_is_not_recent(self):
+    def test_an_end_with_seat_and_dir_and_no_start_in_reach_is_recent(self):  # spec §1
         store.append(self.log, runs.end_row("r0123456789ab", "my-seat", self.wt, True, None, 1.0, t=NOW - 2))
+        d = self.build()
+        self.assertEqual(d["open"], [])
+        self.assertEqual(d["recent"], [{"run_id": "r0123456789ab", "seat": "my-seat", "model": None, "label": None,
+                                        "start": None, "end": NOW - 2, "ok": True, "reason": None, "source": "bw",
+                                        "stand_in_for": None, "tokens_in": None, "tokens_out": None,
+                                        "cost_usd": None, "ctx_peak": None}])
+
+    def test_an_end_with_null_seat_or_dir_opens_nothing_and_is_not_recent(self):
         store.append(self.log, runs.end_row("r0123456789ac", None, None, False, "exit 1", None, t=NOW - 2))
+        store.append(self.log, runs.end_row("r0123456789ad", None, self.wt, False, "exit 1", None, t=NOW - 2))
+        store.append(self.log, runs.end_row("r0123456789ae", "my-seat", None, True, None, None, t=NOW - 2))
         d = self.build()
         self.assertEqual((d["open"], d["recent"]), ([], []))
 
@@ -380,7 +390,9 @@ class Live(unittest.TestCase):
                           for o in d["open"]], [(s["run_id"], "my-seat", "live", None, None, None, "local", "🦉")])
         store.append(self.log, runs.end_row(s["run_id"], "my-seat", self.wt, True, None, 8099.0, t=NOW - 1))
         d = self.build(since=NOW - 3600)
-        self.assertEqual((d["open"], d["recent"]), ([], []))  # closed; no start joins it, so not in recent
+        self.assertEqual(d["open"], [])
+        self.assertEqual([(r["run_id"], r["seat"], r["start"], r["end"], r["ok"], r["source"]) for r in d["recent"]],
+                         [(s["run_id"], "my-seat", None, NOW - 1, True, "local")])  # it moves to recent at its end
 
     def test_an_old_beat_is_stale(self):
         s = runs.start_row("my-seat", "model-a", self.wt, "x", "local", t=NOW - 9000)

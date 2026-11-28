@@ -12,8 +12,10 @@ alone. Pending rows are joined with logged rows first; open, recent, and usage a
   reach; `start`, `model`, and `label` are null), with its state (`run_state`). A panel seat that is done
   (`ok` or `absent`, no running ask) closes its run. A running panel seat or ask with no open run becomes
   one entry with `run_id: null`. One panel seat shows once.
-- recent: end rows in the window that join a start, with tokens and cost from the run's `usage` row when
-  the end row has none. An end whose start is out of reach opens nothing and is not listed.
+- recent: end rows in the window, with tokens and cost from the run's `usage` row when the end row has none.
+  An end whose start is out of reach still shows (spec §1: it repeats `seat` and `dir`), with `start`,
+  `model`, and `label` null. An end with a null `seat` or `dir` (`bw run end` found no start) opens nothing
+  and is not listed.
 - usage: `usage` rows with no `run_id` in the window.
 On a config error `main` prints `empty(now, "config error: ...")` and exits 0 (PD-12).
 """
@@ -308,17 +310,21 @@ def _recent(by_id, usage, since, limit):
     out = []
     for rid, r in by_id.items():
         end = r.end
-        if end is None or r.start is None:
-            continue  # an end whose start is out of reach opens nothing and is not listed
+        if end is None:
+            continue
+        st = r.start if r.start is not None else {}
+        if r.start is None and not _str(end.get("seat")):
+            continue  # `bw run end` found no start: null seat, so not listed (a null dir is already out)
         te = _time(end)
         if te is None or te < since:
             continue
-        st, u = r.start, by_run.get(rid) or {}
+        u = by_run.get(rid) or {}
         seat = end.get("seat") if _str(end.get("seat")) else st.get("seat") if _str(st.get("seat")) else None
         item = {"run_id": rid, "seat": seat, "model": st.get("model") if _str(st.get("model")) else None,
-                "label": st.get("label") if _str(st.get("label")) else None, "start": _time(st), "end": te,
+                "label": st.get("label") if _str(st.get("label")) else None, "start": _time(st) if st else None, "end": te,
                 "ok": end.get("ok") if isinstance(end.get("ok"), bool) else None,
-                "reason": end.get("reason") if _str(end.get("reason")) else None, "source": r.src,
+                "reason": end.get("reason") if _str(end.get("reason")) else None,
+                "source": r.src if r.start is not None else "local" if r.beat is not None else r.end_src,
                 "stand_in_for": st.get("stand_in_for") if _str(st.get("stand_in_for")) else None}
         for k in ("tokens_in", "tokens_out", "cost_usd"):
             v = _num(end.get(k))
