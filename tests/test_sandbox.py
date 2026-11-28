@@ -79,6 +79,70 @@ class Grants(unittest.TestCase):
         self.assertNotIn(str(bw_root), nono["filesystem"]["allow"])
         self.assertIn(f'(allow file-read* (literal "{links / "bw"}"))', nono["unsafe_macos_seatbelt_rules"])
 
+    def python_install(self, prefix, version="3.10"):
+        """A fake Python install root: bin/python3 (a link to python3.N, as pyenv lays it out) and the
+        standard library's landmark lib/python3.N/os.py."""
+        (prefix / "bin").mkdir(parents=True)
+        (prefix / "bin" / f"python{version}").write_text("")
+        (prefix / "bin" / "python3").symlink_to(f"python{version}")
+        (prefix / "lib" / f"python{version}").mkdir(parents=True)
+        (prefix / "lib" / f"python{version}" / "os.py").write_text("")
+        return prefix / "bin" / "python3"
+
+    def test_a_python_under_the_home_folder_gets_a_read_grant_for_its_prefix(self):
+        # bin/bw runs `#!/usr/bin/env python3`; nono denies reads under the home folder, so a pyenv Python there
+        # needs its install root readable: that root only, never ~/.pyenv or the home folder, and never writable
+        home = self.root / "home"
+        prefix = home / ".pyenv" / "versions" / "3.10.16"
+        exe = self.python_install(prefix)
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            self.assertEqual(sandbox.python_reads(which=lambda n: str(exe)), [str(prefix)])
+            with mock.patch.object(sandbox.shutil, "which", lambda n, *a, **k: str(exe) if n == "python3" else None):
+                g = self.grants(self.wt)
+        self.assertIn(str(prefix), g.read)
+        self.assertNotIn(str(home / ".pyenv"), g.read)
+        self.assertNotIn(str(home), g.read)
+        self.assertFalse([p for a, _, p in g.rules if a == "allow" and sandbox._inside(p, [str(prefix)])])
+
+    def test_a_system_python_gets_no_extra_grant(self):
+        home = self.root / "home"; home.mkdir()
+        exe = self.python_install(self.root / "usr-local")  # outside the home folder: readable already
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            self.assertEqual(sandbox.python_reads(which=lambda n: str(exe)), [])
+            self.assertEqual(sandbox.python_reads(which=lambda n: None), [])
+
+    def test_a_symlink_shim_resolves_to_the_real_prefix(self):
+        # ~/.local/bin/python3 -> the real install (uv lays it out so): the real prefix, and the link node itself
+        # (nono resolves grants to real paths, so /usr/bin/env must still read the link where PATH finds it)
+        home = self.root / "home"
+        prefix = home / ".local" / "share" / "uv" / "python" / "cpython-3.12.4"
+        exe = self.python_install(prefix, "3.12")
+        (home / ".local" / "bin").mkdir(parents=True)
+        shim = home / ".local" / "bin" / "python3"
+        shim.symlink_to(exe)
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            self.assertEqual(sandbox.python_reads(which=lambda n: str(shim)), [str(prefix), str(shim)])
+            nono = sandbox.nono_profile(sandbox.Grants([], [str(prefix), str(shim)], [], [], [], []), str(self.root / "s"))
+        self.assertIn(str(prefix), nono["filesystem"]["read"])
+        self.assertIn(f'(allow file-read* (literal "{shim}"))', nono["unsafe_macos_seatbelt_rules"])
+
+    def test_no_python_grant_that_is_not_an_install_root_or_holds_the_home_folder(self):
+        home = self.root / "home"
+        # ~/bin/python3: its "prefix" is the home folder itself
+        (home / "bin").mkdir(parents=True); (home / "bin" / "python3").write_text("")
+        # ~/.local/bin/python3 as a real file, with no standard library: ~/.local is not an install root
+        (home / ".local" / "bin").mkdir(parents=True); (home / ".local" / "bin" / "python3").write_text("")
+        # a binary not in a bin/ dir
+        (home / "tools").mkdir(); (home / "tools" / "python3").write_text("")
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            for exe in (home / "bin" / "python3", home / ".local" / "bin" / "python3", home / "tools" / "python3"):
+                with self.subTest(exe=str(exe)):
+                    self.assertEqual(sandbox.python_reads(which=lambda n: str(exe)), [])
+            exe = self.python_install(self.root / "outer")  # an install root that holds the home folder
+            os.rename(home, self.root / "outer" / "home")
+        with mock.patch.dict(os.environ, {"HOME": str(self.root / "outer" / "home")}):
+            self.assertEqual(sandbox.python_reads(which=lambda n: str(exe)), [])
+
     def test_linked_lead_writes_worktree_runtime_state_and_handoffs_only(self):
         g = self.grants(self.wt)
         allows = [p for _, p in self.rules(g, "allow")]

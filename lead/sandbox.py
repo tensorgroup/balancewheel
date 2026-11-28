@@ -12,11 +12,14 @@ canvas and cockpit ports on any host (denied_ports). bw's sealed copies of third
 unreadable, and so are the inbox record (every project's asks and answers) and every other
 worktree's answers view; the lead's own view dir is readable, and no write rule covers it. bw's own
 checkout and the `bw` link on PATH that points into it are readable (`bw_reads`), never writable, so a
-lead can start `bw run` and `bw-panel-wait` under nono, which denies reads under the home folder.
+lead can start `bw run` and `bw-panel-wait` under nono, which denies reads under the home folder. For
+the same reason the install root of the `python3` they run is readable when it is under the home folder
+(`python_reads`).
 
     python3 -m lead.sandbox run --worktree DIR --state-dir DIR [--read P]... [--write P]...
         [--env K=V]... [--private-home] [--deny-port N]... [--backend nono|sandbox-exec] -- argv...
 """
+import glob
 import json
 import os
 import shutil
@@ -122,6 +125,33 @@ def bw_reads(root=BW_ROOT, which=shutil.which):
     return out
 
 
+def python_reads(which=None):
+    """Read grants that let a contained lead run the `python3` that `bw` runs: `bin/bw` starts with
+    `#!/usr/bin/env python3`, so that is the first `python3` on the lead's PATH (bw's own). nono denies
+    reads under the home folder, so a Python installed there (pyenv, uv, asdf) needs its install root.
+    The path is resolved to its real file; the root is the parent of its `bin/` dir and must hold the
+    standard library (`lib/python3.N/os.py`, the landmark Python itself uses). Also the link node where
+    PATH finds it, when that is a link under the home folder (nono resolves grants to real paths). Nothing
+    for a Python outside the home folder (it is readable already), and nothing for a root that is not a
+    Python install or that holds the home folder: a read grant there would lift the secret denies."""
+    exe = (which or shutil.which)("python3")
+    if not exe:
+        return []
+    home = os.path.realpath(os.path.expanduser("~"))
+    real = os.path.realpath(exe)
+    bin_dir = os.path.dirname(real)
+    prefix = os.path.dirname(bin_dir)
+    if os.path.basename(bin_dir) != "bin" or prefix == home or not _inside(prefix, [home]) or _inside(home, [prefix]):
+        return []
+    if not glob.glob(os.path.join(glob.escape(prefix), "lib", "python3.*", "os.py")):
+        return []
+    out = [check_path(prefix)]
+    link = os.path.abspath(exe)
+    if os.path.islink(link) and _inside(link, [home]) and not _inside(link, [prefix]):
+        out.append(check_path(link))
+    return out
+
+
 def lead_grants(project, runtime, state_dir):
     """Ordered write rules and read grants for a lead working in `project.worktree`."""
     common, wt = project.common_dir, project.worktree
@@ -167,6 +197,7 @@ def lead_grants(project, runtime, state_dir):
               if os.path.islink(os.path.expanduser(p))]
     reads.append(check_path(own_view))
     reads += bw_reads()  # read-only: no write rule names bw's checkout (refuse_inside keeps it out of the worktree)
+    reads += python_reads()  # read-only: the install root of the python3 that bw runs, when it is under the home folder
     # Copies of third-party databases (cc-switch, Orca) bw reads, the inbox record, the answers
     # views, every panel work dir (briefs, raw seat output), and the guard's log and state (every
     # project's redacted calls and judge reasons): never readable by a lead, except its own view

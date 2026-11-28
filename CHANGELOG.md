@@ -164,8 +164,10 @@ not against the prose.
   `sandbox.bw_reads()` adds read-only grants for bw's checkout and for the `bw` link on `PATH` when it points
   into the checkout (none when the checkout holds the home folder: that would lift the secret denies). No write
   rule names the checkout. Checked once with nono: `bw run --seat x -- true` in `bw sandbox` exits 0 and writes
-  its two request files, and a write to the checkout is refused. A `python3` under the home folder still needs a
-  read grant of its own. This changes `lead/sandbox.py`, part of the lead containment key: pi and Kimi leads need
+  its two request files, and a write to the checkout is refused. `sandbox.python_reads()` adds a read-only grant
+  for the install root of the first `python3` on `PATH` (its real path's parent of `bin/`, holding
+  `lib/python3.N/os.py`) when it is under the home folder, plus the link node where `PATH` finds it; never all of
+  `~/.pyenv` or the home folder. A pyenv shim script is not resolved. This changes `lead/sandbox.py`, part of the lead containment key: pi and Kimi leads need
   `bw sandbox verify` again (`bw start` does it by itself).
 - **The panel service appends run request files (`lead/runs.py`, `panel/service.py`).** At each drain, before
   the panel requests, `runs.ingest` takes at most 50 files `<checkpoint dir>/runs/<run id>.<start|beat|end>.json`

@@ -99,7 +99,13 @@ once for each bw-contained lead runtime.
   config stay read-only; no app launches, Apple Events, or preference writes. bw's own checkout
   and the `bw` link on `PATH` that points into it are readable (never writable), so a contained lead
   can start `bw run` under nono, which denies reads under the home folder. The `python3` that `bw`
-  runs must be readable too: a Python under the home folder (pyenv, say) needs a read grant of its own.
+  runs must be readable too. bw finds the first `python3` on the lead's `PATH`, resolves it to its real
+  file, and gives a read-only grant for its install root when that root is under the home folder (for
+  example `~/.pyenv/versions/3.12.4`; never all of `~/.pyenv` or the home folder). The root must hold the
+  standard library (`lib/python3.N/os.py`). A link to it that `PATH` finds under the home folder (such as
+  `~/.local/bin/python3`) is readable too. A pyenv shim (`~/.pyenv/shims/python3`) is a script, not a
+  link, and is not resolved: put the version's `bin/` folder before the shims on `PATH`, or use a
+  `python3` outside the home folder.
   This changed `lead/sandbox.py`, which is part of the lead containment key: after this upgrade, pi and
   Kimi leads need `bw sandbox verify` again (`bw start` does it by itself).
 - **The live pane's source.** The live pane plugin (`claude/live-pane/`) runs unsandboxed in
