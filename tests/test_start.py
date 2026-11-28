@@ -37,6 +37,7 @@ class FakeRun:
 
     def __init__(self, orca="stopped", create_rc=0, open_rc=0, ghostty_rc=0):
         self.orca, self.create_rc, self.open_rc, self.ghostty_rc = orca, create_rc, open_rc, ghostty_rc
+        self.ghostty_err = "Ghostty got an error"
         self.versions = {"pi": "pi 1.0", "kimi": "kimi 1.0", "codex": "codex 1.0"}
         self.updates = {}  # tuple(argv) -> (name, new_version, sleep_s, rc)
         self.calls = []  # (argv, start, end)
@@ -60,7 +61,9 @@ class FakeRun:
         if argv[:3] == CREATE:
             return Result(self.create_rc, "", "create refused" if self.create_rc else "", False)
         if argv[0] == "osascript":
-            return Result(self.ghostty_rc, "", "Ghostty got an error" if self.ghostty_rc else "", False)
+            if self.ghostty_rc == "timeout":
+                return Result(-9, "", "", True)
+            return Result(self.ghostty_rc, "", self.ghostty_err if self.ghostty_rc else "", False)
         if argv[0] == "open":
             return Result(self.open_rc, "", "open: no Terminal" if self.open_rc else "", False)
         if argv[0].endswith(".sh"):
@@ -329,7 +332,8 @@ class StartCase(unittest.TestCase):
         calls = self.ran(run, ["osascript"])
         self.assertEqual(len(calls), 1)
         argv = calls[0][0]
-        self.assertEqual(argv[-2:], [path, str(self.repo)])  # data as run-handler arguments, never script text
+        want = shlex.join([start._login_shell(), "-l", "-i", "-c", "exec " + shlex.quote(path)])
+        self.assertEqual(argv[-2:], [want, str(self.repo)])  # data as run-handler arguments, never script text
         script = argv[1:-2]
         self.assertEqual(script[::2], ["-e"] * (len(script) // 2))
         self.assertNotIn(path, " ".join(script))
@@ -339,6 +343,38 @@ class StartCase(unittest.TestCase):
         self.assertEqual(self.ran(run, ["open"]), [])
         self.assertEqual([a for a in run.argvs() if a[0] == "orca"], [])
         self.assertIn(f"opened a Ghostty tab for {self.repo}", out)
+
+    def test_ghostty_command_quotes_a_path_with_spaces_and_quotes(self):
+        path = "/st ate/it's $x/k.command"
+        cmd = start._ghostty_command(path, shell="/bin/zsh")
+        self.assertEqual(shlex.split(cmd), ["/bin/zsh", "-l", "-i", "-c", "exec " + shlex.quote(path)])
+        self.assertEqual(shlex.split(shlex.split(cmd)[-1]), ["exec", path])
+        argv = start._ghostty_argv(path, "/w t", shell="/bin/zsh")
+        self.assertEqual(argv[-2:], [cmd, "/w t"])
+        self.assertNotIn(path, " ".join(argv[1:-2]))
+
+    def test_login_shell_falls_back_to_bin_sh(self):
+        with mock.patch.object(start.pwd, "getpwuid", side_effect=KeyError("uid")):
+            self.assertEqual(start._login_shell(), "/bin/sh")
+
+    def test_ghostty_timeout_falls_back_to_terminal(self):
+        self.config["canvas"] = "ghostty"
+        run = FakeRun(ghostty_rc="timeout")
+        code, out = self.start(run, verify=False, update=False)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+        self.assertIn("ghostty: could not open a tab (timed out); opening a Terminal tab", out)
+
+    def test_ghostty_known_errors_are_explained(self):
+        for err, want in (("60:67: syntax error: Expected end of line. (-2741)", "Ghostty 1.4 or later not found"),
+                          ("execution error: Not authorized to send Apple events to Ghostty. (-1743)",
+                           "Automation access to Ghostty refused")):
+            self.config["canvas"] = "ghostty"
+            run = FakeRun(ghostty_rc=1)
+            run.ghostty_err = err
+            code, out = self.start(run, verify=False, update=False)
+            self.assertEqual(code, 0, out)
+            self.assertIn(f"ghostty: could not open a tab ({want}", out)
 
     def test_ghostty_failure_falls_back_to_terminal(self):
         self.config["canvas"] = "ghostty"
@@ -362,7 +398,8 @@ class StartCase(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual({a[0] for a in run.argvs()}, {"git"})
         path = os.path.join(self.state, "start", f"{runner_key(self.repo)}.command")
-        self.assertIn(f"would open a Ghostty tab: osascript <new-tab script> {shlex.join([path, str(self.repo)])}", out)
+        self.assertIn(f"would open a Ghostty tab: osascript <new-tab script> "
+                      f"{shlex.join([start._ghostty_command(path), str(self.repo)])}", out)
         self.assertFalse(os.path.exists(path))
 
     def test_neither_orca_nor_terminal_prints_the_command_and_exits_1(self):

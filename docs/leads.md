@@ -178,9 +178,9 @@ once for each bw-contained lead runtime.
      would start.
   4. **opens the worktree.** By default it opens a Terminal tab, through a small `.command`
      file under the state dir's `start/` that `open -a Terminal` runs. With `canvas: "ghostty"`,
-     it opens a Ghostty tab that runs the same file, through Ghostty's AppleScript (Ghostty 1.3
-     or later; the first run asks for macOS Automation access to Ghostty); when that fails, it
-     falls back to the Terminal tab (bw says so first). With `canvas: "orca"`
+     it opens a Ghostty tab that runs the same file through your login shell, by Ghostty's
+     AppleScript (checked on Ghostty 1.4; the first run asks for macOS Automation access to
+     Ghostty). When that fails, it falls back to the Terminal tab and says why first. With `canvas: "orca"`
      and Orca running, it opens an Orca pane titled `<worktree basename> lead` instead, through
      `orca terminal create --worktree path:<worktree> --command "<bw> lead"`; when
      `orca terminal create` fails, it falls back to the Terminal tab (bw says so first). A

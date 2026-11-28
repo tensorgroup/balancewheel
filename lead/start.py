@@ -29,6 +29,7 @@ One `bw start:` line per event. Steps:
 when the canvas is Orca) and writes nothing.
 """
 import os
+import pwd
 import shlex
 import sys
 import threading
@@ -47,8 +48,12 @@ from seats import verify as seat_verify
 PASSED_ENV = ("BALANCEWHEEL_CONFIG", "BW_STATE_DIR")
 ORCA_CREATE_TIMEOUT_S = 30
 OPEN_TIMEOUT_S = 30
-# A Ghostty tab (Ghostty 1.3+ AppleScript) that runs the .command file in the worktree. The path and
-# the worktree reach the run handler as arguments, never as script text, so no quoting can break out.
+# The first Ghostty call can wait on macOS's Automation prompt; give the user time to answer it.
+GHOSTTY_TIMEOUT_S = 120
+# A Ghostty tab (Ghostty 1.4 AppleScript) that runs the .command file in the worktree. The shell command
+# and the worktree reach the run handler as arguments, never as script text. Ghostty runs `command` as
+# shell text, so the command is built (and quoted) in Python: the user's login shell, interactive, runs
+# the file, as Terminal does, so the lead gets the same PATH and environment as a Terminal tab.
 GHOSTTY_SCRIPT = [
     "on run argv",
     'tell application "Ghostty"',
@@ -61,7 +66,9 @@ GHOSTTY_SCRIPT = [
     "else",
     "new window with configuration cfg",
     "end if",
-    "activate",
+    "try",
+    "activate",  # focus only: a failure here must not count as a failed open (no second launch)
+    "end try",
     "end tell",
     "end run",
 ]
@@ -86,8 +93,37 @@ def _command_file(state, project, bw, env):
     return path, "\n".join(lines) + "\n"
 
 
-def _ghostty_argv(path, worktree):
-    return ["osascript", *[a for line in GHOSTTY_SCRIPT for a in ("-e", line)], path, worktree]
+def _login_shell():
+    try:
+        shell = pwd.getpwuid(os.getuid()).pw_shell
+    except KeyError:
+        shell = ""
+    return shell if shell and os.path.isabs(shell) else "/bin/sh"
+
+
+def _ghostty_command(path, shell=None):
+    """The shell text Ghostty runs: the login shell, interactive, exec'ing the .command file."""
+    return shlex.join([shell or _login_shell(), "-l", "-i", "-c", "exec " + shlex.quote(path)])
+
+
+def _ghostty_argv(path, worktree, shell=None):
+    return ["osascript", *[a for line in GHOSTTY_SCRIPT for a in ("-e", line)], _ghostty_command(path, shell), worktree]
+
+
+# osascript error numbers bw explains: the app is missing (the script does not compile), or the user
+# refused Automation access.
+GHOSTTY_ERRORS = {"(-2741)": "Ghostty 1.4 or later not found",
+                  "(-1743)": "Automation access to Ghostty refused (System Settings > Privacy & Security > Automation)"}
+
+
+def _ghostty_detail(r):
+    if r.timed_out:
+        return "timed out"
+    text = (r.err or "") + (r.out or "")
+    for code, why in GHOSTTY_ERRORS.items():
+        if code in text:
+            return why
+    return _detail(r)
 
 
 def _write_command_file(path, content):
@@ -322,11 +358,11 @@ def _workspace(state, project, run, bw, env, say, canvas):
     path, content = _command_file(state, project, bw, env)
     _write_command_file(path, content)
     if canvas == "ghostty":
-        r = run(_ghostty_argv(path, project.worktree), OPEN_TIMEOUT_S)
+        r = run(_ghostty_argv(path, project.worktree), GHOSTTY_TIMEOUT_S)
         if r.rc == 0 and not r.timed_out:
             say(f"opened a Ghostty tab for {project.worktree}")
             return 0
-        say(f"ghostty: could not open a tab ({'timed out' if r.timed_out else _detail(r)}); opening a Terminal tab instead")
+        say(f"ghostty: could not open a tab ({_ghostty_detail(r)}); opening a Terminal tab instead")
     r = run(["open", "-a", "Terminal", path], OPEN_TIMEOUT_S)
     if r.rc == 0 and not r.timed_out:
         say(f"opened a Terminal tab for {project.worktree}")
@@ -362,7 +398,8 @@ def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, r
         for line in content.splitlines():
             say(f"  {line}")
         if orca.canvas(config) == "ghostty":
-            say(f"would open a Ghostty tab: osascript <new-tab script> {shlex.join([path, project.worktree])}")
+            say(f"would open a Ghostty tab: osascript <new-tab script> "
+                f"{shlex.join([_ghostty_command(path), project.worktree])}")
         else:
             say(f"would run: {shlex.join(['open', '-a', 'Terminal', path])}")
     return 0
