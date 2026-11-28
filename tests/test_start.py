@@ -562,6 +562,26 @@ class StartCase(unittest.TestCase):
         self.assertIs(ens.call_args.kwargs["run"], run)
         self.assertIn("bw start: guard eval pi: pass — fake", out)
 
+    def test_the_guard_eval_says_it_is_slow_before_the_judge_call_and_only_when_it_will_run(self):
+        self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
+        self.config["guard"] = {"mode": {"p": "auto"}, "model": "test/judge", "key_env": "BW_TEST_UNSET_JUDGE_KEY"}
+        out = io.StringIO()
+        seen = []
+
+        def ensure(*a, **kw):
+            seen.append(out.getvalue())
+            return "pass", "guard eval pi: pass — fake"
+        for why, expect in (("its guard settings changed since the last evaluation", True), (None, False)):
+            seen.clear(); out.seek(0); out.truncate()
+            with mock.patch.object(start.evaluate, "ensure", ensure), \
+                    mock.patch.object(start.evaluate, "will_run", return_value=why):
+                start.start(self.config, self.state, str(self.repo), run=FakeRun(), out=out, bw_path=self.bw,
+                            env=self.env, now=NOW, update=False)
+            wait = ("bw start: testing the pi guard against the judge model. This takes about a minute and uses a little "
+                    "model quota, because its guard settings changed since the last evaluation. Please wait.")
+            self.assertEqual(wait in seen[0], expect)  # printed before the judge call, not after
+            self.assertEqual("Please wait" in out.getvalue().split("guard eval pi")[0].split("pi guard:")[-1], expect)
+
     def test_no_interactive_offer_without_a_judge_model(self):  # the check alone cannot lead to promotion
         self.config["leads"]["lp"].update(autonomy="guard", autonomy_source="config")
         self.config["guard"] = {"mode": {"p": "auto"}}

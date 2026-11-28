@@ -432,6 +432,13 @@ def _guard_evals(config, runtimes, state, verify, run, rep, profile=None):
         if not any(kind == "guard" for kind, _ in verifymod.items_for_runtime(config, rt)):
             continue
         try:
+            why = evaluate.will_run(config, state, rt, allow_run=verify)
+            if why:
+                rep.wait("Checks", f"testing the {rt} guard against the judge model. This takes about a minute and "
+                                   f"uses a little model quota, because {why}. Please wait.")
+        except Exception:  # a notice only: never the start's end
+            pass
+        try:
             status, line = evaluate.ensure(config, state, rt, allow_run=verify, run=run)
         except Exception as e:  # one runtime's failure is its line, never the start's end, and never the text
             status, line = "fail", f"guard eval {rt}: failed to run ({type(e).__name__})"
