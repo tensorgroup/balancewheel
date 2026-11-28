@@ -45,7 +45,7 @@ import time
 import uuid
 
 from . import containment, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox, triage as triagemod
-from .handoff import build_handoff, checkpoint_dir, first_prompt, open_panels_section, protocol_text, write_first_prompt
+from .handoff import build_handoff, checkpoint_dir, open_panels_section, protocol_text, split_prompt, write_first_prompt
 from .guard import broker as brk, gate, install as guard_install, judging, launch
 from .guard.launch import GuardUnavailable
 from .guard.review import safe
@@ -206,8 +206,10 @@ class Session:
                             "the lead can still read status.json", key="view")
 
     def _launch(self, ctx, lead_name, handoff, cp_dir, client_dir):
-        prompt = first_prompt(handoff, protocol_text(ctx.config, ctx.project.profile, self.request_dir,
-                                                     self.view_root, self.wait_path))
+        system = self.adapter.system_protocol
+        protocol = protocol_text(ctx.config, ctx.project.profile, self.request_dir, self.view_root, self.wait_path,
+                                 system=system)
+        system_prompt, prompt = split_prompt(handoff, protocol, system)
         argv_prompt = prompt
         if self.adapter.prompt_mode == "file":
             path = write_first_prompt(ctx.state, ctx.project.worktree_key, prompt)
@@ -216,8 +218,9 @@ class Session:
         # pi/Kimi get the checkpoint dir through bw sandbox grants; self-contained runtimes whose
         # own sandbox stops at the worktree (Codex, agy) get it as an extra writable dir. The panel
         # request dir is inside it, so it needs no grant of its own.
+        extra = {"system_prompt": system_prompt} if system else {}
         argv = self.adapter.argv(self.lead, argv_prompt, [cp_dir] if self.adapter.contained_by == "self" else [],
-                                 client_dir=client_dir)
+                                 client_dir=client_dir, **extra)
         # Every BW_GUARD_* in bw's own environment is stale for this lead; only a guarded session's
         # own values (below) are real.
         env = {k: v for k, v in os.environ.items() if not k.startswith(("BW_GUARD_", "BW_TRIAGE"))}

@@ -79,6 +79,20 @@ class Flags(unittest.TestCase):
         self.assertEqual(argv[-2:], ["--", "hi"])
         self.assertEqual(A["claude-code"].argv(lead("claude-code"), None, ["/cp"])[-1], "--x")
 
+    def test_only_claude_code_takes_the_protocol_as_a_system_prompt(self):
+        self.assertEqual({rt for rt, ad in A.items() if ad.system_protocol}, {"claude-code"})
+
+    def test_claude_code_system_prompt_is_appended_and_the_prompt_is_only_the_handoff(self):
+        ad = A["claude-code"]
+        argv = ad.argv(lead("claude-code", "native"), "@next handoff", ["/cp"], system_prompt="RULES\nline 2")
+        self.assertEqual(argv, ["claude", "--model", "m1", "--add-dir", "/cp", "--permission-mode", "auto",
+                                "--append-system-prompt", "RULES\nline 2", "--x", "--", "@next handoff"])
+        # no handoff: no prompt at all, so the session opens with nothing typed
+        argv = ad.argv(lead("claude-code", "native"), None, ["/cp"], system_prompt="RULES")
+        self.assertEqual(argv[-3:], ["--append-system-prompt", "RULES", "--x"])
+        self.assertNotIn("--", argv)
+        self.assertEqual(ad.argv(lead("claude-code"), "hi", []), ["claude", "--model", "m1", "--x", "hi"])  # unchanged
+
     def test_pi_guard_grants_include_client_dir(self):
         g = A["pi"].grants(lead("pi", "guard"), client_dir="/c")
         self.assertIn("/c", g.read)

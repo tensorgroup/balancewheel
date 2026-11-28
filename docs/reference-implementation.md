@@ -777,7 +777,8 @@ file is now two parts in this repo:
 - `panel/templates/` holds the seat briefs (one per checkpoint, plus `brief-output.md` for the
   output shape) and the moderator's steps (`next.md`, `next-triage.md`, `next-follow-up.md`).
   `bw` renders them. Paths in shell commands are quoted, and seat text is escaped.
-- `lead/protocol/panel.md` is the text a lead gets in its first prompt. It holds the profile's
+- `lead/protocol/panel.md` is the text a lead gets in its first prompt (a Claude Code lead gets it as a
+  system prompt). It holds the profile's
   checkpoints, the literal request and view paths, and the rules: verify every finding, relay
   one claim at a time, log every panel, and tell the user three lines.
 

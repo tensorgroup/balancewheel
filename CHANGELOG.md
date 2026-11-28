@@ -15,6 +15,12 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **A Claude Code lead gets the lead protocol as a system prompt** (`lead/runtimes.py`, `lead/handoff.py`,
+  `lead/runner.py`). `bw lead` passes the protocol text (checkpoint, ask, inbox, and panel rules) with
+  `--append-system-prompt` instead of as the first prompt. The first prompt is only the handoff from a previous
+  lead, and there is none for a fresh lead. The protocol line about a handoff now says "If the first message
+  starts with `@next handoff`" in that case. Every other runtime is unchanged. The `Adapter` tuple has a new
+  field, `system_protocol`. This changes the lead containment key for Claude Code, so a runtime re-verifies once.
 - **`canvas: "ghostty"`.** `bw start` opens the lead in a new Ghostty tab (a new window when Ghostty has none) through
   Ghostty's AppleScript (checked on Ghostty 1.4). The tab runs the same `.command` file as the Terminal tab, through
   the user's login shell (`<shell> -l -i -c 'exec <file>'`), so the lead gets the same PATH and environment as in a

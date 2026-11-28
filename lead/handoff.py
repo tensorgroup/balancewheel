@@ -196,10 +196,20 @@ def _read_protocol(name):
         return f.read().strip()
 
 
-def protocol_text(config=None, profile=None, request_dir=None, view_root=None, wait_path=None):
+HANDOFF_LINE = "If a handoff follows this message, it is from the previous lead"
+SYSTEM_HANDOFF_LINE = "If the first message starts with `@next handoff`, it is a handoff from the previous lead"
+
+
+def protocol_text(config=None, profile=None, request_dir=None, view_root=None, wait_path=None, system=False):
     """checkpoint.md, then, when `profile` has checkpoints, panel.md with literal paths (Design
-    decision 7). Paths in shell commands are shell-quoted; the file-tool paths stay plain."""
+    decision 7). Paths in shell commands are shell-quoted; the file-tool paths stay plain.
+    `system`: the text goes in the runtime's system prompt, so the handoff is not "after" it but
+    the first message (when there is one)."""
     base = _read_protocol("checkpoint.md")
+    if system:
+        if HANDOFF_LINE not in base:
+            raise ValueError("lead/protocol/checkpoint.md lost the handoff line the system wording replaces")
+        base = base.replace(HANDOFF_LINE, SYSTEM_HANDOFF_LINE)
     prof = ((config or {}).get("profiles") or {}).get(profile) or {}
     cps = prof.get("checkpoints") or {}
     if not cps:
@@ -219,3 +229,12 @@ def protocol_text(config=None, profile=None, request_dir=None, view_root=None, w
 
 def first_prompt(handoff, protocol):
     return f"{protocol}\n\n{handoff}" if handoff else protocol
+
+
+def split_prompt(handoff, protocol, system):
+    """(system prompt, first message). A runtime that takes the protocol as a system prompt gets the
+    handoff alone as its first message, and none when there is no handoff; any other runtime gets
+    the protocol and the handoff together as its first message."""
+    if system:
+        return protocol, handoff or None
+    return None, first_prompt(handoff, protocol)

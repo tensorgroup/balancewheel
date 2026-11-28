@@ -3,7 +3,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from lead.handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text  # noqa: E402
+from lead.handoff import build_handoff, checkpoint_dir, first_prompt, protocol_text, split_prompt  # noqa: E402
 
 GITENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -67,6 +67,24 @@ class Handoff(unittest.TestCase):
         (d / "checkpoint.md").symlink_to(secret)
         h = build_handoff(str(self.repo), self.base, str(self.state), "k5", [])
         self.assertNotIn("TOKEN-123", h)
+
+    def test_system_protocol_rewords_the_handoff_line(self):
+        plain, system = protocol_text(), protocol_text(system=True)
+        self.assertIn("If a handoff follows this message", plain)
+        self.assertNotIn("follows this message", system)
+        self.assertIn("If the first message starts with `@next handoff`, it is a handoff from the previous lead", system)
+        self.assertEqual(system.replace("If the first message starts with `@next handoff`, it is a handoff from the previous lead",
+                                        "If a handoff follows this message, it is from the previous lead"), plain)
+        self.assertEqual(protocol_text(CFG, "high", "/a", "/b", "/b/w", system=True).count("follows this message"), 0)
+
+    def test_split_prompt_by_adapter_kind(self):
+        proto, hand = protocol_text(), "@next handoff\nbranch: x"
+        self.assertEqual(split_prompt(hand, proto, False), (None, first_prompt(hand, proto)))
+        self.assertEqual(split_prompt(None, proto, False), (None, proto))
+        sys_text = protocol_text(system=True)
+        self.assertEqual(split_prompt(hand, sys_text, True), (sys_text, hand))
+        self.assertEqual(split_prompt(None, sys_text, True), (sys_text, None))
+        self.assertEqual(split_prompt("", sys_text, True), (sys_text, None))
 
     def test_first_prompt_starts_with_protocol(self):
         p = first_prompt("@next handoff\nbranch: x", protocol_text())

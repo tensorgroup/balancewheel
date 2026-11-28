@@ -1,6 +1,7 @@
 # Leads and rotation (`bw`, since 2026-10-24)
 
-*Updated 2026-11-27: `canvas: "ghostty"` (a Ghostty tab instead of a Terminal tab).
+*Updated 2026-11-27: `canvas: "ghostty"` (a Ghostty tab instead of a Terminal tab); a Claude Code lead gets the
+lead protocol as a system prompt and `--add-dir` for the checkpoint dir.
 Written 2026-11-24: moved here, unchanged, from the README's "Leads and rotation" section, so the README
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
@@ -72,6 +73,14 @@ once for each bw-contained lead runtime.
   `$BW_CHECKPOINT` that `bw` picks up).
 - **One lead per worktree.** A lock the lead itself holds; a crashed `bw` cannot let a
   second writable agent in.
+- **The lead protocol (since 2026-11-27).** Every lead is told how to keep a checkpoint, how to
+  ask you something, how to take a handoff, and (with panel checkpoints) how to convene a panel
+  (`lead/protocol/`). A Claude Code lead gets that text as a system prompt
+  (`--append-system-prompt`), so the first thing you see in its session is not the rules. Its
+  first message is only the handoff from a previous lead, and there is none for a fresh lead.
+  Every other runtime gets the protocol and the handoff together as its first prompt. A
+  Claude Code lead also gets `--add-dir` for the checkpoint dir, so its Write tool can save the
+  checkpoint.
 - **Containment.** Claude Code, Codex, and agy run with their own sandboxes and your real
   configuration (`contained by self`); whether they prompt is their lead's `autonomy`
   (next bullet). pi and Kimi run under

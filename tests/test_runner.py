@@ -1240,6 +1240,42 @@ class PromptFile(RunnerCase):
         self.assertFalse(os.path.islink(d / "first-prompt.md"))
 
 
+class SystemProtocol(RunnerCase):
+    """A runtime that takes the protocol as a system prompt: the first prompt is only the handoff."""
+
+    def run_lead(self, **kw):
+        p = self.start("--system-protocol", "codex", env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        return self.fake("a")["argv"]
+
+    def test_the_protocol_is_the_system_prompt_and_a_fresh_lead_gets_no_first_prompt(self):
+        argv = self.run_lead()
+        self.assertEqual(argv[2], "--system")
+        self.assertEqual(len(argv), 4, argv)  # no first prompt: nothing between the model and --system
+        self.assertIn("You are the lead for this worktree", argv[3])
+        self.assertIn("If the first message starts with `@next handoff`", argv[3])
+        self.assertNotIn("follows this message", argv[3])
+
+    def test_another_runtime_still_gets_the_protocol_as_its_first_prompt(self):
+        p = self.start("--system-protocol", "pi", env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        argv = self.fake("a")["argv"]
+        self.assertNotIn("--system", argv)
+        self.assertIn("You are the lead for this worktree", argv[2])
+        self.assertIn("If a handoff follows this message", argv[2])
+
+    def test_a_handoff_is_the_only_first_prompt(self):
+        p = self.start("--system-protocol", "pi", env={"FAKE_MODE_a": "ignore_term", "FAKE_MODE_b": "exit"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        self.assertEqual(p.wait(20), 0, p.stdout.read())
+        argv = self.fake("b")["argv"]  # lead b is pi: it takes the protocol as a system prompt
+        self.assertEqual(argv[2][:13], "@next handoff", argv)
+        self.assertEqual(argv[3], "--system")
+        self.assertIn("You are the lead for this worktree", argv[4])
+        self.assertNotIn("You are the lead", argv[2])
+
+
 class PinnedPlanRefresh(RunnerCase):
     def config(self, root):
         cfg = super().config(root)

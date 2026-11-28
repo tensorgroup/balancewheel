@@ -17,10 +17,12 @@ from .codepaths import KIMI_CODE, PI_CODE  # noqa: F401  (re-exported: the adapt
 from .sandbox import RuntimeGrants
 
 Adapter = namedtuple("Adapter", "argv contained_by grants prompt_mode version_argv verify_argv verify_flags "
-                                "guard_argv guard_hook_files")
+                                "guard_argv guard_hook_files system_protocol")
 # guard_argv(lead, client_dir) -> the headless command the guard attack runs (None: no guard attack for
 # this runtime); guard_hook_files() -> files and dirs whose content decides what the guard hooks run.
-Adapter.__new__.__defaults__ = (None, lambda: [])
+# system_protocol: the lead protocol goes in `argv(..., system_prompt=<text>)` (Claude Code's
+# --append-system-prompt) and the first prompt is only the handoff; every other runtime gets both as its first prompt.
+Adapter.__new__.__defaults__ = (None, lambda: [], False)
 
 # Guarded pi leads run with --no-extensions (the explicit -e client still loads): a project-local
 # extension the lead wrote into its worktree would otherwise run in the guard client's own process.
@@ -69,11 +71,12 @@ def _add_dirs(writable):
 
 ADAPTERS = {
     "claude-code": Adapter(
-        argv=lambda lead, prompt, writable=(), client_dir=None: _with_prompt(
+        argv=lambda lead, prompt, writable=(), client_dir=None, system_prompt=None: _with_prompt(
             ["claude", "--model", lead["model"], *_add_dirs(writable), *autonomy_flags("claude-code", lead, client_dir),
+             *(["--append-system-prompt", system_prompt] if system_prompt else []),
              *lead.get("args", [])] + (["--"] if writable and prompt else []), prompt),
         contained_by="self", grants=lambda lead, client_dir=None: RuntimeGrants([], [], {}, False), prompt_mode="arg",
-        version_argv=["claude", "--version"], verify_argv=None, verify_flags=lambda lead: []),
+        version_argv=["claude", "--version"], verify_argv=None, verify_flags=lambda lead: [], system_protocol=True),
     "codex": Adapter(
         argv=lambda lead, prompt, writable=(), client_dir=None: _with_prompt(
             ["codex", "-m", lead["model"], "--sandbox", "workspace-write", *_add_dirs(writable),
