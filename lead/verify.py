@@ -162,14 +162,22 @@ def _pending_reason(config, state, runtime, kind, lead_name, now, allow_run, ver
     return None
 
 
-def reverify(config, state, runtime, now, run=proc.run, allow_run=True, version_ok=True, on_attack=None) -> list:
+def reverify(config, state, runtime, now, run=proc.run, allow_run=True, version_ok=True, on_attack=None,
+             on_lock_wait=None) -> list:
     """`on_attack(runtime, [(kind, why)])` is called once, before the first attack test starts, when
-    any key needs one (`why`: "never tested", "version changed", or "settings changed")."""
+    any key needs one (`why`: "never tested", "version changed", or "settings changed").
+    `on_lock_wait(runtime)` is called before this blocks on the runtime's lock, which an update holds;
+    when it returns a function, that function is called once the lock is taken."""
     if not items_for_runtime(config, runtime):
         return []
     lock = RuntimeLock(state, runtime)
     try:
-        lock.shared()  # the key read here is the key attacked and recorded (the attack's own is nested)
+        # Shared from here on: the key read here is the key attacked and recorded (the attack's own is nested).
+        if not lock.try_shared():
+            taken = on_lock_wait(runtime) if on_lock_wait is not None else None
+            lock.shared()
+            if taken is not None:
+                taken()
         return _reverify(config, state, runtime, now, run, allow_run, version_ok, on_attack)
     finally:
         lock.release()

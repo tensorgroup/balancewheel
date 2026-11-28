@@ -3,7 +3,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from lead.projects import resolve_project  # noqa: E402
+from lead.projects import NotARepository, resolve_project  # noqa: E402
 
 
 def git(cwd, *args):
@@ -110,11 +110,40 @@ class Resolve(unittest.TestCase):
             ["git", "-C", "/synthetic/wt", "worktree", "list", "--porcelain"]])
         self.assertEqual((p.worktree, p.main_worktree, p.profile), ("/synthetic/wt", "/synthetic/main", "a"))
 
-    def test_git_failure_through_run_is_not_a_repository(self):
+    def test_other_git_failure_keeps_gits_reason_and_is_not_called_not_a_repository(self):
         from lead.proc import Result
+        d = self.root / "plain"; d.mkdir()
         with self.assertRaises(ValueError) as e:
-            resolve_project("/synthetic/x", cfg({}), run=lambda a, t, **k: Result(128, "", "fatal: nope", False))
-        self.assertIn("not a git repository", str(e.exception))
+            resolve_project(str(d), cfg({}), run=lambda a, t, **k: Result(128, "", "fatal: detected dubious ownership", False))
+        self.assertNotIsInstance(e.exception, NotARepository)
+        self.assertEqual(str(e.exception), f"git failed in {d}: fatal: detected dubious ownership")
+
+    def test_a_file_is_not_a_directory(self):
+        f = self.root / "file"; f.write_text("x")
+        with self.assertRaises(ValueError) as e:
+            resolve_project(str(f), cfg({}))
+        self.assertEqual(str(e.exception), f"not a directory: {f}")
+
+    def test_gits_own_not_a_repository_line_is_not_repeated(self):
+        d = self.root / "plain"; d.mkdir()
+        with self.assertRaises(NotARepository) as e:
+            resolve_project(str(d), cfg({}))
+        self.assertEqual(str(e.exception), f"not a git repository: {os.path.realpath(d)}")
+
+    def test_missing_directory_says_so(self):
+        with self.assertRaises(ValueError) as e:
+            resolve_project(str(self.root / "nope"), cfg({}))
+        self.assertIn("no such directory", str(e.exception))
+
+    def test_not_a_repository_lists_child_repositories_newest_first(self):
+        parent = self.root / "code"; parent.mkdir()
+        old, new = make_repo(parent / "old"), make_repo(parent / "new")
+        (parent / "notes").mkdir()
+        os.utime(old / ".git", (1, 1))
+        with self.assertRaises(NotARepository) as e:
+            resolve_project(str(parent), cfg({}))
+        real = os.path.realpath(parent)
+        self.assertEqual(e.exception.repos, [os.path.join(real, "new"), os.path.join(real, "old")])
 
 
 if __name__ == "__main__":

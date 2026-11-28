@@ -13,10 +13,49 @@ from . import proc
 Project = namedtuple("Project", "worktree worktree_key common_dir main_worktree profile")
 
 
+class NotARepository(ValueError):
+    """`path` is not inside a git repository. `repos` are the repositories directly under it,
+    most recently used first, so a caller can say which path to give instead."""
+
+    def __init__(self, path):
+        self.path = path
+        super().__init__(f"not a git repository: {path}")
+
+    @property
+    def repos(self):  # read only by the help that prints them; most callers only need the message
+        return child_repositories(self.path)
+
+
+def child_repositories(path):
+    """The git repositories one level under `path` (a `.git` file or dir), newest `.git` first."""
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return []
+    found = []
+    for name in names:
+        if name.startswith("."):
+            continue
+        git_entry = os.path.join(path, name, ".git")
+        try:
+            found.append((os.stat(git_entry).st_mtime, os.path.join(path, name)))
+        except OSError:
+            continue
+    return [p for _, p in sorted(found, key=lambda t: (-t[0], t[1]))]
+
+
 def _git(run, cwd, *args):
     r = run(["git", "-C", cwd, *args], 30)
     if r.rc != 0:
-        raise ValueError(f"not a git repository: {cwd} ({r.err.strip() or 'git failed'})")
+        if not os.path.exists(cwd):
+            raise ValueError(f"no such directory: {cwd}")
+        if not os.path.isdir(cwd):
+            raise ValueError(f"not a directory: {cwd}")
+        err = r.err.strip()
+        if not err or "not a git repository" in err:
+            raise NotARepository(cwd)
+        # Another reason (for example "dubious ownership") tells the user what to fix: keep git's words.
+        raise ValueError(f"git failed in {cwd}: {err}")
     return r.out
 
 
@@ -44,7 +83,7 @@ def resolve_project(cwd, config, run=proc.run):
         raise ValueError(f"bare repository not supported as a lead workspace: {cwd}")
     out = _git(run, cwd, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir").splitlines()
     if len(out) < 2:
-        raise ValueError(f"not a git repository: {cwd}")
+        raise NotARepository(cwd)
     worktree, common_dir = os.path.realpath(out[0]), os.path.realpath(out[1])
     main_worktree = None
     for line in _git(run, cwd, "worktree", "list", "--porcelain").splitlines():

@@ -14,7 +14,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from lead import containment, probes, proc, runner, sandbox, start, status  # noqa: E402
+from lead import containment, probes, proc, progress, runner, sandbox, start, status  # noqa: E402
 from lead.proc import Result  # noqa: E402
 from lead.runtimes import ADAPTERS  # noqa: E402
 from seats import verify as seat_verify  # noqa: E402
@@ -465,7 +465,49 @@ class StartCase(unittest.TestCase):
         code, out = self.start(run, path=plain)
         self.assertEqual(code, 2)
         self.assertIn("not a git repository", out)
+        self.assertIn("Run it inside a repository, or give the repository's path", out)
+        self.assertIn("Example: bw start ~/code/my-project", out)
+        self.assertIn("New project: git init <dir>, then bw start <dir>.", out)
         self.assertEqual({a[0] for a in run.argvs()}, {"git"})
+
+    def test_folder_of_repositories_names_the_commands_to_run(self):
+        parent = self.root / "code"; parent.mkdir()
+        for name in ("alpha", "my app"):
+            (parent / name / ".git").mkdir(parents=True)
+        os.utime(parent / "alpha" / ".git", (1, 1))
+        code, out = self.start(FakeRun(), path=parent, env={**self.env, "HOME": str(self.root)})
+        self.assertEqual(code, 2)
+        self.assertIn("Repositories in this folder, most recently used first:", out)
+        self.assertLess(out.index("bw start ~/'code/my app'"), out.index("bw start ~/code/alpha"))
+        self.assertNotIn("Example:", out)
+
+    def test_folder_of_many_repositories_shows_the_first_few(self):
+        parent = self.root / "code"; parent.mkdir()
+        for i in range(start.SHOWN_REPOS + 3):
+            (parent / f"r{i}" / ".git").mkdir(parents=True)
+        code, out = self.start(FakeRun(), path=parent)
+        self.assertEqual(out.count("bw start:   bw start "), start.SHOWN_REPOS)
+        self.assertTrue(all(line.startswith("bw start: ") for line in out.splitlines()), out)
+        self.assertIn("… and 3 more", out)
+
+    def test_heartbeat_names_the_update_that_is_still_running(self):
+        run = FakeRun()
+        run.updates[tuple(CODEX_UPDATE)] = ("codex", "codex 2.0", 0.4, 0)
+        with mock.patch.object(progress, "HEARTBEAT_S", 0.05):
+            code, out = self.start(run, verify=False)
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"bw start: still waiting on: [^\n]*codex update \(0s\)")
+        heartbeats = out.index("still waiting on:")
+        self.assertLess(out.index("updating "), heartbeats)  # the wait line names the step first
+
+    def test_heartbeat_on_a_terminal_is_a_wait_line_in_the_open_section(self):
+        run = FakeRun()
+        run.updates[tuple(CODEX_UPDATE)] = ("codex", "codex 2.0", 0.4, 0)
+        with mock.patch.object(progress, "HEARTBEAT_S", 0.05):
+            code, out = self.start(run, verify=False, tty=True, width=100)
+        self.assertEqual(code, 0, out)
+        self.assertIn("  … still waiting on: ", out)
+        self.assertLess(out.index("\nUpdates\n"), out.index("still waiting on:"))
 
     # --- dry run --------------------------------------------------------------------------
 

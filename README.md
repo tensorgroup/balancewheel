@@ -207,7 +207,7 @@ The test spends a little model quota. A seat that is capped or not logged in sho
 `seat <id>: pending — <reason>` and does not fail the run.
 
 **5. Open a project with a lead.** Use the path of one of your git repositories in place of
-`~/code/my-project`. Try a dry run first. It changes nothing:
+`~/code/my-project` (for a new project, `git init` the folder first; no commit is needed). Try a dry run first. It changes nothing:
 
 ```sh
 bw start --dry-run ~/code/my-project
@@ -242,7 +242,8 @@ Also
 ```
 
 On a terminal, `bw start` prints sections. A `✓` is a pass, a `✗` is a failure, a `·` is
-information, and a `…` is a wait. Piped to a file, it prints plain lines that start with `bw start: `.
+information, and a `…` is a wait. While a slow step runs, a `… still waiting on: <part> (<time>)` line
+repeats every 15 s. Piped to a file, it prints plain lines that start with `bw start: `.
 
 Then run it for real. `bw start` updates your tools, re-checks containment, reads quota, and
 opens the lead. When you run it in a terminal, from inside the project and with no path, it

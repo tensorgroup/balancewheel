@@ -2,8 +2,9 @@
 
 *Updated 2026-11-27: `canvas: "ghostty"` (a Ghostty tab instead of a Terminal tab); a Claude Code lead gets the
 lead protocol as a system prompt and `--add-dir` for the checkpoint dir; `bw start` prints sections with marks on
-a terminal, says what it is waiting for before a slow step, and starts the lead in this terminal when you run it
-there with no path.
+a terminal, says what it is waiting for before a slow step and every 15 s while it runs, says when a check waits
+for a runtime lock, lists the repositories to start when the folder is not one, and starts the lead in this
+terminal when you run it there with no path.
 Written 2026-11-24: moved here, unchanged, from the README's "Leads and rotation" section, so the README
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
@@ -167,7 +168,9 @@ once for each bw-contained lead runtime.
     outside the guard: it is gray, so it asks, and what it does inside is not judged.
     When the guard is acting, a false block is worked around by hand, outside the lead.
 - **`bw start [path] [--dry-run] [--no-update] [--no-verify] [--tab]` (since 2026-10-25).** One command
-  to begin a session in a project (the path defaults to the current directory). It refuses
+  to begin a session in a project (the path defaults to the current directory; a new repository needs
+  only `git init`, no commit). When the folder is not in a git repository, it says so and lists the
+  repositories directly under it as `bw start <path>` commands, most recently used first. It refuses
   when `bw` itself lives inside the target worktree or its git directory (a lead could edit
   the next `bw lead`), then:
   1. **updates every tool you configured** under `tools` (`update`, `version`, `app`,
@@ -214,7 +217,10 @@ once for each bw-contained lead runtime.
   line that says what it is doing. Before the tool updates, it names the tools. Before a
   sandbox or guard attack test, it names the test, says it takes about a minute and uses a
   little model quota, gives the reason (the test never ran, the tool's version changed, or its
-  settings changed), and asks you to wait. When nothing slow runs, it prints no wait line.
+  settings changed), and asks you to wait. When a check must wait for its runtime's lock, because an
+  update of that runtime holds it (another `bw start`, say), it says so. While any of these still runs,
+  it prints `… still waiting on: <part> (<time>)` every 15 s, for example
+  `still waiting on: codex update (45s), pi checks (1m 30s)`. When nothing slow runs, it prints no wait line.
   Quota lines are in plain words: `63% left in the 7-day window`,
   `78% left in the 5-hour window`, `19% of the monthly budget used` for an OpenRouter budget,
   the source of the reading, and its age (`read just now`, `read 12 min ago`). When stdout is

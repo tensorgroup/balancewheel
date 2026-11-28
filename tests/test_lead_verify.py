@@ -189,6 +189,36 @@ class Reverify(unittest.TestCase):
         for item in verify.reverify(REVERIFY_CONFIG, self.state, "pi", NOW, run=FakeRun("PASS — evidence in /e")):
             self.assertEqual(item.runtime, "pi")
 
+    def test_a_held_lock_is_said_before_the_wait(self):
+        import threading
+        from lead.locks import RuntimeLock
+        said, waiting = [], threading.Event()
+
+        def on_lock_wait(rt):
+            said.append(rt)
+            waiting.set()
+            return lambda: said.append("taken")
+
+        update = RuntimeLock(self.state, "pi")
+        self.assertTrue(update.try_exclusive())  # an update holds the lock
+        out = []
+        t = threading.Thread(target=lambda: out.extend(verify.reverify(
+            REVERIFY_CONFIG, self.state, "pi", NOW, run=FakeRun("PASS — evidence in /e"), on_lock_wait=on_lock_wait)))
+        t.start()
+        self.assertTrue(waiting.wait(5))
+        self.assertTrue(t.is_alive())  # still blocked on the lock
+        update.release()
+        t.join(10)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(said, ["pi", "taken"])
+        self.assertTrue(out)
+
+    def test_a_free_lock_is_not_reported(self):
+        said = []
+        verify.reverify(REVERIFY_CONFIG, self.state, "pi", NOW, run=FakeRun("PASS — evidence in /e"),
+                        on_lock_wait=said.append)
+        self.assertEqual(said, [])
+
     def test_lead_runtimes_lists_each_runtime_once(self):
         self.assertEqual(sorted(verify.lead_runtimes(REVERIFY_CONFIG)), ["agy", "codex", "kimi", "pi"])
 

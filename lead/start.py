@@ -43,7 +43,8 @@ from . import ccswitch, checks, orca, probes, proc, quota, registry, rotation, r
 from .status import orca_checks
 from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
-from .projects import refuse_inside, resolve_project
+from .progress import Progress
+from .projects import NotARepository, refuse_inside, resolve_project
 from .rotation import Decision, decide
 from .startout import BAD, INFO, OK, Report
 from .guard import evaluate, gate, interactive, offer
@@ -252,6 +253,36 @@ def _wait_text(runtime, todo, updated):
             f"because {' and '.join(reasons)}. Please wait.")
 
 
+SHOWN_REPOS = 8
+
+
+def _shown_path(path, home):
+    """`path` as the user types it: `~/…` under their home, shell-quoted."""
+    home = os.path.realpath(home).rstrip(os.sep) if home else ""
+    if home and path.startswith(home + os.sep):
+        return "~/" + shlex.quote(path[len(home) + 1:])
+    return shlex.quote(path)
+
+
+def not_a_repository_help(e, home=None):
+    """The `bw start` message for a folder that is not in a git repository: what is wrong, what to do,
+    and, when the folder holds repositories, the exact commands that start one of them."""
+    home = home if home is not None else os.path.expanduser("~")
+    lines = [str(e),
+             "bw start opens a lead on one git repository. Run it inside a repository, "
+             "or give the repository's path."]
+    if e.repos:
+        repos = e.repos
+        lines.append("Repositories in this folder, most recently used first:")
+        lines += [f"  bw start {_shown_path(r, home)}" for r in repos[:SHOWN_REPOS]]
+        if len(repos) > SHOWN_REPOS:
+            lines.append(f"  … and {len(repos) - SHOWN_REPOS} more")
+    else:
+        lines.append("Example: bw start ~/code/my-project")
+    lines.append("New project: git init <dir>, then bw start <dir>.")
+    return "\n".join(lines)
+
+
 def _terminal(stream):
     return bool(getattr(stream, "isatty", lambda: False)())
 
@@ -296,6 +327,10 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     # 1. the project, and bw itself outside it
     try:
         project = resolve_project(path or cwd or os.getcwd(), config, run)
+    except NotARepository as e:
+        for line in not_a_repository_help(e, (env or {}).get("HOME")).splitlines():
+            rep.say(line)  # every plain line keeps the `bw start: ` prefix
+        return 2
     except ValueError as e:
         rep.say(str(e))
         return 2
@@ -319,57 +354,73 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     # 2 and 3. updates, and the re-verify pool fed as each tool finishes
     items_by_rt, updated_rts = {}, set()
 
+    # Each part that can take minutes is named here; while any runs, a "still waiting" line repeats.
+    # A heartbeat line goes to Checks: Report prints it under Updates while that section is open.
+    progress = Progress(lambda text: rep.wait("Checks", text))
+
     def on_attack(rt, todo):
+        progress.begin(("checks", rt), f"{rt} checks")
         rep.wait("Checks", _wait_text(rt, todo, updated_rts))
+
+    def on_lock_wait(rt):
+        progress.begin(("lock", rt), f"the {rt} lock")
+        rep.wait("Checks", f"waiting for the {rt} lock: an update of {rt} holds it (another bw start, or a "
+                           f"bw that updates {rt}, is running). The checks of {rt} start when it ends.")
+        return lambda: progress.end(("lock", rt))
 
     def check(rt, version_ok):
         try:
             items = verifymod.reverify(config, state, rt, now, run=run, allow_run=verify, version_ok=version_ok,
-                                       on_attack=on_attack)
+                                       on_attack=on_attack, on_lock_wait=on_lock_wait)
         except Exception as e:  # one runtime's failure is its line, never the start's end
             items = [verifymod.Item(rt, "verify", "failed", f"{type(e).__name__}: {e}")]
+        finally:
+            progress.end(("checks", rt))
         items_by_rt[rt] = items
         for item in items:
             _item_line(rep, item)
 
-    submitted = set()
-    waiting = [rt for rt in runtimes if update and rt in rt_tool]
-    last = read_json(os.path.join(state, "start.json"), {})
-    previous = last.get("tools") if isinstance(last, dict) else None
-    previous = previous if isinstance(previous, dict) else {}
-    results = dict(previous)  # --no-update keeps each tool's history (last_update_at) for the next start
-    if update:
-        rep.begin("Updates")
-    try:
-        with ThreadPoolExecutor(max_workers=max(1, len(runtimes))) as pool:
-            def submit(rt, version_ok):
-                if rt not in submitted:
-                    submitted.add(rt)
-                    pool.submit(check, rt, version_ok)
+    with progress:
+        submitted = set()
+        waiting = [rt for rt in runtimes if update and rt in rt_tool]
+        last = read_json(os.path.join(state, "start.json"), {})
+        previous = last.get("tools") if isinstance(last, dict) else None
+        previous = previous if isinstance(previous, dict) else {}
+        results = dict(previous)  # --no-update keeps each tool's history (last_update_at) for the next start
+        if update:
+            rep.begin("Updates")
+        try:
+            with ThreadPoolExecutor(max_workers=max(1, len(runtimes))) as pool:
+                def submit(rt, version_ok):
+                    if rt not in submitted:
+                        submitted.add(rt)
+                        pool.submit(check, rt, version_ok)
 
-            for rt in runtimes:
-                if rt not in waiting:
-                    submit(rt, True)
-            if update:
-                _no_lock_line(rep, config, runtimes, rt_tool, tools)
-                names = updates.will_update_names(config, previous, now)
-                if names:
-                    rep.wait("Updates", f"updating {', '.join(names)}. This can take a minute.")
+                for rt in runtimes:
+                    if rt not in waiting:
+                        submit(rt, True)
+                if update:
+                    _no_lock_line(rep, config, runtimes, rt_tool, tools)
+                    names = updates.will_update_names(config, previous, now)
+                    if names:
+                        rep.wait("Updates", f"updating {', '.join(names)}. This can take a minute.")
 
-                def on_done(res):
-                    if res.result == "updated":
-                        updated_rts.add(res.runtime)
-                    _tool_line(rep, res)
-                    if res.runtime in waiting:
-                        submit(res.runtime, res.after != updates.UNREADABLE)
+                    def on_done(res):
+                        progress.end(("update", res.tool))
+                        if res.result == "updated":
+                            updated_rts.add(res.runtime)
+                        _tool_line(rep, res)
+                        if res.runtime in waiting:
+                            submit(res.runtime, res.after != updates.UNREADABLE)
 
-                results = updates.update_all(config, state, now, run=run, on_done=on_done, previous=previous)
-                for rt in waiting:  # a runtime whose tool never reported still gets its check
-                    submit(rt, True)
-    finally:
-        rep.end("Updates")
-    verify_items = [i for rt in runtimes for i in items_by_rt.get(rt, [])]
-    _guard_evals(config, runtimes, state, verify, run, rep, profile=project.profile)
+                    results = updates.update_all(config, state, now, run=run, on_done=on_done, previous=previous,
+                                                 on_start=lambda name: progress.begin(("update", name), f"{name} update"))
+                    for rt in waiting:  # a runtime whose tool never reported still gets its check
+                        submit(rt, True)
+        finally:
+            rep.end("Updates")
+        verify_items = [i for rt in runtimes for i in items_by_rt.get(rt, [])]
+        _guard_evals(config, runtimes, state, verify, run, rep, profile=project.profile, progress=progress)
 
     # 4. quota (probes, one Orca read; expired caps cleared) and the lead, on a fresh clock
     started, now = now, clock()
@@ -424,7 +475,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     return launch() if launch else code  # the exec is last: nothing after it would run
 
 
-def _guard_evals(config, runtimes, state, verify, run, rep, profile=None):
+def _guard_evals(config, runtimes, state, verify, run, rep, profile=None, progress=None):
     """The guard eval for each runtime with a guarded lead; it runs only when its key changed. With no
     judge model, or a profile pinned shadow, nothing can promote: no eval runs and no line prints."""
     if not (config.get("guard") or {}).get("model") or (profile and gate.pin(config, profile) == "shadow"):
@@ -439,10 +490,15 @@ def _guard_evals(config, runtimes, state, verify, run, rep, profile=None):
                                    f"uses a little model quota, because {why}. Please wait.")
         except Exception:  # a notice only: never the start's end
             pass
+        if progress is not None:
+            progress.begin(("guard", rt), f"the {rt} guard eval")
         try:
             status, line = evaluate.ensure(config, state, rt, allow_run=verify, run=run)
         except Exception as e:  # one runtime's failure is its line, never the start's end, and never the text
             status, line = "fail", f"guard eval {rt}: failed to run ({type(e).__name__})"
+        finally:
+            if progress is not None:
+                progress.end(("guard", rt))
         mark = {"pass": OK, "fail": BAD}.get(status, INFO)
         rep.line("Checks", line, mark)
 
