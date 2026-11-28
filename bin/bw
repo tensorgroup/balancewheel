@@ -5,7 +5,8 @@
                                                   work too, e.g. bw --use <lead>); elsewhere: bw status
   bw start [path] [--dry-run] [--no-update] [--no-verify]
                                                   update tools, re-verify, pick the lead, open it in
-                                                  a Terminal tab (an Orca pane with canvas: orca)
+                                                  a Terminal tab (a Ghostty tab with canvas: ghostty,
+                                                  an Orca pane with canvas: orca)
   bw lead [--use <lead> | --auto] [--no-rating]   start the right lead for this worktree
   bw status                                       leads, quota, caps, pins, cc-switch checks, and Orca checks when Orca is in use
   bw probe [plan...]                              read quota now (OpenRouter key; Orca for mapped plans; agy

@@ -35,8 +35,8 @@ class FakeRun:
     `versions[x]` answers `[x, "--version"]` (None: exit 1); an update argv in `updates` sets its
     tool's version to `new` after sleeping; `.sh` scripts (the attacks) PASS."""
 
-    def __init__(self, orca="stopped", create_rc=0, open_rc=0):
-        self.orca, self.create_rc, self.open_rc = orca, create_rc, open_rc
+    def __init__(self, orca="stopped", create_rc=0, open_rc=0, ghostty_rc=0):
+        self.orca, self.create_rc, self.open_rc, self.ghostty_rc = orca, create_rc, open_rc, ghostty_rc
         self.versions = {"pi": "pi 1.0", "kimi": "kimi 1.0", "codex": "codex 1.0"}
         self.updates = {}  # tuple(argv) -> (name, new_version, sleep_s, rc)
         self.calls = []  # (argv, start, end)
@@ -59,6 +59,8 @@ class FakeRun:
             return Result(0, (FIX / f"status_{self.orca}.json").read_text(), "", False)
         if argv[:3] == CREATE:
             return Result(self.create_rc, "", "create refused" if self.create_rc else "", False)
+        if argv[0] == "osascript":
+            return Result(self.ghostty_rc, "", "Ghostty got an error" if self.ghostty_rc else "", False)
         if argv[0] == "open":
             return Result(self.open_rc, "", "open: no Terminal" if self.open_rc else "", False)
         if argv[0].endswith(".sh"):
@@ -317,6 +319,51 @@ class StartCase(unittest.TestCase):
         self.assertEqual(len(self.ran(run, CREATE)), 1)
         self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
         self.assertIn("orca terminal create failed (exit 1: create refused); opening a Terminal tab", out)
+
+    def test_ghostty_canvas_opens_a_tab_through_osascript(self):
+        self.config["canvas"] = "ghostty"
+        run = FakeRun(orca="running")
+        code, out = self.start(run, verify=False, update=False)
+        self.assertEqual(code, 0, out)
+        path = os.path.join(self.state, "start", f"{runner_key(self.repo)}.command")
+        calls = self.ran(run, ["osascript"])
+        self.assertEqual(len(calls), 1)
+        argv = calls[0][0]
+        self.assertEqual(argv[-2:], [path, str(self.repo)])  # data as run-handler arguments, never script text
+        script = argv[1:-2]
+        self.assertEqual(script[::2], ["-e"] * (len(script) // 2))
+        self.assertNotIn(path, " ".join(script))
+        self.assertNotIn(str(self.repo), " ".join(script))
+        self.assertIn('tell application "Ghostty"', script)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o700)
+        self.assertEqual(self.ran(run, ["open"]), [])
+        self.assertEqual([a for a in run.argvs() if a[0] == "orca"], [])
+        self.assertIn(f"opened a Ghostty tab for {self.repo}", out)
+
+    def test_ghostty_failure_falls_back_to_terminal(self):
+        self.config["canvas"] = "ghostty"
+        run = FakeRun(ghostty_rc=1)
+        code, out = self.start(run, verify=False, update=False)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.ran(run, ["osascript"])), 1)
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+        self.assertIn("ghostty: could not open a tab (exit 1: Ghostty got an error); opening a Terminal tab", out)
+
+    def test_ghostty_and_terminal_failing_prints_the_command_and_exits_1(self):
+        self.config["canvas"] = "ghostty"
+        code, out = self.start(FakeRun(ghostty_rc=1, open_rc=1), verify=False, update=False)
+        self.assertEqual(code, 1)
+        self.assertIn(f"run it yourself: cd {shlex.quote(str(self.repo))} && ", out)
+
+    def test_ghostty_canvas_dry_run_runs_only_git(self):
+        self.config["canvas"] = "ghostty"
+        run = FakeRun()
+        code, out = self.start(run, dry_run=True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual({a[0] for a in run.argvs()}, {"git"})
+        path = os.path.join(self.state, "start", f"{runner_key(self.repo)}.command")
+        self.assertIn(f"would open a Ghostty tab: osascript <new-tab script> {shlex.join([path, str(self.repo)])}", out)
+        self.assertFalse(os.path.exists(path))
 
     def test_neither_orca_nor_terminal_prints_the_command_and_exits_1(self):
         self.config["canvas"] = "orca"

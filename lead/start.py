@@ -19,7 +19,8 @@ One `bw start:` line per event. Steps:
      review of a few unmarked guard decisions, at most once a day (`lead.guard.offer`; Enter skips;
      not with --no-verify);
   6. open the worktree: a Terminal tab through a `.command` file in the state dir; with
-     `canvas: orca`, an Orca pane when Orca runs, else the Terminal tab; neither → print the command and exit 1. A worktree whose lock is
+     `canvas: ghostty`, a Ghostty tab that runs the same file (through Ghostty's AppleScript), else the
+     Terminal tab; with `canvas: orca`, an Orca pane when Orca runs, else the Terminal tab; neither → print the command and exit 1. A worktree whose lock is
      held already has a lead and is not opened again;
   7. verify every reachable seat whose key changed, in one detached background child; the lead
      never waits (the child reads the seat keys itself; start reads none);
@@ -46,6 +47,24 @@ from seats import verify as seat_verify
 PASSED_ENV = ("BALANCEWHEEL_CONFIG", "BW_STATE_DIR")
 ORCA_CREATE_TIMEOUT_S = 30
 OPEN_TIMEOUT_S = 30
+# A Ghostty tab (Ghostty 1.3+ AppleScript) that runs the .command file in the worktree. The path and
+# the worktree reach the run handler as arguments, never as script text, so no quoting can break out.
+GHOSTTY_SCRIPT = [
+    "on run argv",
+    'tell application "Ghostty"',
+    "set cfg to new surface configuration",
+    "set command of cfg to item 1 of argv",
+    "set initial working directory of cfg to item 2 of argv",
+    "set wait after command of cfg to true",
+    "if (count of windows) > 0 then",
+    "new tab in front window with configuration cfg",
+    "else",
+    "new window with configuration cfg",
+    "end if",
+    "activate",
+    "end tell",
+    "end run",
+]
 
 
 def _passed(env):
@@ -65,6 +84,10 @@ def _command_file(state, project, bw, env):
     lines += [f"export {k}={shlex.quote(v)}" for k, v in _passed(env)]
     lines += [f"cd {shlex.quote(project.worktree)} || exit 1", f"exec {shlex.quote(bw)} lead"]
     return path, "\n".join(lines) + "\n"
+
+
+def _ghostty_argv(path, worktree):
+    return ["osascript", *[a for line in GHOSTTY_SCRIPT for a in ("-e", line)], path, worktree]
 
 
 def _write_command_file(path, content):
@@ -298,6 +321,12 @@ def _workspace(state, project, run, bw, env, say, canvas):
             say(f"orca: {why}; opening a Terminal tab")
     path, content = _command_file(state, project, bw, env)
     _write_command_file(path, content)
+    if canvas == "ghostty":
+        r = run(_ghostty_argv(path, project.worktree), OPEN_TIMEOUT_S)
+        if r.rc == 0 and not r.timed_out:
+            say(f"opened a Ghostty tab for {project.worktree}")
+            return 0
+        say(f"ghostty: could not open a tab ({'timed out' if r.timed_out else _detail(r)}); opening a Terminal tab instead")
     r = run(["open", "-a", "Terminal", path], OPEN_TIMEOUT_S)
     if r.rc == 0 and not r.timed_out:
         say(f"opened a Terminal tab for {project.worktree}")
@@ -332,5 +361,8 @@ def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, r
         say(f"orca: {why}; would write {path}:" if why else f"would write {path}:")
         for line in content.splitlines():
             say(f"  {line}")
-        say(f"would run: {shlex.join(['open', '-a', 'Terminal', path])}")
+        if orca.canvas(config) == "ghostty":
+            say(f"would open a Ghostty tab: osascript <new-tab script> {shlex.join([path, project.worktree])}")
+        else:
+            say(f"would run: {shlex.join(['open', '-a', 'Terminal', path])}")
     return 0

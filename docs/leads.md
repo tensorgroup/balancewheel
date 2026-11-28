@@ -1,6 +1,7 @@
 # Leads and rotation (`bw`, since 2026-10-24)
 
-*Written 2026-11-24: moved here, unchanged, from the README's "Leads and rotation" section, so the README
+*Updated 2026-11-27: `canvas: "ghostty"` (a Ghostty tab instead of a Terminal tab).
+Written 2026-11-24: moved here, unchanged, from the README's "Leads and rotation" section, so the README
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
 Corrected the same day after review: the panel's summary line, the `bw start` prefix of the seat-check
@@ -176,7 +177,10 @@ once for each bw-contained lead runtime.
      endpoint and, for a plan that maps it, Orca's cache; see "Quota sources") and the lead it
      would start.
   4. **opens the worktree.** By default it opens a Terminal tab, through a small `.command`
-     file under the state dir's `start/` that `open -a Terminal` runs. With `canvas: "orca"`
+     file under the state dir's `start/` that `open -a Terminal` runs. With `canvas: "ghostty"`,
+     it opens a Ghostty tab that runs the same file, through Ghostty's AppleScript (Ghostty 1.3
+     or later; the first run asks for macOS Automation access to Ghostty); when that fails, it
+     falls back to the Terminal tab (bw says so first). With `canvas: "orca"`
      and Orca running, it opens an Orca pane titled `<worktree basename> lead` instead, through
      `orca terminal create --worktree path:<worktree> --command "<bw> lead"`; when
      `orca terminal create` fails, it falls back to the Terminal tab (bw says so first). A

@@ -222,7 +222,8 @@ bw start: would run: open -a Terminal ~/.local/state/balancewheel/start/98bf2f5e
 ```
 
 Then run it for real. `bw start` updates your tools, re-checks containment, reads quota, and
-opens the lead in a new macOS Terminal tab. On Linux, run `bw` inside the repository instead.
+opens the lead in a new macOS Terminal tab (set `"canvas": "ghostty"` for a Ghostty tab). On Linux,
+run `bw` inside the repository instead.
 
 ```sh
 bw start ~/code/my-project

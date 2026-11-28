@@ -33,7 +33,7 @@ _PROFILE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 def canvas(config):
-    """The configured canvas: "terminal" or "orca". A raw dict without the key reads "terminal"."""
+    """The configured canvas: "terminal", "ghostty", or "orca". A raw dict without the key reads "terminal"."""
     return config.get("canvas", "terminal")
 
 
@@ -45,9 +45,10 @@ def in_use(config):
 
 
 def active_tools(config):
-    """The configured tools, without `orca` on the terminal canvas (bw does not update or version-check Orca there)."""
+    """The configured tools, without `orca` unless the canvas is Orca (bw does not update or version-check Orca
+    on the terminal or ghostty canvas)."""
     tools = dict(config.get("tools") or {})
-    if canvas(config) == "terminal":
+    if canvas(config) != "orca":
         tools.pop("orca", None)
     return tools
 

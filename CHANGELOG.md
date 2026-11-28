@@ -15,6 +15,13 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **`canvas: "ghostty"`.** `bw start` opens the lead in a new Ghostty tab (a new window when Ghostty has none) through
+  Ghostty's AppleScript (Ghostty 1.3 or later). The tab runs the same `.command` file as the Terminal tab; the file
+  path and the worktree go to the script as arguments, never as script text. The tab stays open after the lead
+  exits. When the script fails (Ghostty missing, or macOS Automation access refused), `bw start` says so and opens
+  a Terminal tab. `--dry-run` prints `would open a Ghostty tab: …`. On the ghostty canvas, as on the terminal
+  canvas, bw does not update or version-check a configured `tools.orca`. Every lead and seat sandbox already denies
+  Apple Events and `osascript`, so a contained process cannot drive Ghostty.
 - **`bw pack export --to <dir> [--dry-run]` (`packs/export.py`).** It rewrites the `# bw:catalog:begin` / `# bw:catalog:end` block of esc's `model-seats` `pack.yaml` and its version (minor on a status, model, or membership change; patch on numbers only). It refuses a wrong name, a dirty file, a `pack.yaml` git does not track (untracked or ignored), and missing markers. It saves esc's changelog bullet to `state_dir/packs/` and logs a `pack_export` event. It reads every log in `improve.panel_logs`.
 - **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.
 - **The guard review offer (`lead/guard/offer.py`).** On a terminal, before the lead opens, `bw start` offers a
@@ -73,7 +80,7 @@ not against the prose.
   it, and a judge model is set.
   agy is refused until its spike passes.
 - **Quota source `cli`** and **`rotation.cli_fresh_min`** (default 120), schema 3 only.
-- **`canvas`**: `terminal` or `orca`.
+- **`canvas`**: `terminal` or `orca` (`ghostty` since [Unreleased]).
 - **`panel`**: `cap_min`, `deep_cap_min`, `max_rounds`, `max_parallel`, each an integer of at least 1
   (defaults 12, 30, 2, 4).
 - **`seats.*.tier`**: `default` or `reserved`.

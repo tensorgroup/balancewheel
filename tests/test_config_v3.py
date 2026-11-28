@@ -326,7 +326,11 @@ class Canvas(unittest.TestCase):
     def test_canvas_bad_value_rejected(self):
         for bad in ("Terminal", "nodeterm", "", 1, None, ["orca"]):
             o = v3(); o["canvas"] = bad
-            self.rejects(o, "canvas: must be one of ['orca', 'terminal']")
+            self.rejects(o, "canvas: must be one of ['ghostty', 'orca', 'terminal']")
+
+    def test_canvas_ghostty_accepted(self):
+        o = v3(); o["canvas"] = "ghostty"
+        self.assertEqual(load_obj(o)["canvas"], "ghostty")
 
 
 class SeatTierAndPanel(unittest.TestCase):
