@@ -218,6 +218,7 @@ bw start: would update claude: claude update · lock runtime-claude-code · inst
 bw start: would read quota for plan claude-plan
 bw start: would check seats in the background
 bw start: lead: claude (order)
+bw start: would ensure the live pane plugin
 bw start: would run: open -a Terminal ~/.local/state/balancewheel/start/98bf2f5e3750.command
 ```
 

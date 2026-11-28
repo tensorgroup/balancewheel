@@ -4,7 +4,8 @@
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
 Corrected the same day after review: the panel's summary line, the `bw start` prefix of the seat-check
-line, and a stale "not in v0" note on acting. Updated 2026-11-27: the `local` config section and `claude_pane`, `bw run`, run request files, and `bw live`.*
+line, and a stale "not in v0" note on acting. Updated 2026-11-27: the `local` config section and `claude_pane`, `bw run`, run request files, `bw live`, and
+`bw setup claude-pane` with the live pane check at a Claude Code launch.*
 
 The **lead** is the agent you work in for a project; it is also the moderator of every
 panel it convenes. One plan usually runs out first, so a project's **profile** (config
@@ -37,6 +38,7 @@ outside a git worktree it shows `bw status`.
     bw seat <id> "prompt"    # run one read-only seat by hand
     bw seat verify [<id>...] # attack-test each seat, fresh and resumed, and record a pass per seat id
     bw setup cc-switch       # write cc-switch's settings before its first launch (optional usage view)
+    bw setup claude-pane     # install the live pane plugin for plain `claude` (--remove: take out what it added)
 
 First time? See "Start leading" at the end of this page.
 
@@ -78,6 +80,20 @@ once for each bw-contained lead runtime.
   `bw sandbox verify` passed on their current version: writes stop at the worktree, the git
   data a commit needs, the runtime's own state, and the checkpoint dir; git hooks and
   config stay read-only; no app launches, Apple Events, or preference writes.
+- **The live pane's source.** The live pane plugin (`claude/live-pane/`) runs unsandboxed in
+  every Claude session, so its only source is bw's own checkout, outside every lead's write
+  grant. `bw setup claude-pane` registers a marketplace named `balancewheel` at that checkout
+  and installs `live-pane@balancewheel`. It refuses when the checkout lies inside a configured
+  project or one of its git worktrees, and when a `balancewheel` marketplace already points
+  anywhere else (remove that one first). It needs Claude Code 2.1.332 or later (the version
+  the pane is tested on; older versions cannot load mods). Each step has a 20 s limit, and a
+  second run changes nothing. `--remove` uninstalls the plugin and removes the marketplace,
+  and only when the marketplace points at this checkout. Before `bw lead` starts a Claude
+  Code lead, it runs the same checks in one 5 s limit: it installs a missing plugin, runs
+  `claude plugin update` when the installed version is not bw's (`lead/version.py`), and
+  does nothing when `claude_pane` is false, when you disabled the plugin, or when a check
+  fails. It prints one line only when it acts, and the lead starts either way.
+  `bw start --dry-run` only says "would ensure the live pane plugin".
 - **Autonomy per lead (config schema 3, `bw guard`, since 2026-10-25).** Each lead has an
   `autonomy`: `native` (Claude Code `--permission-mode auto`, Codex `--approve-for-me`: the
   runtime's own classifier decides), `guard` (bw's rules-only guard decides), `bypass`, or

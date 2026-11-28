@@ -385,6 +385,32 @@ class StartCase(unittest.TestCase):
 
     # --- dry run --------------------------------------------------------------------------
 
+    def dry_run(self, lead_runtime=None, claude_pane=None):
+        """A dry run's output, with the profile's first lead on `lead_runtime`; the FakeRun is self.last_run."""
+        if lead_runtime:
+            self.config["leads"]["lp"]["runtime"] = lead_runtime
+        if claude_pane is not None:
+            self.config["claude_pane"] = claude_pane
+        self.last_run = FakeRun()
+        code, out = self.start(self.last_run, dry_run=True)
+        self.assertEqual(code, 0, out)
+        return out
+
+    def claude_called(self):
+        return [a for a in self.last_run.argvs() if a[0] != "git"]
+
+    def test_dry_run_says_it_would_ensure_the_live_pane(self):
+        out = self.dry_run(lead_runtime="claude-code")
+        self.assertIn("bw start: would ensure the live pane plugin\n", out)
+        self.assertFalse(self.claude_called())
+        self.assertFalse(os.path.exists(self.state), "dry run wrote to the state dir")
+        self.assertNotIn("would ensure the live pane plugin", self.dry_run(lead_runtime="claude-code", claude_pane=False))
+
+    def test_dry_run_names_no_live_pane_without_a_claude_code_lead(self):
+        self.config["leads"]["lx"] = {"runtime": "claude-code", "model": "m", "plan": "pc"}  # not in the order
+        self.assertNotIn("live pane", self.dry_run())
+        self.assertFalse(self.claude_called())
+
     def test_dry_run_runs_nothing_but_git_and_orca_status(self):
         self.config["canvas"] = "orca"
         self.config["tools"]["orca"] = {"self_updating": True}

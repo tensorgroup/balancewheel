@@ -48,7 +48,10 @@ class RunnerCase(unittest.TestCase):
         self.cfg = root / "config.json"; self.cfg.write_text(json.dumps(cfg))
         self.env = {**os.environ, "FAKE_OUT": str(self.out), "BW_PROBE_SECONDS": "0.3", "BW_STOP_GRACE": "0.5",
                     "BALANCEWHEEL_CONFIG": str(self.cfg),
-                    "BW_ORCA_SUPPORT": str(root / "no-orca"), "BW_CCSWITCH_DIR": str(root / "no-cc-switch")}
+                    "BW_ORCA_SUPPORT": str(root / "no-orca"), "BW_CCSWITCH_DIR": str(root / "no-cc-switch"),
+                    # never the real claude: the live pane check at a claude-code launch calls the fake
+                    "BW_CLAUDE_CMD": json.dumps([sys.executable, str(HERE / "fixtures" / "fake_claude.py")]),
+                    "FAKE_CLAUDE_LOG": str(self.out / "claude-calls.jsonl")}
         self.procs = []
 
     def tearDown(self):
@@ -1629,3 +1632,59 @@ class PanelRunner(RunnerCase):
         b = self.prompt("b")
         self.assertIn("@next handoff", b)
         self.assertIn(f"open panels (finish and log them):\n- {pid} design: ready", b)
+
+
+class LivePaneRunner(RunnerCase):
+    """The live pane check at a Claude Code launch (lead/claude_pane.ensure), against the fake claude."""
+
+    def config(self, root):
+        c = super().config(root)
+        c["leads"]["la"]["runtime"] = "claude-code"
+        return c
+
+    def claude_calls(self):
+        f = self.out / "claude-calls.jsonl"
+        return [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
+
+    def fake_state(self, **state):
+        f = self.out / "claude-state.json"
+        f.write_text(json.dumps({"version": "2.1.332 (Claude Code)", "plugins": [], "markets": [], **state}))
+        return {"FAKE_CLAUDE_STATE": str(f)}
+
+    def test_claude_code_lead_ensures_the_live_pane(self):
+        p = self.start(env={"FAKE_MODE_a": "exit"})  # the fake's default: installed, current, enabled
+        out = p.stdout.read()
+        self.assertEqual(p.wait(15), 0, out)
+        calls = self.claude_calls()
+        self.assertIn(["plugin", "list", "--json"], [c[-3:] for c in calls])
+        self.assertFalse([c for c in calls if "install" in c or "update" in c], calls)
+        self.assertNotIn("live pane", out)  # nothing to do: no line
+        self.assertIsNotNone(self.fake("a"), "the lead never started")
+
+    def test_a_missing_plugin_is_installed_before_the_lead_starts(self):
+        p = self.start(env={"FAKE_MODE_a": "exit", **self.fake_state()})
+        out = p.stdout.read()
+        self.assertEqual(p.wait(15), 0, out)
+        calls = self.claude_calls()
+        from lead import claude_pane
+        self.assertIn(["plugin", "marketplace", "add", claude_pane.ROOT], calls)
+        self.assertIn(["plugin", "install", claude_pane.PLUGIN_ID], calls)
+        self.assertEqual(len([ln for ln in out.splitlines() if "live pane" in ln]), 1, out)
+
+    def test_claude_pane_false_calls_nothing(self):
+        cfg = json.loads(self.cfg.read_text())
+        cfg["schema_version"] = 3
+        cfg["claude_pane"] = False
+        self.cfg.write_text(json.dumps(cfg))
+        p = self.start(env={"FAKE_MODE_a": "exit", **self.fake_state()})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        self.assertEqual(self.claude_calls(), [])
+
+    def test_other_runtimes_never_call_claude(self):
+        cfg = json.loads(self.cfg.read_text())
+        cfg["leads"]["la"]["runtime"] = "codex"
+        self.cfg.write_text(json.dumps(cfg))
+        p = self.start(env={"FAKE_MODE_a": "exit", **self.fake_state()})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        self.assertIsNotNone(self.fake("a"))
+        self.assertEqual(self.claude_calls(), [])

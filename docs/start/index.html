@@ -6,7 +6,8 @@
 <title>Balancewheel Guide</title>
 <meta name="description" content="Balancewheel step by step: a review panel you can watch, the quick start with real output, and the scoreboard.">
 <!-- docs/start/index.html — the interactive getting-started guide. Hand-written, self-contained, no network.
-     Written 2026-11-24. Terminal output on this page is copied from real runs of bw on the example config;
+     Written 2026-11-24; updated 2026-11-27 (the dry run's live pane line). Terminal output on this page is
+     copied from real runs of bw on the example config;
      the panel, the timeline, and the scoreboard are illustrations with synthetic data. -->
 <style>
 :root {
@@ -514,8 +515,8 @@ One dispute (opus against astra on the lock order). The code agreed with astra.<
       means: '<b>It spends a little model quota.</b> A seat that is capped or not logged in shows <code>seat &lt;id&gt;: pending — &lt;reason&gt;</code>. That is not a failure. Run it again after a CLI upgrade.' },
     { t: 'Open a project (dry run)', why: 'Use the path of one of your git repositories. See what bw start would do. Nothing runs and nothing is written. This is an excerpt: read every "would update" line in yours.',
       cmd: 'bw start --dry-run ~/code/my-project',
-      out: [['', 'bw start: dry run for ~/code/my-project (profile product); nothing is run or written\nbw start: would update claude: claude update · lock runtime-claude-code · installer claude\nbw start: would read quota for plan claude-plan\nbw start: would check seats in the background\n'], ['ok', 'bw start: lead: claude (order)'], ['', '\nbw start: would run: open -a Terminal ~/.local/state/balancewheel/start/98bf2f5e3750.command']],
-      means: '<b>lead: claude (order)</b> means the first lead in the profile\'s order would start.' },
+      out: [['', 'bw start: dry run for ~/code/my-project (profile product); nothing is run or written\nbw start: would update claude: claude update · lock runtime-claude-code · installer claude\nbw start: would read quota for plan claude-plan\nbw start: would check seats in the background\n'], ['ok', 'bw start: lead: claude (order)'], ['', '\nbw start: would ensure the live pane plugin\nbw start: would run: open -a Terminal ~/.local/state/balancewheel/start/98bf2f5e3750.command']],
+      means: '<b>lead: claude (order)</b> means the first lead in the profile\'s order would start. <b>would ensure the live pane plugin</b>: before a Claude Code lead starts, bw installs or updates the live pane from its own checkout (<code>bw setup claude-pane</code> does it for plain <code>claude</code>).' },
     { t: 'Open it for real', why: 'Update the tools, re-check containment, read quota, and open the lead in a new macOS Terminal tab.',
       cmd: 'bw start ~/code/my-project',
       out: [['', 'bw start: claude: 2.4.1 → 2.4.1 current (1.2s)\n…\nbw start: lead: claude (order)\n'], ['ok', 'bw start: opened a Terminal tab for ~/code/my-project'], ['', '\nbw start: checking seats in the background (log: …)']],

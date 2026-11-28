@@ -24,10 +24,12 @@ FAKE_OUT/orca-calls.jsonl) and reports Orca's version as 9.9.9-test; without it 
 --panel-notice-raises makes every inbox notice of kind `panel` raise OSError.
 --gate-refuses REASON pins every profile `acting` and makes gate.refuses return REASON for every guarded
 lead (as for a pinned-acting profile on an unverified guard key).
+A claude-code launch runs the live pane check (lead/claude_pane.ensure) against tests/fixtures/fake_claude.py:
+BW_CLAUDE_CMD defaults to it, and FAKE_CLAUDE_LOG to FAKE_OUT/claude-calls.jsonl, so no runner test calls a real `claude`.
 The panel worker always runs with no first-verification wait and no verify spawn (no seat version
 command, no attack), polling fast; `bw seat` is whatever BW_PANEL_SEAT_CMD names (the tests' fake seat).
 """
-import atexit, os, shutil, sys, tempfile
+import atexit, json, os, shutil, sys, tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -42,6 +44,8 @@ from lead.sandbox import RuntimeGrants  # noqa: E402
 
 args = sys.argv[1:]
 cfg_path, worktree = args[0], args[1]
+os.environ.setdefault("BW_CLAUDE_CMD", json.dumps([sys.executable, str(HERE / "fake_claude.py")]))
+os.environ.setdefault("FAKE_CLAUDE_LOG", os.path.join(os.environ["FAKE_OUT"], "claude-calls.jsonl"))
 use = args[args.index("--use") + 1] if "--use" in args else None
 auto = "--auto" in args
 bw_rt = args[args.index("--contained-by-bw") + 1] if "--contained-by-bw" in args else None

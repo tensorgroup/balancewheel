@@ -21,6 +21,8 @@
                                                   its inbox file
   bw sandbox verify <runtime> [--lead <lead>]     attack-test a bw-contained runtime, record a pass
   bw setup cc-switch                              pre-write cc-switch's settings (before its first launch)
+  bw setup claude-pane [--remove]                 install the live pane plugin for Claude Code from this checkout
+                                                  (--remove: take out only what this setup added)
   bw seat <id> [-b] [-r] [-d DIR] [--deep] "prompt"   run one read-only seat (the panel runs seats for you)
   bw seat list [--json]                           seats, verification, caps
   bw seat verify [<id>...] [--all]                attack-test each seat (no ids: every reachable seat),
@@ -67,7 +69,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from cockpit import server as cockpit_server, views as cockpit_views  # noqa: E402
-from lead import ccswitch, inbox, probes, quota, registry, runner, sandbox, start, status, verify  # noqa: E402
+from lead import ccswitch, claude_pane, inbox, probes, quota, registry, runner, sandbox, start, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, evaluate as guard_eval, install as guard_install, review as guard_review  # noqa: E402
 from lead.guard.review import safe  # noqa: E402
 from lead import improve, live, run_cli, triage_install  # noqa: E402
@@ -469,6 +471,18 @@ def cmd_pack(a, config, state):
 
 
 def cmd_setup(a):
+    if a.what == "claude-pane":
+        # Loads the config itself, for the project check only: a config error skips that check, says so,
+        # and still sets up the pane.
+        try:
+            config = load_config()
+        except ConfigError as e:
+            print(f"bw: config error: {e}; the project check is skipped")
+            config = None
+        return claude_pane.setup(config, remove=a.remove)
+    if a.remove:
+        print("bw: --remove applies to bw setup claude-pane only", file=sys.stderr)
+        return 2
     code, msg = ccswitch.write_settings()
     print(msg)
     return code
@@ -530,7 +544,8 @@ def main(argv=None):
     pk = sub.add_parser("pack"); pks = pk.add_subparsers(dest="sub", required=True)
     pe = pks.add_parser("export"); pe.add_argument("--to", required=True, metavar="DIR")
     pe.add_argument("--dry-run", action="store_true")
-    st = sub.add_parser("setup"); st.add_argument("what", choices=["cc-switch"])
+    st = sub.add_parser("setup"); st.add_argument("what", choices=["cc-switch", "claude-pane"])
+    st.add_argument("--remove", action="store_true")
     sub.add_parser("seat", add_help=False)  # listed for --help; `bw seat` parses its own argv
     sub.add_parser("panel", add_help=False)  # likewise
     sub.add_parser("run", add_help=False)  # likewise
@@ -552,7 +567,7 @@ def _dispatch(a):
         return cmd_run(a)
     if a.cmd == "live":  # read-only; handles a config error itself
         return cmd_live(a)
-    if a.cmd == "setup":  # touches only the tool's own settings file, so it needs no config
+    if a.cmd == "setup":  # cc-switch: only the tool's own settings file; claude-pane loads the config itself
         return cmd_setup(a)
     if a.cmd == "triage":  # touches only Claude Code's settings file, so it needs no config
         return cmd_triage(a)

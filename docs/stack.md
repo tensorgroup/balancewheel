@@ -1,6 +1,6 @@
 # The stack — what we use, what we don't, and why
 
-*Revised 2026-11-22: Orca is an optional canvas. Started 2026-10-25; revised 2026-10-25 for `bw guard` v0, again for cc-switch's adoption, for the Orca quota source as built, and (2026-10-26) for how cc-switch is read. One row per tool that has been used, planned, retired, or evaluated for
+*Revised 2026-11-27: the live pane plugin and the Claude Code version it needs. Revised 2026-11-22: Orca is an optional canvas. Started 2026-10-25; revised 2026-10-25 for `bw guard` v0, again for cc-switch's adoption, for the Orca quota source as built, and (2026-10-26) for how cc-switch is read. One row per tool that has been used, planned, retired, or evaluated for
 the reference setup, with the reason and what would change the call. Update it in the same
 commit as any change of tool; date the row. Settings and boundaries for each adopted tool
 live in the owning doc linked from its row (the 2026-10-24 spec's "Third-party tools"
@@ -17,7 +17,7 @@ features would write both layers, so they stay off (and `bw setup cc-switch` pre
 
 | Tool | Role | License | Since | Why this one |
 |---|---|---|---|---|
-| **Claude Code** | the primary agent: lead, panel moderator, and a blind fresh-context seat | proprietary | start | Strongest moderator in the logged panels; its statusline reports plan quota (the only documented first-party quota surface); its `auto` permission mode is a built-in classifier, so it needs no `bw guard`. |
+| **Claude Code** | the primary agent: lead, panel moderator, and a blind fresh-context seat | proprietary | start | Strongest moderator in the logged panels; its statusline reports plan quota (the only documented first-party quota surface); its `auto` permission mode is a built-in classifier, so it needs no `bw guard`. Since 2026-11-27 it also hosts the live pane (`claude/live-pane/`, a plugin from bw's own checkout), tested on Claude Code 2.1.332; that is the minimum `bw setup claude-pane` checks, since older versions cannot load mods. |
 | **Codex CLI** | the OpenAI seat (lead seat on plan/design targets) and a fallback lead | Apache-2.0 | start | Repo-aware, its own OS sandbox for read-only seats, flat-rate on the ChatGPT plan; `--approve-for-me` gives leads autonomy without prompts. |
 | **pi** | runtime for metered seats (OpenRouter models) and a `bw sandbox` lead | MIT | 2026-09-03 | Headless, a tool allowlist plus an extension guard, JSON output with tokens and cost; replaced OpenCode (below). Must be installed with a manager that pins its own Node. |
 | **agy** (Antigravity CLI) | the Gemini seat; a Claude lead billed to the Google plan | proprietary | 2026-10-24 | The only way to reach Gemini's top model and a non-Anthropic-quota Claude from a CLI. Its login is in the Keychain, so its seat uses the `sandbox-exec` backend. |

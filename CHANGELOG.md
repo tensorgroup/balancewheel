@@ -15,6 +15,19 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **`bw setup claude-pane [--remove]` and the live pane check at a Claude Code launch (`lead/claude_pane.py`).**
+  Setup registers a marketplace named `balancewheel` at bw's own checkout and installs `live-pane@balancewheel`
+  (each step bounded by 20 s; one line per step; a second run changes nothing; an installed version that is not
+  `lead.version.VERSION` gets `claude plugin marketplace update balancewheel` then `claude plugin update`). It
+  refuses, and changes nothing, when Claude Code is older than 2.1.332 (`docs/stack.md`), when the checkout lies
+  inside a configured project or one of its git worktrees, and when a `balancewheel` marketplace points anywhere
+  else. `--remove` uninstalls the plugin and removes the marketplace only when that marketplace points at this
+  checkout. A config error skips the project check and says so. Before `bw lead` starts a `claude-code` lead it
+  runs the same checks in one 5 s limit: it installs a missing plugin, updates one at another version, and does
+  nothing when `claude_pane` is false, the plugin is disabled, or a check fails or times out; it prints one `bw:`
+  line only when it acts and never stops the launch. `bw start --dry-run` prints `would ensure the live pane
+  plugin` when a lead in the profile's order runs `claude-code` and `claude_pane` is not false, and calls nothing.
+  `BW_CLAUDE_CMD` (a JSON list) replaces `claude` for these calls; tests point it at `tests/fixtures/fake_claude.py`.
 - **The live pane plugin (`claude/live-pane/`) and `lead/version.py`.** A Claude Code plugin that shows one
   lane per running agent or seat (main first; the bead moves faster as the context fills), the session's
   figures (time, `≈` cost, runs, live, rate limits), a context chart on a fixed 0-100% scale, an

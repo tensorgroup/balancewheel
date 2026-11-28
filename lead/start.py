@@ -25,7 +25,8 @@ One `bw start:` line per event. Steps:
      never waits (the child reads the seat keys itself; start reads none);
   8. the cockpit hint, the cc-switch checks, the Orca checks when Orca is in use, config warnings.
 `state_dir/start.json` records what happened. `--dry-run` runs only git (and `orca status`
-when the canvas is Orca) and writes nothing.
+when the canvas is Orca) and writes nothing; with a `claude-code` lead in the order it says it would
+ensure the live pane plugin (`bw lead` does that at the launch, `lead/claude_pane.py`).
 """
 import os
 import shlex
@@ -323,6 +324,9 @@ def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, r
         say(f"would read quota for plan {p}")
     say("would check seats in the background" if verify else "seats: would not check (--no-verify)")
     _quota_and_lead(config, state, project, profile, plans, now, say)
+    if config.get("claude_pane") is not False and any(
+            (config.get("leads") or {}).get(n, {}).get("runtime") == "claude-code" for n in profile.get("lead_order") or []):
+        say("would ensure the live pane plugin")  # bw lead runs lead/claude_pane.ensure; nothing is called here
     cmd = _lead_command(bw, env)
     up, why = orca.running(run) if orca.canvas(config) == "orca" else (False, None)
     if up:

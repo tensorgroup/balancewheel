@@ -44,7 +44,7 @@ import tempfile
 import time
 import uuid
 
-from . import containment, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox, triage as triagemod
+from . import claude_pane, containment, guard as guardpkg, inbox as inboxmod, orca as orcamod, probes, proc, quota as quotamod, rotation, sandbox, triage as triagemod
 from .handoff import build_handoff, checkpoint_dir, first_prompt, open_panels_section, protocol_text, write_first_prompt
 from .guard import broker as brk, gate, install as guard_install, judging, launch
 from .guard.launch import GuardUnavailable
@@ -213,6 +213,10 @@ class Session:
             path = write_first_prompt(ctx.state, ctx.project.worktree_key, prompt)
             ctx.say(f"bw: paste the first prompt from {path} into the lead")
             argv_prompt = None
+        if self.lead["runtime"] == "claude-code":
+            # The live pane plugin, installed or updated from bw's checkout (lead/claude_pane.py): bounded,
+            # nonfatal, one line only when it acts. run() already refused a bw inside the project.
+            claude_pane.ensure(ctx.config, say=ctx.say)
         # pi/Kimi get the checkpoint dir through bw sandbox grants; self-contained runtimes whose
         # own sandbox stops at the worktree (Codex, agy) get it as an extra writable dir. The panel
         # request dir is inside it, so it needs no grant of its own.
