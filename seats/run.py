@@ -2,30 +2,32 @@
 
 `run_seat` is the core of `bw seat` and of the panel, which calls it in-process. Every return gives a
 `SeatResult`. A seat that did not run gets one `ran: false` usage row; a run that happened gets one
-`ran: true` row. Exit statuses: the CLI's own status, 124 on the wall-clock cap, 75 when bw refuses
-or cannot start the seat.
+`ran: true` row. Once the CLI is about to start, a `run` start row is written, and exactly one `run` end
+row follows on every path (lead/runs.py); a refusal before that point writes no run row. Exit statuses:
+the CLI's own status, 124 on the wall-clock cap, 75 when bw refuses or cannot start the seat.
 """
 import argparse
 import os
 import shutil
+import socket
 import stat
 import sys
 import tempfile
 import time
 from collections import namedtuple
 
-from lead import locks, proc, sandbox
+from lead import locks, proc, runs, sandbox
 from lead.guard.redact import redact
 from lead.guard.review import safe
 from lead.paths import load_config, state_dir
 from lead.projects import resolve_project
 from metrics import store
-from seats import adapters, caps, grants, sessions, verify
+from seats import adapters, caps, grants, live, sessions, verify
 from seats import brief as seat_brief
 
 SeatResult = namedtuple("SeatResult",
     "seat requested stand_in_for runtime model ran ok reason exit_code session_id mode dir duration_s "
-    "tokens_in tokens_out cost_usd rate_limits answer")
+    "tokens_in tokens_out cost_usd rate_limits answer run_id", defaults=(None,))
 REFUSED = 75
 TIMEOUT = 124
 INTERRUPTED = 143  # 128 + SIGTERM
@@ -37,7 +39,7 @@ SANDBOX_ERROR_PREFIXES = ("sandbox-exec:", "nono")
 # More paths no seat reads, os.pathsep-separated: the attack names the production state dir here, as
 # its own runs use an isolated state dir. bw drops every BW_* name from the seat's env.
 DENY_READ_ENV = "BW_SEAT_DENY_READ"
-ROW_OPTIONAL = ("session_id", "stand_in_for", "tokens_in", "tokens_out", "cost_usd")
+ROW_OPTIONAL = ("session_id", "stand_in_for", "tokens_in", "tokens_out", "cost_usd", "run_id")
 
 
 Tampered = verify.Tampered  # one seat-home builder: seats.verify.safe_home
@@ -155,16 +157,19 @@ def _contained(config, state, seat, project, home, scratch, argv):
 
 
 class _Run:
-    """One attempt at one seat: steps 3 to 9. `refuse` and `finish` append the usage row."""
+    """One attempt at one seat: steps 3 to 9. `refuse` and `finish` append the usage row. While a run is
+    open (its start row is written), they also record the end for the one end row `execute` writes."""
 
-    def __init__(self, config, state, seat, prompt, where, opts, run, now, say, standin_for):
+    def __init__(self, config, state, seat, prompt, where, opts, run, now, say, standin_for, track):
         self.config, self.state, self.seat, self.prompt, self.where = config, state, seat, prompt, where
-        self.opts, self.run, self.now, self.say = opts, run, now, say
+        self.opts, self.run, self.now, self.say, self.track = opts, run, now, say, track
         self.s = config["seats"][seat]
         self.runtime = self.s["runtime"]
         self.adapter = adapters.SEAT_ADAPTERS[self.runtime]
         self.base = {"seat": seat, "requested": standin_for or seat, "stand_in_for": standin_for,
                      "runtime": self.runtime, "model": self.s["model"]}
+        self.run_id = None
+        self.ended = None  # (ok, end reason, duration or None, session id, usage) once the open run ends
 
     def _append(self, r):
         store.append(store.log_path(self.config), _row(r))
@@ -172,17 +177,52 @@ class _Run:
 
     def refuse(self, reason, d=None):
         """The seat did not run: exit 75 and one `ran: false` row."""
+        if self.run_id:
+            self.ended = (False, "refused", None, None, {})
         return self._append(SeatResult(**self.base, ran=False, ok=False, reason=reason, exit_code=REFUSED,
                                        session_id=None, mode=None, dir=d or self.where, duration_s=0,
                                        tokens_in=None, tokens_out=None, cost_usd=None, rate_limits=None,
-                                       answer=""))
+                                       answer="", run_id=self.run_id))
 
     def finish(self, ok, reason, exit_code, sid, mode, d, duration, usage, answer):
+        if self.run_id:
+            self.ended = (ok, None if ok else reason, duration, sid, usage)
         return self._append(SeatResult(**self.base, ran=True, ok=ok, reason=reason, exit_code=exit_code,
                                        session_id=sid, mode=mode, dir=d, duration_s=duration,
                                        tokens_in=usage.get("tokens_in"), tokens_out=usage.get("tokens_out"),
                                        cost_usd=usage.get("cost_usd"), rate_limits=usage.get("rate_limits"),
-                                       answer=answer))
+                                       answer=answer, run_id=self.run_id))
+
+    def _log_run(self, row, what):
+        """Append one run row. A failure prints one line and never stops or changes the run."""
+        try:
+            store.append(store.log_path(self.config), row)
+        except Exception as e:
+            self.say(f"bw seat: run {what} not recorded ({type(e).__name__})")
+
+    def start_run(self, wt):
+        """The start row, just before the CLI starts. The run id holds even when the append fails."""
+        t = self.track
+        row = runs.start_row(self.seat, self.s["model"], wt, runs.label(t["label"] or self.prompt), "bw",
+                             pid=os.getpid(), host=socket.gethostname(), panel=t["panel"],
+                             session_id=t["lead_session"],
+                             stand_in_for=self.base["stand_in_for"] or t["stand_in_label"], t=self.now())
+        self.run_id = row["run_id"]
+        self._log_run(row, "start")
+
+    def end_run(self, wt, start, sid):
+        """The one end row: what `refuse` or `finish` recorded, else `reason: "error"` (an exception)."""
+        ok, reason, duration, end_sid, usage = self.ended or (False, "error", None, None, {})
+        if duration is None:
+            duration = round(self.now() - start, 1)
+        try:
+            ctx_peak = live.live_usage(self.runtime, live.seat_home_path(self.state, self.seat), end_sid or sid, wt,
+                                       start, self.s).get("ctx_peak")
+        except Exception:  # best effort: the end row must still be written
+            ctx_peak = None
+        self._log_run(runs.end_row(self.run_id, self.seat, wt, ok, reason, duration,
+                                   tokens_in=usage.get("tokens_in"), tokens_out=usage.get("tokens_out"),
+                                   cost_usd=usage.get("cost_usd"), ctx_peak=ctx_peak, t=self.now()), "end")
 
     def locked(self):
         """Step 3: the shared runtime lock before the verification check, held to the end of the run."""
@@ -287,15 +327,23 @@ class _Run:
         cap_s = self.config["panel"]["deep_cap_min" if deep else "cap_min"] * 60
         start = self.now()
         try:
-            with open(input_path, encoding="utf-8") as stdin:
-                r = self.run(full, cap_s, cwd=wt, env=env, stdin=stdin, out_dir=scratch, reap=True)
-        except (KeyboardInterrupt, SystemExit):
-            self.finish(False, "interrupted", INTERRUPTED, sid, mode, wt, round(self.now() - start, 1), {}, "")
-            raise
-        finally:
+            self.start_run(wt)
+        except BaseException:
             cleanup()
-        duration = round(self.now() - start, 1)
-        return self.parse(r, sid, mode, wt, duration)
+            raise
+        try:  # from the start row on: exactly one end row, on every path
+            try:
+                with open(input_path, encoding="utf-8") as stdin:
+                    r = self.run(full, cap_s, cwd=wt, env=env, stdin=stdin, out_dir=scratch, reap=True)
+            except (KeyboardInterrupt, SystemExit):
+                self.finish(False, "interrupted", INTERRUPTED, sid, mode, wt, round(self.now() - start, 1), {}, "")
+                raise
+            finally:
+                cleanup()
+            duration = round(self.now() - start, 1)
+            return self.parse(r, sid, mode, wt, duration)
+        finally:
+            self.end_run(wt, start, sid)
 
     def parse(self, r, sid, mode, wt, duration):
         """Step 8 and 9: read the run with the adapter and append its row."""
@@ -334,15 +382,19 @@ class _Run:
 
 def run_seat(config, state, seat, prompt, *, target=None, brief=False, brief_file=None, resume=False,
              session_id=None, deep=False, fallback=True, out=None, transcript=None, attack=False,
-             run=proc.run, now=time.time, say=None, _standin_for=None) -> SeatResult:
+             run=proc.run, now=time.time, say=None, panel=None, lead_session=None, label=None,
+             stand_in_label=None, _standin_for=None) -> SeatResult:
     """One run of `seat` on `target` (default: the current dir). An unknown seat raises KeyError.
-    `_standin_for` is internal: only this function's own one-hop stand-in call sets it."""
+    `_standin_for` is internal: only this function's own one-hop stand-in call sets it. `panel`,
+    `lead_session`, `label` (default: the prompt's first line), and `stand_in_label` (a stand-in the
+    caller launched itself) only fill the run's start row."""
     say = say or _stderr
     s = config["seats"][seat]
     where = os.path.realpath(target or os.getcwd())
     opts = {"brief": brief, "brief_file": brief_file, "resume": resume, "session_id": session_id, "deep": deep,
             "out": out, "transcript": transcript, "attack": attack}
-    attempt = _Run(config, state, seat, prompt, where, opts, run, now, say, _standin_for)
+    track = {"panel": panel, "lead_session": lead_session, "label": label, "stand_in_label": stand_in_label}
+    attempt = _Run(config, state, seat, prompt, where, opts, run, now, say, _standin_for, track)
     if not s.get("enabled", True):
         return attempt.refuse("disabled")
     if session_id is not None and not adapters.valid_session(session_id):
@@ -356,7 +408,8 @@ def run_seat(config, state, seat, prompt, *, target=None, brief=False, brief_fil
         # A stand-in starts its own session: the original's session id is not the stand-in's.
         return run_seat(config, state, fb, prompt, target=target, brief=brief, brief_file=brief_file, resume=resume,
                         session_id=None, deep=deep, fallback=fallback, out=out, transcript=transcript,
-                        attack=attack, run=run, now=now, say=say, _standin_for=seat)
+                        attack=attack, run=run, now=now, say=say, panel=panel, lead_session=lead_session,
+                        label=label, _standin_for=seat)
 
     why = caps.capped(config, state, seat, now())
     if why:

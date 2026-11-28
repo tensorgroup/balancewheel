@@ -46,6 +46,36 @@ class Cli(unittest.TestCase):
         code = cli.main(argv, self.config, self.state, out=out, err=err, **kw)
         return code, out.getvalue(), err.getvalue()
 
+    def main_err(self, argv):
+        """A real run through the fake CLI: (exit code, stderr)."""
+        code, _, err = self.main(argv, run=self.fake)
+        return code, err
+
+    def help_text(self):
+        out = io.StringIO()
+        with self.assertRaises(SystemExit), mock.patch("sys.stdout", out):
+            cli._parser().parse_args(["-h"])
+        return out.getvalue()
+
+    def test_bad_tracking_flags_are_dropped_and_the_seat_runs(self):
+        for flag, bad in (("--panel", "x1"), ("--lead-session", "zz"), ("--stand-in-for", "BAD!"), ("--label", " ")):
+            rc, err = self.main_err(["astra", flag, bad, "p"])
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(err.count(f"ignored bad {flag} value"), 1)
+        for flag in ("--panel", "--lead-session", "--label", "--stand-in-for"):
+            self.assertNotIn(flag, self.help_text())
+
+    def test_tracking_flags_map_to_run_seat(self):
+        with mock.patch("seats.run.run_seat", return_value=RESULT) as rs:
+            self.main(["astra", "--panel", "p0123abc", "--lead-session", "0123456789ab", "--label", "ask a1",
+                       "--stand-in-for", "gem", "p"])
+            kw = rs.call_args.kwargs
+            self.assertEqual((kw["panel"], kw["lead_session"], kw["label"], kw["stand_in_label"]),
+                             ("p0123abc", "0123456789ab", "ask a1", "gem"))
+            code, _, err = self.main(["astra", "--panel", "x1", "p"])
+        self.assertEqual((code, rs.call_args.kwargs["panel"]), (0, None))
+        self.assertEqual(err, "bw seat: ignored bad --panel value\n")
+
     def test_flags_map_to_run_seat(self):
         with mock.patch("seats.run.run_seat", return_value=RESULT) as rs:
             code = cli.main(["astra", "-b", "-d", "/r", "--deep", "--no-fallback", "--out", "/o", "p"],

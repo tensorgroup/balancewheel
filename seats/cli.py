@@ -11,14 +11,20 @@ import signal
 import sys
 import time
 
-from lead import proc
+from lead import proc, runs
 from lead.paths import write_json_atomic
+from metrics.config import SEAT_NAME
+from panel.state import PANEL_ID
 from seats import caps, verify
 from seats import run as seat_run
 
 USAGE_ERROR = 2
 BUSY = 75
 PREFIX = "bw seat: "
+# Hidden flags that only fill the run's start row (the panel passes them). Each is checked here; a bad
+# value is dropped with one line, and the seat still runs.
+TRACKING = (("--panel", "panel", PANEL_ID.fullmatch), ("--lead-session", "lead_session", runs.LEAD_SESSION.fullmatch),
+            ("--label", "label", str.strip), ("--stand-in-for", "stand_in_for", SEAT_NAME.fullmatch))
 
 
 class _Usage(Exception):
@@ -46,6 +52,8 @@ def _parser():
     p.add_argument("--result", metavar="F", help="write the run result to F as JSON")
     p.add_argument("--transcript", metavar="F", help="write the raw stdout and stderr to F")
     p.add_argument("--attack", action="store_true", help=argparse.SUPPRESS)
+    for flag, dest, _ in TRACKING:
+        p.add_argument(flag, dest=dest, help=argparse.SUPPRESS)
     p.add_argument("prompt")
     return p
 
@@ -178,12 +186,21 @@ def main(argv, config, state, run=proc.run, out=sys.stdout, err=sys.stderr) -> i
     def say(text):
         _line(err, text[len(PREFIX):] if text.startswith(PREFIX) else text)
 
+    track = {}
+    for flag, dest, valid in TRACKING:
+        value = getattr(a, dest)
+        if value is not None and not valid(value):
+            _line(err, f"ignored bad {flag} value")
+            value = None
+        track[dest] = value
+
     previous = _install_sigterm()
     try:
         result = seat_run.run_seat(
             config, state, a.seat, a.prompt, target=a.target, brief=a.brief, brief_file=a.brief_file,
             resume=a.resume, session_id=a.session, deep=a.deep, fallback=not a.no_fallback, out=a.out,
-            transcript=a.transcript, attack=a.attack, run=run, say=say)
+            transcript=a.transcript, attack=a.attack, run=run, say=say, panel=track["panel"],
+            lead_session=track["lead_session"], label=track["label"], stand_in_label=track["stand_in_for"])
     except SystemExit as e:
         if e.code == seat_run.INTERRUPTED:
             _line(err, f"{a.seat} interrupted")

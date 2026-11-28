@@ -155,6 +155,45 @@ class PanelRunTest(unittest.TestCase):
             del os.environ["BW_PANEL_SEAT_CMD"]
             self.assertEqual(run.seat_cmd(), [sys.executable, os.path.join(run.ROOT, "bin", "bw"), "seat"])
 
+    def test_seat_argv_passes_valid_run_fields_only(self):
+        with mock.patch.dict(os.environ, {"BW_PANEL_SEAT_CMD": json.dumps(["x"])}):
+            self.assertEqual(run.seat_argv("o", "q", worktree="/w", out="/o", result="/r", panel_id="p0123abc",
+                                           lead_session="0123456789ab", label="ask a1", stand_in_for="b")[-10:],
+                             ["--panel", "p0123abc", "--lead-session", "0123456789ab", "--label", "ask a1",
+                              "--stand-in-for", "b", "--", "q"])
+            bare = run.seat_argv("o", "q", worktree="/w", out="/o", result="/r", panel_id="bad", lead_session=None,
+                                 label="")
+            self.assertFalse({"--panel", "--lead-session", "--label", "--stand-in-for"} & set(bare))
+            bad = run.seat_argv("o", "q", worktree="/w", out="/o", result="/r", lead_session="sess-1",
+                                stand_in_for="BAD!", deep=True)
+            self.assertFalse({"--lead-session", "--stand-in-for"} & set(bad))
+            self.assertEqual(bad[-3:], ["--deep", "--", "q"])
+
+    def test_round1_and_ask_argv_carry_panel_and_session(self):
+        state.update(self.S, K, self.pid, lambda p: p.update(session_id="0123456789ab"))
+        doc = self.round1({})
+        argvs = self.argvs()
+        self.assertEqual(len(argvs), 3)
+        for argv in argvs:
+            self.assertEqual(argv[argv.index("--panel") + 1], doc["panel_id"])
+            self.assertEqual(argv[argv.index("--lead-session") + 1], "0123456789ab")
+            self.assertEqual(argv[argv.index("--label") + 1], "design round 1")
+            self.assertNotIn("--stand-in-for", argv)
+        self.add_ask("d1-1-o-1", "o", "X")
+        with mock.patch.dict(os.environ, {"FAKE_SEAT_o": "echo"}):
+            run.ask(self.CFG, self.S, K, self.pid, "d1-1-o-1")
+        argv = self.last_argv("o")
+        self.assertEqual(argv[argv.index("--label") + 1], "ask d1-1-o-1")
+        self.assertEqual(argv[argv.index("--panel") + 1], self.pid)
+        self.assertEqual(argv[argv.index("--lead-session") + 1], "0123456789ab")
+
+    def test_round1_stand_in_argv_names_the_original(self):
+        pid = self.new_panel_after_release(checkpoint="review")  # a and o; g is off the roster
+        self.round1({"FAKE_SEAT_a": "cap"}, pid=pid)
+        argv = self.last_argv("g")
+        self.assertEqual(argv[argv.index("--stand-in-for") + 1], "a")
+        self.assertNotIn("--lead-session", argv)  # the fixture panel's session id is not 12 hex
+
     def test_capped_seat_gets_stand_in_and_panel_is_short(self):
         doc = self.round1({"FAKE_SEAT_a": "cap"})
         self.assertEqual(doc["absent"], {"a": "usage cap"})

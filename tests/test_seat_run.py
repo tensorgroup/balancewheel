@@ -1,13 +1,14 @@
-import io, json, os, stat, subprocess, sys, tempfile, time, unittest
+import io, json, os, socket, stat, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lead import containment, proc, sandbox  # noqa: E402
+from lead import containment, proc, runs, sandbox  # noqa: E402
 from lead.locks import RuntimeLock  # noqa: E402
 from lead.paths import load_config  # noqa: E402
 from lead.proc import Result  # noqa: E402
 from seats import adapters, brief, caps, grants, run, sessions, verify  # noqa: E402
+from metrics import store  # noqa: E402
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "balancewheel.example.json"
 FIX = Path(__file__).resolve().parent / "fixtures" / "seats"
@@ -141,7 +142,13 @@ class SeatRun(unittest.TestCase):
     def usage(self):
         if not os.path.exists(self.log):
             return []
-        return [json.loads(line) for line in Path(self.log).read_text().splitlines() if line.strip()]
+        rows = [json.loads(line) for line in Path(self.log).read_text().splitlines() if line.strip()]
+        return [r for r in rows if r.get("type") == "usage"]
+
+    def runs(self):
+        if not os.path.exists(self.log):
+            return []
+        return store.load(self.log)["runs"]
 
     def seat(self, seat="astra", prompt="review x", **kw):
         kw.setdefault("target", self.wt)
@@ -683,6 +690,116 @@ class SeatRun(unittest.TestCase):
         r = self.seat()
         self.assertEqual((r.reason, r.exit_code, r.ok), ("error: stream disconnected before completion", 1, False))
         self.assertIsNone(caps.read(self.state, "astra", time.time()))
+
+    # ---- run rows ----
+
+    def test_ok_run_writes_one_start_and_one_end(self):
+        r = self.seat()
+        s, e = self.runs()
+        self.assertEqual((s["phase"], e["phase"], e["run_id"], r.run_id), ("start", "end", s["run_id"], s["run_id"]))
+        self.assertTrue(runs.RUN_ID.fullmatch(s["run_id"]))
+        self.assertEqual((s["seat"], s["source"], s["pid"], s["host"], s["dir"]),
+                         ("astra", "bw", os.getpid(), socket.gethostname(), self.wt))
+        self.assertEqual((s["model"], s["label"]), ("gpt-6-astra", "review x"))
+        self.assertEqual((e["ok"], e["reason"], e["seat"], e["dir"]), (True, None, "astra", self.wt))
+        self.assertIsInstance(e["duration_s"], float)
+        u = self.usage()[-1]
+        self.assertEqual((u["type"], u["run_id"]), ("usage", s["run_id"]))  # the usage row, not the end row
+
+    def assert_one_end(self, queued, reason):
+        self.fake.queue("codex", queued)
+        r = self.seat(fallback=False)
+        self.assertEqual([x["phase"] for x in self.runs()], ["start", "end"])
+        e = self.runs()[-1]
+        self.assertFalse(e["ok"])
+        if callable(reason):
+            self.assertTrue(reason(e["reason"]), e["reason"])
+        else:
+            self.assertEqual(e["reason"], reason)
+        self.assertEqual(self.usage()[-1]["run_id"], e["run_id"])
+        return r
+
+    # One test per path, so a usage-cap case never leaves a cap armed for a later case (each test has a fresh state).
+    def test_timeout_ends_once(self):
+        self.assert_one_end(Result(124, "", "", True), "timeout")
+
+    def test_usage_cap_ends_once(self):
+        self.assert_one_end("usage_limit", "usage cap")
+
+    def test_error_ends_once(self):
+        self.assert_one_end("error", lambda r: r.startswith("error: "))
+
+    def test_interrupt_ends_once(self):
+        self.fake.raise_ = KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            self.seat()
+        self.assertEqual([r["phase"] for r in self.runs()], ["start", "end"])
+        self.assertEqual(self.runs()[-1]["reason"], "interrupted")
+
+    def test_exception_ends_once(self):
+        self.fake.raise_ = RuntimeError("boom")
+        with self.assertRaises(RuntimeError):
+            self.seat()
+        self.assertEqual([r["phase"] for r in self.runs()], ["start", "end"])
+        self.assertEqual((self.runs()[-1]["reason"], self.runs()[-1]["ok"]), ("error", False))
+
+    def test_sandbox_refusal_after_the_run_ends_refused(self):
+        self.fake.queue("codex", Result(1, "", "sandbox-exec: denied\n", False))
+        r = self.seat()
+        self.assertFalse(r.ran)
+        self.assertEqual([x["phase"] for x in self.runs()], ["start", "end"])
+        self.assertEqual(self.runs()[-1]["reason"], "refused")
+        self.assertEqual(self.usage()[-1]["run_id"], self.runs()[-1]["run_id"])
+
+    def test_refusal_before_execute_writes_no_run_row(self):
+        os.makedirs(os.path.join(self.wt, ".claude", "commands"))
+        self.seat("opus")
+        self.assertEqual(self.runs(), [])
+        self.assertNotIn("run_id", self.usage()[-1])
+
+    def test_start_append_failure_still_runs(self):
+        with mock.patch("lead.runs.store.append", side_effect=[OSError("ro")] + [None] * 5):
+            self.assertTrue(self.seat().ok)
+        self.assertTrue(any("run start not recorded" in s for s in self.said))
+
+    def test_end_append_failure_keeps_the_result(self):
+        with mock.patch("lead.runs.store.append", side_effect=[None, None, OSError("ro")]):
+            self.assertTrue(self.seat().ok)
+        self.assertTrue(any("run end not recorded" in s for s in self.said))
+
+    def test_stand_in_is_its_own_run_and_keeps_panel_fields(self):  # cap astra -> gem stands in
+        caps.arm(self.state, "astra", time.time(), 5)
+        self.seat(panel="p0123abc", lead_session="0123456789ab", label="design round 1")
+        s = [r for r in self.runs() if r["phase"] == "start"][-1]
+        self.assertEqual((s["seat"], s["stand_in_for"], s["panel"], s["session_id"], s["label"]),
+                         ("gem", "astra", "p0123abc", "0123456789ab", "design round 1"))
+
+    def test_stand_in_after_a_run_is_a_second_run(self):
+        self.fake.queue("codex", "usage_limit")
+        r = self.seat()
+        starts = [x for x in self.runs() if x["phase"] == "start"]
+        self.assertEqual([(x["seat"], x.get("stand_in_for")) for x in starts], [("astra", None), ("gem", "astra")])
+        self.assertNotEqual(starts[0]["run_id"], starts[1]["run_id"])
+        self.assertEqual(r.run_id, starts[1]["run_id"])
+        self.assertEqual([x["phase"] for x in self.runs()], ["start", "end", "start", "end"])
+
+    def test_panel_fields_reach_the_start_row(self):
+        self.seat(panel="p0123abc", lead_session="0123456789ab", label="design \x1b[2J round 1",
+                  stand_in_label="astra")
+        s = self.runs()[0]
+        self.assertEqual((s["panel"], s["session_id"], s["stand_in_for"]), ("p0123abc", "0123456789ab", "astra"))
+        self.assertNotIn("\x1b", s["label"])
+        self.assertTrue(s["label"].startswith("design"))
+
+    def test_ctx_peak_from_live_usage_and_never_raises(self):
+        with mock.patch("seats.live.live_usage", return_value={"ctx_peak": 777}) as lu:
+            self.seat()
+        self.assertEqual(self.runs()[-1]["ctx_peak"], 777)
+        self.assertEqual(lu.call_args.args[:4], ("codex", os.path.join(self.state, "seats", "homes", "astra"),
+                                                 "sess-0001", self.wt))
+        with mock.patch("seats.live.live_usage", side_effect=RuntimeError("x")):
+            self.assertTrue(self.seat().ok)
+        self.assertIsNone(self.runs()[-1]["ctx_peak"])
 
     def test_result_json(self):
         r = self.seat()

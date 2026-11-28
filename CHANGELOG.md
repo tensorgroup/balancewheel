@@ -40,6 +40,16 @@ not against the prose.
   counts; older files are never opened, and older codex date folders are not listed. It reads at most the
   last 1 MiB of a file, follows no link, makes no dir, and never raises (a changed format gives nulls). `home=None`
   reads the CLI's folder under the real home (local seats). The module is not in the seat key.
+- **`bw seat` and `bw panel` write `run` rows (`lead/runs.py`, `seats/run.py`).** Just before the seat CLI
+  starts, `bw seat` appends a start row (`source: "bw"`, `pid`, `host`, `label`, and `panel`, `session_id`,
+  `stand_in_for` when known); after it, exactly one end row on every path: `reason` is null for an ok run, else
+  `"refused"`, `"timeout"`, `"interrupted"`, `"usage cap"`, `"error: …"`, or `"error"` for an exception; `ctx_peak`
+  comes from `seats/live.py`. A refusal before the CLI starts (cap, login, lock, hostile repo) writes no run row,
+  and a failed append prints one line and never stops the seat. A stand-in is its own run. The `usage` row and
+  the `--result` JSON gain an optional `run_id`. `bw panel` passes the panel id, the lead session, a label
+  (`<checkpoint> round 1`, `ask <id>`), and a stand-in's original to `bw seat` through hidden flags
+  (`--panel`, `--lead-session`, `--label`, `--stand-in-for`); a bad value is dropped with one line. This
+  changes `seats/run.py`, so every seat needs `bw seat verify --changed` once.
 - **`bw pack export --to <dir> [--dry-run]` (`packs/export.py`).** It rewrites the `# bw:catalog:begin` / `# bw:catalog:end` block of esc's `model-seats` `pack.yaml` and its version (minor on a status, model, or membership change; patch on numbers only). It refuses a wrong name, a dirty file, a `pack.yaml` git does not track (untracked or ignored), and missing markers. It saves esc's changelog bullet to `state_dir/packs/` and logs a `pack_export` event. It reads every log in `improve.panel_logs`.
 - **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.
 - **The guard review offer (`lead/guard/offer.py`).** On a terminal, before the lead opens, `bw start` offers a

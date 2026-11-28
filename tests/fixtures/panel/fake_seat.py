@@ -29,6 +29,10 @@ def _parse(argv):
     p.add_argument("--brief-file")
     p.add_argument("--session")
     p.add_argument("--deep", action="store_true")
+    p.add_argument("--panel")
+    p.add_argument("--lead-session")
+    p.add_argument("--label")
+    p.add_argument("--stand-in-for")
     p.add_argument("prompt")
     return p.parse_args(argv)
 

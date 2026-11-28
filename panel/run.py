@@ -23,6 +23,8 @@ from typing import Optional
 from lead import paths
 from lead.guard.review import safe
 from lead.paths import ConfigError, load_config, read_json
+from lead.runs import LEAD_SESSION
+from metrics.config import SEAT_NAME
 from panel import merge, render, roster
 from panel import state as pstate
 from seats import brief as seat_brief
@@ -67,8 +69,10 @@ def seat_cmd() -> list:
     return [sys.executable, os.path.join(ROOT, "bin", "bw"), "seat"]
 
 
-def seat_argv(seat, prompt, *, worktree, out, result, brief_file=None, session=None, deep=False) -> list:
-    """One `bw seat` run. The prompt comes last, after `--`, so a prompt that starts with `-` is no option."""
+def seat_argv(seat, prompt, *, worktree, out, result, brief_file=None, session=None, deep=False, panel_id=None,
+              lead_session=None, label=None, stand_in_for=None) -> list:
+    """One `bw seat` run. The prompt comes last, after `--`, so a prompt that starts with `-` is no option.
+    The run-row fields (`--panel`, `--lead-session`, `--label`, `--stand-in-for`) go in only when valid."""
     argv = seat_cmd() + [seat, "--no-fallback", "-d", worktree, "--out", out, "--result", result]
     if brief_file:
         argv += ["--brief-file", brief_file]
@@ -76,6 +80,11 @@ def seat_argv(seat, prompt, *, worktree, out, result, brief_file=None, session=N
         argv += ["--session", session]
     if deep:
         argv.append("--deep")
+    for flag, value, valid in (("--panel", panel_id, pstate.PANEL_ID.fullmatch),
+                               ("--lead-session", lead_session, LEAD_SESSION.fullmatch),
+                               ("--label", label, str.strip), ("--stand-in-for", stand_in_for, SEAT_NAME.fullmatch)):
+        if isinstance(value, str) and valid(value):
+            argv += [flag, value]
     return argv + ["--", prompt]
 
 
@@ -376,7 +385,7 @@ def _end_seat(w, name, rc, seats, queue, unverified, tier) -> None:
         unverified.append(name)
 
 
-def _round(w, runs, seats, brief_path, worktree, tier) -> list:
+def _round(w, runs, seats, brief_path, worktree, tier, panel) -> list:
     """Launch up to max_parallel seats at once and collect each end. Returns the unverified seats."""
     queue, unverified = list(runs), []
     max_parallel = w.config["panel"]["max_parallel"]
@@ -388,7 +397,9 @@ def _round(w, runs, seats, brief_path, worktree, tier) -> list:
             name = queue.pop(0)
             out, result = os.path.join(seat_dir, f"{name}.md.part"), os.path.join(results, f"{name}-1.json")
             w.launch(name, seat_argv(name, render.ROUND1_PROMPT, worktree=worktree, out=out, result=result,
-                                     brief_file=brief_path, deep=tier == "deep"), out, result)
+                                     brief_file=brief_path, deep=tier == "deep", panel_id=w.pid,
+                                     lead_session=panel.get("session_id"), label=f"{panel['checkpoint']} round 1",
+                                     stand_in_for=seats[name].get("stand_in_for")), out, result)
             seats[name]["status"] = "running"
             launched = True
         if launched:
@@ -524,7 +535,7 @@ def round1(config, state, key, pid, now=time.time) -> dict:
                 _first_verification(w, pending, tier)
             pstate.ensure_dir(state, os.path.join(w.view, "seats"))
             pstate.ensure_dir(state, os.path.join(w.work, "results"))
-            unverified = _round(w, runs, seats, brief_path, worktree, tier)
+            unverified = _round(w, runs, seats, brief_path, worktree, tier, panel)
             _verify_after(w, unverified, seats)
             return _finish(w, seats)
         except BaseException as exc:  # KeyboardInterrupt and SystemExit too: never leave the panel running
@@ -582,7 +593,8 @@ def ask(config, state, key, pid, ask_id, now=time.time) -> dict:
             out = answer + ".part"
             result = os.path.join(pstate.ensure_dir(state, os.path.join(w.work, "results")), f"ask-{ask_id}.json")
             w.launch(seat, seat_argv(seat, render.ASK_FRAME.format(claim=claim), worktree=panel["worktree"], out=out,
-                                     result=result, session=session, deep=panel.get("tier") == "deep"), out, result)
+                                     result=result, session=session, deep=panel.get("tier") == "deep", panel_id=pid,
+                                     lead_session=panel.get("session_id"), label=f"ask {ask_id}"), out, result)
             w.sync()
             proc = w.live[seat][0]
             while proc.poll() is None:
