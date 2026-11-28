@@ -103,9 +103,10 @@ once for each bw-contained lead runtime.
   file, and gives a read-only grant for its install root when that root is under the home folder (for
   example `~/.pyenv/versions/3.12.4`; never all of `~/.pyenv` or the home folder). The root must hold the
   standard library (`lib/python3.N/os.py`). A link to it that `PATH` finds under the home folder (such as
-  `~/.local/bin/python3`) is readable too. A pyenv shim (`~/.pyenv/shims/python3`) is a script, not a
-  link, and is not resolved: put the version's `bin/` folder before the shims on `PATH`, or use a
-  `python3` outside the home folder.
+  `~/.local/bin/python3`) is readable too. A `bw` started through a pyenv shim needs no change:
+  `pyenv exec` puts the version's `bin/` folder first on the `PATH` that bw and its lead get. A pyenv
+  shim itself is a script, not a link, so a `bw` started by another interpreter while the shim is first
+  on `PATH` gets no grant: put the version's `bin/` folder before the shims.
   This changed `lead/sandbox.py`, which is part of the lead containment key: after this upgrade, pi and
   Kimi leads need `bw sandbox verify` again (`bw start` does it by itself).
 - **The live pane's source.** The live pane plugin (`claude/live-pane/`) runs unsandboxed in

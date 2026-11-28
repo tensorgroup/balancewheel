@@ -167,7 +167,8 @@ not against the prose.
   its two request files, and a write to the checkout is refused. `sandbox.python_reads()` adds a read-only grant
   for the install root of the first `python3` on `PATH` (its real path's parent of `bin/`, holding
   `lib/python3.N/os.py`) when it is under the home folder, plus the link node where `PATH` finds it; never all of
-  `~/.pyenv` or the home folder. A pyenv shim script is not resolved. This changes `lead/sandbox.py`, part of the lead containment key: pi and Kimi leads need
+  `~/.pyenv` or the home folder. A `bw` started through a pyenv shim gets the version's root (`pyenv exec` puts
+  its `bin/` first on `PATH`); the shim script itself is not resolved. This changes `lead/sandbox.py`, part of the lead containment key: pi and Kimi leads need
   `bw sandbox verify` again (`bw start` does it by itself).
 - **The panel service appends run request files (`lead/runs.py`, `panel/service.py`).** At each drain, before
   the panel requests, `runs.ingest` takes at most 50 files `<checkpoint dir>/runs/<run id>.<start|beat|end>.json`
