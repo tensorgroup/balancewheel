@@ -25,12 +25,13 @@ export function split(rows: number, columns: number, laneCount: number): Room {
 }
 
 /**
- * Cells a second the bead moves: faster as the context fills. With no known window it keeps a steady middle
- * pace.
+ * Cells a second the bead moves: slower as the context fills (slower = fuller context). With no known window
+ * it keeps a steady middle pace.
  */
 export function speed(fill: number | null): number {
-  if (fill === null || !Number.isFinite(fill)) return 1.5
-  return 0.5 + 3.5 * Math.max(0, Math.min(1, fill))
+  const top = 4
+  if (fill === null || !Number.isFinite(fill)) return top * (0.95 - 0.85 * 0.5)
+  return top * (0.95 - 0.85 * Math.max(0, Math.min(1, fill)))
 }
 
 /** The bead swings from end to end of its track, like the rim of a balance wheel. */

@@ -17,8 +17,8 @@ seat data: 4s old
 ```
 
 - **Lanes.** One lane for each agent or seat that runs now, with the main session first. The bead swings
-  from end to end of its lane. It moves faster as the context fills. A seat with no known window moves at
-  a steady middle pace. The right columns show the context fill (or the tokens, when no window is known)
+  from end to end of its lane. It moves slower as the context fills
+  (slower = fuller context). A seat with no known window moves at a steady middle pace. The right columns show the context fill (or the tokens, when no window is known)
   and the run time. A seat lane from seat data older than 15 s stops moving and says `old`.
 - **Marks.** `◆` main, `◇` subagent, `▣` bw seat, `▢` local seat. A seat's `icon` replaces its mark; an
   emoji takes two columns.

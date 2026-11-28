@@ -35,7 +35,7 @@ not against the prose.
   plugin` when a lead in the profile's order runs `claude-code` and `claude_pane` is not false, and calls nothing.
   `BW_CLAUDE_CMD` (a JSON list) replaces `claude` for these calls; tests point it at `tests/fixtures/fake_claude.py`.
 - **The live pane plugin (`claude/live-pane/`) and `lead/version.py`.** A Claude Code plugin that shows one
-  lane per running agent or seat (main first; the bead moves faster as the context fills), the session's
+  lane per running agent or seat (main first; the bead moves slower as the context fills: slower = fuller context; a seat with no known window moves at a middle pace), the session's
   figures (time, `≈` cost, runs, live, rate limits), a context chart on a fixed 0-100% scale, an
   agents-at-work timeline, and the runs that ended in this worktree since the session started. It reads
   Claude Code's own agents and session figures each second, and runs `bw live --json --dir <cwd> --since
@@ -44,12 +44,14 @@ not against the prose.
   stored rows (`session.append`): a Bash `tool_use` whose first 4 KB holds a `local.seats[].match` opens a
   lane at once, and its `tool_result` closes a foreground lane; `bw live` documents pair, drop, or expire
   background lanes. After `/clear` or a resume the timer goes on and the session's state starts over. The
-  plugin option `bwPath` (default `bw`) names the command. `lead.version.VERSION` is `0.2.0-dev.2`; the
+  plugin option `bwPath` (default `bw`) names the command. `lead.version.VERSION` is `0.2.0-dev.3`; the
   plugin's `plugin.json` and the `live-pane` entry of the new repo-root `.claude-plugin/marketplace.json`
   (marketplace `balancewheel`) carry the same version (tested). Bump the prerelease number in the same
   commit as any change under `claude/live-pane/`, or installed panes do not update. Tested on Claude Code
   2.1.332. `tests/test_live_pane_plugin.py` runs `claude plugin validate` and `claude plugin test` only when
   `BW_PLUGIN_TESTS=1` is set.
+- **`balancewheel.example.json` shows `claude_pane` and `local`.** The example sets `"claude_pane": true` and a
+  `local` section with one synthetic seat (`my-seat`), no extra logs, `run_max_s` 2700, and no families.
 - **Local seats in the registry and the cockpit graph (`lead/registry.py`, `cockpit/`).** Every seat node now has
   `origin` (`"bw"`). A seat in `local.seats` joins `seats` with `origin: "local"`, `enforcement: "local"`, health
   `unknown`, no edges, and `last_seen` (the newest `run` row with that seat name or `usage` row with its `metric`,

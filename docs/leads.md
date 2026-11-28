@@ -4,7 +4,7 @@
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
 Corrected the same day after review: the panel's summary line, the `bw start` prefix of the seat-check
-line, and a stale "not in v0" note on acting. Updated 2026-11-27: the `local` config section and `claude_pane`, `bw run`, run request files, `bw live`, and
+line, and a stale "not in v0" note on acting. Updated 2026-11-27: the pane's speed rule, the seat re-verify step, the plugin version rule, the `local` config section and `claude_pane`, `bw run`, run request files, `bw live`, and
 `bw setup claude-pane` with the live pane check at a Claude Code launch.*
 
 The **lead** is the agent you work in for a project; it is also the moderator of every
@@ -105,6 +105,15 @@ once for each bw-contained lead runtime.
   runs `bw`, so running `bw lead` or `bw setup claude-pane` from a second checkout (a worktree
   of bw in development, say) treats the first checkout's pane as foreign: it uninstalls that
   plugin and leaves the first checkout's marketplace in place.
+- **After this upgrade, verify the seats once.** The live pane work changed `seats/run.py` (a seat now writes
+  `run` start and end rows), and that file is part of each seat's verification key. Every seat shows
+  `pending` until you run `bw seat verify --changed`. It attack-tests each seat and spends model quota.
+- **The plugin version rule.** `lead/version.py` holds one version. The `live-pane` entry of
+  `.claude-plugin/marketplace.json` and `claude/live-pane/.claude-plugin/plugin.json` carry the same
+  string, and a test checks it. Change anything under `claude/live-pane/` and bump the prerelease number in the
+  same commit. Without a bump, `claude plugin update` finds no new version and installed panes keep the old files.
+- **The pane's lanes.** The bead of a lane moves slower as the context fills (slower = fuller context). A
+  lane with no known context window moves at a middle pace.
 - **Autonomy per lead (config schema 3, `bw guard`, since 2026-10-25).** Each lead has an
   `autonomy`: `native` (Claude Code `--permission-mode auto`, Codex `--approve-for-me`: the
   runtime's own classifier decides), `guard` (bw's rules-only guard decides), `bypass`, or

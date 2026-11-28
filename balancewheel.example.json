@@ -2,6 +2,15 @@
   "_comment": "Replace these rows with your own. Names of seats, leads, plans, and profiles are yours; model ids are data and are expected to change. Copy to ~/.config/balancewheel/config.json. guard.model is null, so there is no judge and the guard stays shadow: it records each call and stops nothing. Set it to a cheap model id to turn the judge on and let the gate promote the guard.",
   "schema_version": 3,
   "canvas": "terminal",
+  "claude_pane": true,
+  "local": {
+    "seats": [
+      {"name": "my-seat", "model": "<model label>", "match": "my-seat.sh", "metric": "my-seat", "color": "#2dd4bf"}
+    ],
+    "logs": [],
+    "run_max_s": 2700,
+    "families": {}
+  },
   "plans": {
     "claude-plan": {
       "vendor": "anthropic",

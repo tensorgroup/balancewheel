@@ -263,7 +263,7 @@ A Claude Code plugin (`.claude-plugin/plugin.json` with `version` equal to bw's 
   ○ Explore      Sonnet 5.5·med ├─────────────●─────────┤ 41%   12s
   ```
 
-  The bead moves along its lane; its speed grows with context fill (a seat with no known
+  The bead moves along its lane; its speed falls as the context fills (slower = fuller context; a seat with no known
   window moves at a steady middle pace). Glyph by kind (main, subagent, bw seat, local seat;
   a seat's `icon` when set, two columns wide for an emoji); color by family word for Claude
   models and by seat for seats. Below the lanes: session figures (time, cost marked `≈` as an

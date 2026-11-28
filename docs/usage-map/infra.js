@@ -1,6 +1,7 @@
 // docs/usage-map/infra.js — the hand-written layer of the Balancewheel usage map.
 // Written 2026-11-22 against the README, docs/architecture.md, docs/roadmap.md and the code.
 // Updated 2026-11-24: seats/ shipped as the bw seat runner, so the Planned box became Seat runner.
+// Updated 2026-11-27: the live pane (shipped): bw run, bw live, and the Claude Code plugin; a journey for a wrapped local seat.
 // It holds what the code cannot show: who takes part, where things live, and the journeys.
 // Generated parts (bw commands, modules, the example roster, config keys, home paths) come
 // from docs/usage-map/generate.py → data.generated.js. Ids prefixed cmd:, mod:, seat:, lead:,
@@ -126,6 +127,9 @@ window.USAGE_MAP_INFRA = {
         { id: 'rotation', title: 'Rotation', sub: 'Pure choice from quota, caps and time', files: ['lead/rotation.py'] },
         { id: 'quota', title: 'Quota sources', sub: 'statusline · probe · cli · Orca', usage: 'bw probe [plan...]\nbw cap <plan> [--resets-at <epoch>]',
           desc: 'Each plan names where its numbers come from. Claude Code reports through bin/bw-statusline; OpenRouter through its key endpoint; others through bw cap (or Orca\'s cache, when a plan maps it).', files: ['lead/quota.py', 'lead/probes.py', 'bin/bw-statusline'] },
+        { id: 'livepane', title: 'Live pane (shipped)', sub: 'A Claude Code pane: runs now and runs that ended', usage: 'bw setup claude-pane [--remove]\nbw live --json [--dir D] [--since EPOCH]',
+          desc: 'A plugin that bw installs from its own checkout. One lane for each agent or seat that runs now; the bead moves slower as the context fills. It polls bw live --json and writes nothing.', files: ['claude/live-pane/README.md', 'lead/live.py', 'lead/claude_pane.py'] },
+        { id: 'bwrun', title: 'bw run', sub: 'Track a local wrapper as a run', usage: 'bw run --seat <name> -- <command>...\nbw run start --seat <name>\nbw run end <run-id> --ok', desc: 'Writes a start row, a beat row while the command runs, and an end row. Inside a contained lead the rows go through a request file that the panel service appends.', files: ['lead/run_cli.py', 'lead/runs.py'] },
         { id: 'handoff', title: 'Handoff', sub: 'Git facts + the last checkpoint', desc: 'The lead keeps a checkpoint (goal, done, next, open) at every task boundary; the handoff carries it to the next lead.', files: ['lead/handoff.py', 'lead/protocol/checkpoint.md'] },
       ],
     },
@@ -329,6 +333,16 @@ window.USAGE_MAP_INFRA = {
         { node: 'runner', text: 'bw lead holds the worktree lock and the runtime lock for the session. Plain bw in a worktree does the same.', command: 'bw' },
         { node: 'lead', text: 'You work in the lead. It keeps a checkpoint current at every task boundary.' },
         { node: 'inbox', text: 'bw prints a line when the worktree has open asks.', command: 'bw inbox --project' },
+      ],
+    },
+    {
+      id: 'localpane', title: 'See a local seat in the pane', persona: 'you',
+      desc: 'A wrapper bw does not run still shows beside the seats bw runs.',
+      steps: [
+        { node: 'config', text: 'Name the seat in config under local.seats, with a match string from its Bash command.', command: 'python3 metrics/log.py config' },
+        { node: 'livepane', text: 'Install the pane once. bw also checks it when a Claude Code lead starts.', command: 'bw setup claude-pane' },
+        { node: 'bwrun', text: 'Run the wrapper under bw run. bw writes a start row, beats, and an end row.', command: 'bw run --seat my-seat -- ./my-seat.sh' },
+        { node: 'livepane', text: 'The pane shows one lane while it runs, with a local mark. After it ends, the run is in the history with its tokens.', command: 'bw live --json' },
       ],
     },
     {
