@@ -125,7 +125,32 @@ def bw_reads(root=BW_ROOT, which=shutil.which):
     return out
 
 
-def python_reads(which=None):
+# Folders under the home folder that many tools share: a Python whose root is one of them (or holds one) gets no
+# read grant, because the grant would cover bw's state dir, Kimi homes, and other apps' data.
+SHARED_ROOTS = (".local", ".config", ".cache", "Library")
+
+
+def bw_folders(state_dir=None):
+    """bw's own folders, real paths: the state dir, bw's checkout, the config file's folder, and the
+    configured `state_dir`, `metrics_log` folder, `commands_dir`, and `bin_dir` (read best-effort from the
+    config file; an unreadable config adds nothing)."""
+    from metrics.config import config_path
+    path = config_path()
+    out = [p for p in (state_dir, BW_ROOT, os.path.dirname(path)) if p]
+    try:
+        with open(path, encoding="utf-8") as f:
+            obj = json.load(f)
+    except (OSError, ValueError):
+        obj = {}
+    if isinstance(obj, dict):
+        for k in ("state_dir", "commands_dir", "bin_dir", "metrics_log"):
+            v = obj.get(k)
+            if isinstance(v, str) and v:
+                out.append(os.path.dirname(os.path.expanduser(v)) if k == "metrics_log" else os.path.expanduser(v))
+    return [os.path.realpath(p) for p in out]
+
+
+def python_reads(which=None, state_dir=None):
     """Read grants that let a contained lead run the `python3` that `bw` runs: `bin/bw` starts with
     `#!/usr/bin/env python3`, so that is the first `python3` on the lead's PATH (bw's own). nono denies
     reads under the home folder, so a Python installed there (pyenv, uv, asdf) needs its install root.
@@ -133,7 +158,9 @@ def python_reads(which=None):
     standard library (`lib/python3.N/os.py`, the landmark Python itself uses). Also the link node where
     PATH finds it, when that is a link under the home folder (nono resolves grants to real paths). Nothing
     for a Python outside the home folder (it is readable already), and nothing for a root that is not a
-    Python install or that holds the home folder: a read grant there would lift the secret denies."""
+    Python install or that holds the home folder: a read grant there would lift the secret denies. Nothing
+    either for a root that is one of SHARED_ROOTS or holds one, or that is or holds one of `bw_folders`
+    (`--prefix=$HOME/.local` would make bw's state dir readable): use a `python3` outside the home folder."""
     exe = (which or shutil.which)("python3")
     if not exe:
         return []
@@ -144,6 +171,9 @@ def python_reads(which=None):
     if os.path.basename(bin_dir) != "bin" or prefix == home or not _inside(prefix, [home]) or _inside(home, [prefix]):
         return []
     if not glob.glob(os.path.join(glob.escape(prefix), "lib", "python3.*", "os.py")):
+        return []
+    shared = [os.path.realpath(os.path.join(home, r)) for r in SHARED_ROOTS]
+    if any(_inside(f, [prefix]) for f in shared + bw_folders(state_dir)):  # a shared root, or holds one or a bw folder
         return []
     out = [check_path(prefix)]
     link = os.path.abspath(exe)
@@ -197,7 +227,7 @@ def lead_grants(project, runtime, state_dir):
               if os.path.islink(os.path.expanduser(p))]
     reads.append(check_path(own_view))
     reads += bw_reads()  # read-only: no write rule names bw's checkout (refuse_inside keeps it out of the worktree)
-    reads += python_reads()  # read-only: the install root of the python3 that bw runs, when it is under the home folder
+    reads += python_reads(state_dir=state)  # read-only: the install root of the python3 that bw runs, when it is under the home folder
     # Copies of third-party databases (cc-switch, Orca) bw reads, the inbox record, the answers
     # views, every panel work dir (briefs, raw seat output), and the guard's log and state (every
     # project's redacted calls and judge reasons): never readable by a lead, except its own view

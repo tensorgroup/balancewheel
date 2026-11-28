@@ -102,7 +102,11 @@ once for each bw-contained lead runtime.
   runs must be readable too. bw finds the first `python3` on the lead's `PATH`, resolves it to its real
   file, and gives a read-only grant for its install root when that root is under the home folder (for
   example `~/.pyenv/versions/3.12.4`; never all of `~/.pyenv` or the home folder). The root must hold the
-  standard library (`lib/python3.N/os.py`). A link to it that `PATH` finds under the home folder (such as
+  standard library (`lib/python3.N/os.py`). bw gives no grant for a root that is a shared folder
+  (`~/.local`, `~/.config`, `~/.cache`, `~/Library`) or holds one, or that is or holds one of bw's own
+  folders (the state dir, bw's checkout, the config folder, `commands_dir`, `bin_dir`): a Python built
+  with `--prefix=$HOME/.local` would make bw's state readable. For such a Python, put a `python3` outside
+  the home folder first on the lead's `PATH`. A link to it that `PATH` finds under the home folder (such as
   `~/.local/bin/python3`) is readable too. A `bw` started through a pyenv shim needs no change:
   `pyenv exec` puts the version's `bin/` folder first on the `PATH` that bw and its lead get. A pyenv
   shim itself is a script, not a link, so a `bw` started by another interpreter while the shim is first

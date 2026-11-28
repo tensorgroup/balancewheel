@@ -143,6 +143,47 @@ class Grants(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HOME": str(self.root / "outer" / "home")}):
             self.assertEqual(sandbox.python_reads(which=lambda n: str(exe)), [])
 
+    def test_no_python_grant_for_a_shared_root_or_a_root_that_holds_bw_folders(self):
+        # merge review I1: a Python built with --prefix=$HOME/.local would make all of ~/.local readable (bw's
+        # state dir, Kimi homes, other apps' data); refuse it, and any root that is or holds a bw folder
+        home = self.root / "home"
+        cfg = self.root / "cfg" / "config.json"
+        env = {"HOME": str(home), "BALANCEWHEEL_CONFIG": str(cfg)}
+        with mock.patch.dict(os.environ, env):
+            for rel in (".local", ".config", ".cache", "Library"):
+                with self.subTest(shared=rel):
+                    exe = self.python_install(home / rel)
+                    self.assertEqual(sandbox.python_reads(which=lambda n: str(exe)), [])
+            exe = self.python_install(home / "Library" / "Python" / "3.12")  # inside a shared root: its own root
+            self.assertEqual(sandbox.python_reads(which=lambda n: str(exe)), [str(home / "Library" / "Python" / "3.12")])
+            opt = home / "opt"
+            exe = self.python_install(opt)
+            state = opt / "var" / "bw"; state.mkdir(parents=True)
+            self.assertEqual(sandbox.python_reads(which=lambda n: str(exe), state_dir=str(state)), [])
+            self.assertEqual(sandbox.python_reads(which=lambda n: str(exe), state_dir=str(opt)), [])
+            self.assertEqual(sandbox.python_reads(which=lambda n: str(exe), state_dir=str(self.root / "state")), [str(opt)])
+            with mock.patch.dict(os.environ, {"BALANCEWHEEL_CONFIG": str(opt / "etc" / "config.json")}):
+                self.assertEqual(sandbox.python_reads(which=lambda n: str(exe), state_dir=str(self.root / "state")), [])
+            (opt / "etc").mkdir()
+            (opt / "etc" / "config.json").write_text(json.dumps({"bin_dir": str(opt / "bin")}))
+            with mock.patch.dict(os.environ, {"BALANCEWHEEL_CONFIG": str(opt / "etc" / "config.json")}):
+                self.assertEqual(sandbox.python_reads(which=lambda n: str(exe), state_dir=str(self.root / "state")), [])
+            cfg.parent.mkdir(); cfg.write_text(json.dumps({"commands_dir": str(opt / "cmds")}))  # a configured bw folder
+            self.assertEqual(sandbox.python_reads(which=lambda n: str(exe), state_dir=str(self.root / "state")), [])
+            # the pyenv layout stays granted, with lead_grants' own state dir
+            exe = self.python_install(home / ".pyenv" / "versions" / "3.10.16")
+            self.assertEqual(sandbox.python_reads(which=lambda n: str(exe), state_dir=str(self.state)),
+                             [str(home / ".pyenv" / "versions" / "3.10.16")])
+
+    def test_lead_grants_refuse_a_python_root_that_holds_the_state_dir(self):
+        home = self.root / "home"
+        exe = self.python_install(home / "opt")
+        state = home / "opt" / "state"; state.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(home)}), \
+                mock.patch.object(sandbox.shutil, "which", lambda n, *a, **k: str(exe) if n == "python3" else None):
+            g = sandbox.lead_grants(resolve_project(str(self.wt), {"projects": {}, "default_profile": "d"}), self.rt, str(state))
+        self.assertNotIn(str(home / "opt"), g.read)
+
     def test_linked_lead_writes_worktree_runtime_state_and_handoffs_only(self):
         g = self.grants(self.wt)
         allows = [p for _, p in self.rules(g, "allow")]
