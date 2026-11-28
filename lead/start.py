@@ -44,7 +44,7 @@ from .status import orca_checks
 from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
 from .projects import refuse_inside, resolve_project
-from .rotation import decide
+from .rotation import Decision, decide
 from .startout import BAD, INFO, OK, Report
 from .guard import evaluate, gate, interactive, offer
 from seats import verify as seat_verify
@@ -173,6 +173,15 @@ LEAD_REASONS = {"pinned": "pinned to this worktree", "order": "first in the prof
                 "pool-full": "an earlier lead is in a full quota pool"}
 
 
+def _lead_reason(d, profile):
+    """The decision's reason in words. "quota-low" on the profile's first lead means no lead had quota to
+    spare and bw took the first, not that an earlier lead was skipped."""
+    order = (profile or {}).get("lead_order") or []
+    if d.reason == "quota-low" and (not order or d.lead == order[0]):
+        return "every lead's quota is low; this one is first in the order"
+    return LEAD_REASONS.get(d.reason, d.reason)
+
+
 def _tool_line(rep, res):
     """One tool's result in plain words."""
     name, ver = res.tool, res.after
@@ -217,8 +226,8 @@ def _item_line(rep, item):
         rep.line("Checks", f"{label}: not tested (--no-verify)" if reason == "--no-verify" else f"{label}: not tested: {reason}")
     else:
         lines = [ln.strip() for ln in reason.splitlines() if ln.strip()]
-        why = re.sub(r"^bw: (not recorded — )?", "", lines[-1]) if lines else ""
-        found = re.findall(r"evidence in (\S+)", reason)
+        why = re.sub(r"^bw: (not recorded — )?(failed: )?", "", lines[-1]) if lines else ""
+        found = re.findall(r"evidence in (.+?)\s*$", reason, re.M)  # the path may hold spaces
         why = why.replace("; see the evidence", "") if found else why
         rep.bad("Checks", f"{label}: failed" + (f": {why}" if why else "") + (f". Evidence: {found[-1]}" if found else ""))
 
@@ -453,7 +462,8 @@ def _quota_and_lead(config, state, project, profile, plans, now, rep):
     rep.rows("Quota", rows, "quota")
     caps = quota.read_caps(state, now, rot.get("cap_expiry_hours", 5), include_expired=True)
     pinned = runner.read_pin(state, project.worktree_key)
-    return decide(profile, config["leads"], rot, None, pinned, snaps, caps, now, "start")
+    d = decide(profile, config["leads"], rot, None, pinned, snaps, caps, now, "start")
+    return d._replace(reason=_lead_reason(d, profile))  # words from here on
 
 
 def _announce(rep, d, here=False):
@@ -461,7 +471,7 @@ def _announce(rep, d, here=False):
     if d.notice:
         rep.line("Lead", d.notice)
     if d.lead:
-        rep.ok("Lead", f"{d.lead} ({LEAD_REASONS.get(d.reason, d.reason)})" + (", starting here" if here else ""),
+        rep.ok("Lead", f"{d.lead} ({d.reason})" + (", starting here" if here else ""),
                label="lead")
     else:
         rep.bad("Lead", f"no lead would start — {d.notice or 'no lead available'}")

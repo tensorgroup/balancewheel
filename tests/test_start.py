@@ -1084,6 +1084,27 @@ class StartCase(unittest.TestCase):
         self.assertLess(heads.index("Updates"), heads.index("Checks"))
         self.assertEqual(heads.count("Updates"), 1)
 
+    def test_failure_lines_keep_a_spaced_evidence_path_and_do_not_double_the_word_failed(self):
+        class Failing(FakeRun):
+            def answer(self, argv):
+                if argv[0].endswith(".sh"):
+                    return Result(1, "FAIL: outside-written:x — evidence in /tmp/with space/guard.1\n", "", False)
+                return super().answer(argv)
+        code, out = self.start(Failing(), update=False)
+        self.assertIn("bw start: pi sandbox: failed: the containment attack failed. Evidence: /tmp/with space/guard.1\n", out)
+        start._item_line(rep := start.Report(io.StringIO(), tty=False), start.verifymod.Item("pi", "guard", "failed", "bw: " + start.verifymod.KEY_CHANGED))
+        self.assertEqual(rep.out.getvalue(), "bw start: pi guard: failed: key changed during the attack\n")
+
+    def test_lead_reason_words_fit_the_profile(self):
+        d = start.Decision("lp", "quota-low", "")
+        self.assertEqual(start._lead_reason(d, {"lead_order": ["lp"]}), "every lead's quota is low; this one is first in the order")
+        self.assertEqual(start._lead_reason(d, {"lead_order": ["lp", "lk"]}), "every lead's quota is low; this one is first in the order")
+        self.assertEqual(start._lead_reason(start.Decision("lk", "quota-low", ""), {"lead_order": ["lp", "lk"]}),
+                         "an earlier lead's quota is low")
+        self.assertEqual(start._lead_reason(start.Decision("lk", "capped", ""), {"lead_order": ["lp", "lk"]}),
+                         "an earlier lead's plan is capped")
+        self.assertEqual(start._lead_reason(start.Decision("lp", "pinned", ""), {}), "pinned to this worktree")
+
     def test_a_path_inside_the_same_worktree_counts(self):
         sub = self.repo / "pkg"
         sub.mkdir()
