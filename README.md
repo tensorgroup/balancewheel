@@ -217,23 +217,45 @@ An excerpt (your output has one line per tool and per plan). Read every `would u
 before you continue:
 
 ```text
-bw start: dry run for ~/code/my-project (profile product); nothing is run or written
-bw start: would update claude: claude update · lock runtime-claude-code · installer claude
-bw start: would read quota for plan claude-plan
-bw start: would check seats in the background
-bw start: lead: claude (order)
-bw start: would run: open -a Terminal ~/.local/state/balancewheel/start/98bf2f5e3750.command
+bw start · ~/code/my-project
+  dry run (profile product): nothing is run or written
+
+Updates
+  · would update claude: claude update · lock runtime-claude-code · installer claude
+
+Quota
+  · would read quota for plan claude-plan
+  claude-plan  unknown (Claude's status line has not reported yet) — no quota reading
+               yet; rotation is using only the limits it has already seen
+
+Lead
+  ✓ claude (first in the profile's lead order)
+  · would write ~/.local/state/balancewheel/start/98bf2f5e3750.command:
+      #!/bin/sh
+      export BALANCEWHEEL_CONFIG=~/.config/balancewheel/config.json
+      cd ~/code/my-project || exit 1
+      exec ~/.local/share/balancewheel/bin/bw lead
+  · would run: open -a Terminal /Users/you/.local/state/balancewheel/start/98bf2f5e3750.command
+
+Also
+  · would check seats in the background
 ```
+
+On a terminal, `bw start` prints sections. A `✓` is a pass, a `✗` is a failure, a `·` is
+information, and a `…` is a wait. Piped to a file, it prints plain lines that start with `bw start: `.
 
 Then run it for real. `bw start` updates your tools, re-checks containment, reads quota, and
-opens the lead in a new macOS Terminal tab (set `"canvas": "ghostty"` for a Ghostty tab). On Linux,
-run `bw` inside the repository instead.
+opens the lead. When you run it in a terminal, from inside the project and with no path, it
+starts the lead in that same terminal. With a path to another project, it opens the lead in a
+new macOS Terminal tab (set `"canvas": "ghostty"` for a Ghostty tab; `--tab` forces the tab inside the project too). On Linux, run `bw` inside
+the repository instead.
 
 ```sh
-bw start ~/code/my-project
+bw start ~/code/my-project   # from anywhere else: a new tab
+cd ~/code/my-project && bw start   # inside the project: this terminal
 ```
 
-Inside a project, plain `bw` starts the lead in the terminal you are in. It does not update
+Inside a project, plain `bw` also starts the lead in the terminal you are in. It does not update
 tools or run checks.
 
 **6. Work as usual.** The lead keeps a checkpoint and convenes panels. When its plan is
@@ -279,7 +301,7 @@ setup by your own agent, use the paste-in prompts in [Getting started](#getting-
 | I want to… | Run | You see |
 |---|---|---|
 | Work on a project | `bw` (inside the project) | the lead starts in this terminal (no updates, no checks) |
-| Open a project in a new tab | `bw start [path]` | one line per tool, quota, then `opened a Terminal tab for …` |
+| Update, check, then start a project | `bw start [path]` | sections for updates, checks, quota, and the lead; then the lead starts in this terminal (no path), or `opened a Terminal tab for …` |
 | See plans, leads, and asks | `bw status` | plans, worktrees, leads, inbox, guard |
 | Answer a lead's question | `bw inbox`, then `bw answer <id> "<text>"` | the open asks; then `… tell it to look`: tell the lead to read its inbox |
 | Use a different lead here | `bw lead --use <lead>` (undo: `bw lead --auto`) | that lead starts here; a change from the profile order is logged |

@@ -1240,6 +1240,93 @@ class PromptFile(RunnerCase):
         self.assertFalse(os.path.islink(d / "first-prompt.md"))
 
 
+class SystemProtocol(RunnerCase):
+    """A runtime that takes the protocol as a system prompt: the first prompt is only the handoff."""
+
+    def run_lead(self, **kw):
+        p = self.start("--system-protocol", "codex", env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        return self.fake("a")["argv"]
+
+    def test_the_protocol_is_the_system_prompt_and_a_fresh_lead_gets_no_first_prompt(self):
+        argv = self.run_lead()
+        self.assertEqual(argv[2], "--system")
+        self.assertEqual(len(argv), 4, argv)  # no first prompt: nothing between the model and --system
+        self.assertIn("You are the lead for this worktree", argv[3])
+        self.assertIn("If the first message starts with `@next handoff`", argv[3])
+        self.assertNotIn("follows this message", argv[3])
+
+    def test_another_runtime_still_gets_the_protocol_as_its_first_prompt(self):
+        p = self.start("--system-protocol", "pi", env={"FAKE_MODE_a": "exit"})
+        self.assertEqual(p.wait(15), 0, p.stdout.read())
+        argv = self.fake("a")["argv"]
+        self.assertNotIn("--system", argv)
+        self.assertIn("You are the lead for this worktree", argv[2])
+        self.assertIn("If a handoff follows this message", argv[2])
+
+    def test_a_handoff_is_the_only_first_prompt(self):
+        p = self.start("--system-protocol", "pi", env={"FAKE_MODE_a": "ignore_term", "FAKE_MODE_b": "exit"})
+        self.assertTrue(wait_for(lambda: self.fake("a")))
+        quota.record_cap(str(self.state), "pa", time.time(), resets_at=time.time() + 3600)
+        self.assertEqual(p.wait(20), 0, p.stdout.read())
+        argv = self.fake("b")["argv"]  # lead b is pi: it takes the protocol as a system prompt
+        self.assertEqual(argv[2][:13], "@next handoff", argv)
+        self.assertEqual(argv[3], "--system")
+        self.assertIn("You are the lead for this worktree", argv[4])
+        self.assertNotIn("You are the lead", argv[2])
+
+
+class RealClaudeAdapter(RunnerCase):
+    """The real claude-code adapter through Session._launch, with Popen stopped before it starts anything."""
+
+    def config(self, root):
+        c = super().config(root)
+        c["leads"]["la"] = {"runtime": "claude-code", "model": "opus", "plan": "pa",
+                            "args": ["--append-system-prompt", "my own rule"]}
+        return c
+
+    def launched_argv(self, handoff):
+        import io
+        from lead.paths import load_config
+        from lead.projects import resolve_project
+        config = load_config(str(self.cfg))
+        project = resolve_project(str(self.repo), config)
+        ctx = runner.Context(config, str(self.state), project, runner.Lock(str(self.state), project.worktree_key),
+                             {"claude-code": runner.ADAPTERS["claude-code"]}, "sandbox-exec", io.StringIO())
+        got = {}
+
+        class Stop(Exception):
+            pass
+
+        real = subprocess.Popen
+
+        def popen(argv, *a, **kw):
+            if argv[0] != "claude":  # git, and anything else bw runs, is real
+                return real(argv, *a, **kw)
+            got["argv"] = argv
+            raise Stop
+
+        with mock.patch.object(runner.subprocess, "Popen", popen), self.assertRaises(Stop):
+            runner.Session(ctx, "la", handoff)
+        os.close(ctx.lock.fd)
+        return got["argv"]
+
+    def test_the_protocol_rides_in_one_append_system_prompt_with_the_users_text_after_it(self):
+        argv = self.launched_argv("@next handoff\nbranch: x")
+        self.assertEqual(argv.count("--append-system-prompt"), 1, argv)
+        system = argv[argv.index("--append-system-prompt") + 1]
+        self.assertTrue(system.startswith("You are the lead for this worktree"), system[:80])
+        self.assertTrue(system.endswith("\n\nmy own rule"))
+        self.assertEqual(argv[-2:], ["--", "@next handoff\nbranch: x"])  # the handoff alone is the first prompt
+        self.assertIn("--add-dir", argv)
+
+    def test_a_fresh_lead_has_no_first_prompt_at_all(self):
+        argv = self.launched_argv(None)
+        self.assertNotIn("--", argv)
+        self.assertEqual(argv[argv.index("--append-system-prompt") + 2:], [])  # nothing after the flag's value
+        self.assertTrue(argv[-1].endswith("my own rule"))
+
+
 class PinnedPlanRefresh(RunnerCase):
     def config(self, root):
         cfg = super().config(root)

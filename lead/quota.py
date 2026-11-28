@@ -19,6 +19,7 @@ a rule of `parse_cli_rate_limits` writes nothing.
 import json
 import math
 import os
+import re
 import sys
 import time
 
@@ -350,6 +351,80 @@ def summary(snapshot):
 
 
 NOTE_LIMIT = 120
+
+WINDOW_WORDS = {"five_hour": "{left} left in the 5-hour window", "seven_day": "{left} left in the 7-day window",
+                "budget": "{used} of the monthly budget used"}
+SOURCE_WORDS = {"statusline": "Claude's status line", "orca": "Orca", "cli": "the last Codex run"}
+PROBE_WORDS = {"openrouter": "OpenRouter"}
+UNREADABLE_WORDS = (("quota: none", "bw has no reader for this plan yet"),
+                    ("no probe for this plan", "bw has no reader for this plan yet"),
+                    ("awaiting Task G", "agy's usage reader is not built yet"),
+                    ("statusline: no reading", "Claude's status line has not reported yet"))
+INTERNAL_WORDS = (("statusline", "status line"), ("probe", "usage check"), ("Task G", "the agy reader"),
+                  ("observed caps", "the limits it has seen"))
+
+
+def _age_words(age_s):
+    minutes = max(age_s, 0) / 60
+    if minutes < 1:
+        return "just now"
+    return f"{minutes:.0f} min ago" if minutes < 60 else f"{minutes / 60:.0f} h ago"
+
+
+def _unknown_word(part):
+    for fragment, words in UNREADABLE_WORDS:
+        if fragment in part:
+            return words
+    m = re.search(r"key env (\S+) unset", part)
+    if m:
+        return f"the {m.group(1)} environment variable is not set"
+    for internal, plain in INTERNAL_WORDS:
+        part = part.replace(internal, plain)
+    return part
+
+
+def _unknown_words(reason):
+    """A snapshot's reason in plain words: the known reasons by name, anything else with bw's own
+    terms swapped for ordinary ones. `arbitrate` joins one reason per source with "; "."""
+    if not reason:
+        return "no reading yet"
+    out = []
+    for part in reason.split("; "):
+        words = _unknown_word(part)
+        if words not in out:
+            out.append(words)
+    return "; ".join(out)
+
+
+def plain_notice(text):
+    """`notice`'s line with its one internal term ("observed caps") in ordinary words."""
+    return text.replace("is using observed caps only", "is using only the limits it has already seen")
+
+
+def describe(snapshot, plan_cfg=None):
+    """The plan's quota in plain words, for the terminal: what is left (a budget: what is used), where
+    the reading came from, and how old it is. `summary` stays for the status line and `bw status`."""
+    plan_cfg = plan_cfg or {}
+    if not snapshot and plan_cfg.get("quota") == "none":
+        return f"unknown ({_unknown_words('quota: none')})"
+    if not snapshot:
+        return f"unknown ({_unknown_words(None)})"
+    if snapshot.get("unknown") or not _windows_ok(snapshot.get("windows")):
+        return f"unknown ({_unknown_words(snapshot.get('reason'))})"
+    parts = []
+    for w in snapshot["windows"]:
+        left, used = f"{100 - w['used_pct']:.0f}%", f"{w['used_pct']:.0f}%"
+        if w["name"] == "budget":  # the window stops at 100; the snapshot's spend says how far over
+            spend, budget = snapshot.get("spend_usd"), snapshot.get("budget_usd_month")
+            if _finite(spend) and _finite(budget) and budget > 0:
+                used = f"{spend / budget * 100:.0f}%"
+        words = WINDOW_WORDS.get(w["name"]) or "{left} left in " + str(w["name"]).replace("{", "\0")
+        parts.append(words.replace("{left}", left).replace("{used}", used).replace("\0", "{"))
+    if _num(snapshot.get("age_s")):
+        src = snapshot.get("source")
+        where = SOURCE_WORDS.get(src) or (PROBE_WORDS.get(plan_cfg.get("probe"), "bw's own check") if src == "probe" else None)
+        parts.append(f"read {_age_words(snapshot['age_s'])}" + (f" from {where}" if where else ""))
+    return " — ".join([" · ".join(parts)] + _notes(snapshot))
 
 
 def _notes(snapshot):

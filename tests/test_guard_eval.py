@@ -307,6 +307,25 @@ class Ensure(unittest.TestCase):
         evaluate.ensure(self.config, self.state, "pi", run=self.fake())
         self.assertGreater(len(self.calls), n)
 
+    def test_will_run_agrees_with_ensure(self):
+        ev = evaluate
+        self.assertEqual(ev.will_run(self.config, self.state, "pi"), "it has not been evaluated yet")
+        self.assertIsNone(ev.will_run(self.config, self.state, "pi", allow_run=False))
+        before = len(self.calls)
+        ev.ensure(self.config, self.state, "pi", run=self.fake())
+        self.assertGreater(len(self.calls), before)
+        self.assertIsNone(ev.will_run(self.config, self.state, "pi"))  # cached: no judge call
+        entry = ev.read(self.state, "pi")
+        ev.write(self.state, "pi", dict(entry["key"], salt="other"), entry["result"])
+        self.assertEqual(ev.will_run(self.config, self.state, "pi"), "its guard settings changed since the last evaluation")
+        now_key = ev.eval_key("pi", self.config.get("guard") or {}, ev.load_set()[1])
+        ev.write(self.state, "pi", now_key, dict(entry["result"], status="incomplete"))
+        ts = ev.read(self.state, "pi")["ts"]
+        self.assertIsNone(ev.will_run(self.config, self.state, "pi", now=ts + 3600))  # not again within a day
+        self.assertEqual(ev.will_run(self.config, self.state, "pi", now=ts + ev.RETRY_INCOMPLETE_S),
+                         "the last evaluation was incomplete")
+        self.assertIsNone(ev.will_run(self.config, self.state, "agy"))  # skipped until its spike
+
     def test_ensure_with_no_verify_makes_no_judge_call(self):  # B9
         def boom(argv, timeout, **kw):
             raise AssertionError("a judge call under --no-verify")

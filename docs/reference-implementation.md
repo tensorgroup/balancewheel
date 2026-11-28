@@ -36,7 +36,7 @@ Codex `cli` quota reading is not applicable on `codex-cli 0.164.0` (see the note
 2026-11-24: one more known limit of the lead guard rules (`eval`, `trap`, and `alias` text); updated
 2026-11-27 when the metered pi seat moved from GLM 5.3 Flash (seat "ox") to DeepSeek V4.1 Flash
 (seat "flash"; see the pi section); updated 2026-11-27 again when the astra seat moved to
-`gpt-6.2-astra` (seat, lead, and driver) and GPT-6.2 Sol became a budget driver, not a seat (see the Codex section and Driver mode).*
+`gpt-6.2-astra` (seat, lead, and driver) and GPT-6.2 Sol became a budget driver, not a seat (see the Codex section and Driver mode); updated 2026-11-27 because a Claude Code lead now gets `lead/protocol/panel.md` as a system prompt (see Panel instructions).*
 
 ## The cast
 
@@ -777,7 +777,8 @@ file is now two parts in this repo:
 - `panel/templates/` holds the seat briefs (one per checkpoint, plus `brief-output.md` for the
   output shape) and the moderator's steps (`next.md`, `next-triage.md`, `next-follow-up.md`).
   `bw` renders them. Paths in shell commands are quoted, and seat text is escaped.
-- `lead/protocol/panel.md` is the text a lead gets in its first prompt. It holds the profile's
+- `lead/protocol/panel.md` is the text a lead gets in its first prompt (a Claude Code lead gets it as a
+  system prompt). It holds the profile's
   checkpoints, the literal request and view paths, and the rules: verify every finding, relay
   one claim at a time, log every panel, and tell the user three lines.
 
