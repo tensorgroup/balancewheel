@@ -131,10 +131,14 @@ class Terminal(unittest.TestCase):
         self.assertEqual(out.getvalue(), "\nUpdates\n  · pi: updated\n  … testing pi\n")
         r.end("Updates")
         self.assertEqual(out.getvalue().splitlines()[-2:], ["Checks", "  ✓ pi sandbox: passed"])
-        r, out = report(True)  # nothing on screen yet: its own section
+        r, out = report(True)  # nothing on screen yet: under the open section, never above it
         r.begin("Updates")
         r.wait("Checks", "testing pi")
-        self.assertEqual(out.getvalue(), "\nChecks\n  … testing pi\n")
+        self.assertEqual(out.getvalue(), "\nUpdates\n  … testing pi\n")
+        r.line("Updates", "pi: current")
+        r.end("Updates")
+        self.assertEqual(out.getvalue().count("\nUpdates"), 1)
+        self.assertNotIn("\nChecks", out.getvalue())
 
     def test_the_epilogue_waits_for_the_lead(self):
         r, out = report(True)

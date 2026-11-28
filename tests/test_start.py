@@ -1074,6 +1074,16 @@ class StartCase(unittest.TestCase):
         self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)  # the tab, as for any other start
         self.assertNotIn("starting here", out.getvalue())
 
+    def test_a_wait_from_a_runtime_with_no_update_tool_does_not_open_checks_above_updates(self):
+        del self.config["tools"]["kimi"]  # kimi has no update tool: its check starts at once
+        run = FakeRun()
+        run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.1", 0.3, 0)
+        code, out = self.tty_start(run)
+        heads = [ln for ln in out.splitlines() if ln and not ln.startswith(" ")]
+        self.assertEqual(heads[1], "Updates", heads)
+        self.assertLess(heads.index("Updates"), heads.index("Checks"))
+        self.assertEqual(heads.count("Updates"), 1)
+
     def test_a_path_inside_the_same_worktree_counts(self):
         sub = self.repo / "pkg"
         sub.mkdir()

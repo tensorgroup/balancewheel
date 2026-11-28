@@ -75,10 +75,11 @@ class Report:
 
     def wait(self, section, text):
         """A progress line. It is never held: when an earlier section is still open, it prints under
-        the section that is on screen, because the wait it announces has already started."""
+        the section that is on screen (or, with none yet, the open one), because the wait it announces has already started."""
         with self._lock:
             if self.tty and self._blocked(section):
-                self._write(self._current or section, text, WAIT)
+                blocker = min(self._open, key=SECTIONS.index)
+                self._write(self._current or blocker, text, WAIT)
             else:
                 self.line(section, text, WAIT)
 
