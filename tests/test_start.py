@@ -532,7 +532,8 @@ class StartCase(unittest.TestCase):
         run.versions["pi"] = None  # unreadable before: the label is "unreadable", the after version is not
         run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.1", 0.0, 0)
         code, out = self.start(run)
-        self.assertIn("bw start: pi: updated, but its version cannot be read (version unreadable before update)", out)
+        self.assertIn("bw start: pi: updated to pi 1.1; the old version could not be read", out)
+        self.assertNotIn("cannot be read", out)
         self.assertIn("bw start: pi sandbox: passed", out)
         run = FakeRun()
         run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.2", 0.0, 3)  # failed, yet a readable version after
@@ -1104,6 +1105,16 @@ class StartCase(unittest.TestCase):
         self.assertEqual(start._lead_reason(start.Decision("lk", "capped", ""), {"lead_order": ["lp", "lk"]}),
                          "an earlier lead's plan is capped")
         self.assertEqual(start._lead_reason(start.Decision("lp", "pinned", ""), {}), "pinned to this worktree")
+
+    def test_tool_line_for_an_unreadable_version_says_which_one(self):
+        from lead.updates import ToolResult
+        for res, want in ((ToolResult("pi", "pi", "unreadable", "pi 1.6.1", "unreadable", "version unreadable before update", 0.1),
+                           "pi: updated to pi 1.6.1; the old version could not be read"),
+                          (ToolResult("pi", "pi", "pi 1.0", "unreadable", "unreadable", "version unreadable after update", 0.1),
+                           "pi: updated, but the new version cannot be read (version unreadable after update)")):
+            rep = start.Report(io.StringIO(), tty=False)
+            start._tool_line(rep, res)
+            self.assertEqual(rep.out.getvalue(), f"bw start: {want}\n")
 
     def test_a_path_inside_the_same_worktree_counts(self):
         sub = self.repo / "pkg"

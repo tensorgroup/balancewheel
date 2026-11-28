@@ -193,8 +193,10 @@ def _tool_line(rep, res):
         rep.bad("Updates", f"{name}: update failed ({res.detail})")
     elif res.result == "timed-out":
         rep.bad("Updates", f"{name}: update timed out ({res.detail})")
+    elif res.result == "unreadable" and res.after != updates.UNREADABLE:  # only the old version was unreadable
+        rep.ok("Updates", f"{name}: updated to {res.after}; the old version could not be read")
     elif res.result == "unreadable":
-        rep.bad("Updates", f"{name}: updated, but its version cannot be read ({res.detail})")
+        rep.bad("Updates", f"{name}: updated, but the new version cannot be read ({res.detail})")
     elif res.result == "no-update-command":
         rep.line("Updates", f"{name}: {ver}, no update command")
     elif res.result == "self-updating":
