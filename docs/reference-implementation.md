@@ -36,7 +36,7 @@ Codex `cli` quota reading is not applicable on `codex-cli 0.164.0` (see the note
 2026-11-24: one more known limit of the lead guard rules (`eval`, `trap`, and `alias` text); updated
 2026-11-27 when the metered pi seat moved from GLM 5.3 Flash (seat "ox") to DeepSeek V4.1 Flash
 (seat "flash"; see the pi section); updated 2026-11-27 again when the astra seat moved to
-`gpt-6.2-astra` and GPT-6.2 Sol became a budget driver, not a seat (see the Codex section and Driver mode).*
+`gpt-6.2-astra` (seat, lead, and driver) and GPT-6.2 Sol became a budget driver, not a seat (see the Codex section and Driver mode).*
 
 ## The cast
 
@@ -74,11 +74,13 @@ Invocation and traps:
   the profile via `-c key=value` overrides and `cd` to the target first. Have the wrapper
   *parse* `model`/`model_reasoning_effort` out of the profile file for those overrides
   rather than repeating the values — otherwise a model swap has two places to miss.
-- Model swaps are seat swaps when the model changes generation: the reference setup
-  retired seat "sol" and started "astra" with an empty scoreboard, because seat policy
-  (roles, rebuttal caps) was earned by the old model's dispute record and the per-seat
-  metrics would otherwise blend two models. A same-model re-pin (the stealth-id
-  graduation below) keeps the seat id and its history.
+- A move to a different model line is a seat swap: the reference setup retired seat
+  "sol" and started "astra" with an empty scoreboard, because seat policy (roles,
+  rebuttal caps) was earned by the old model's dispute record and the per-seat metrics
+  would otherwise blend two models. A newer version of the same model line keeps the
+  seat id and its history, with a dated note: `opus` kept its id from Opus 4.8 to 5.5,
+  and `astra` from `gpt-6-astra` to `gpt-6.2-astra` (2026-11-27). A same-model re-pin
+  (the stealth-id graduation below) also keeps the seat id and its history.
 - Don't name a seat after a vendor's tier name; vendors reuse them across generations.
   OpenAI shipped GPT-6 Sol (`gpt-6-sol`) on 2026-09-22, so the retired seat "sol" (which
   held `gpt-5.6-sol`) now reads like the new model. A GPT-6 Sol seat needs its own id,
@@ -94,7 +96,8 @@ Invocation and traps:
   `gpt-6.2-astra` its most capable model and `gpt-6-astra` the previous generation. It
   calls `gpt-6.2-sol` its fast everyday model and `gpt-6-sol` legacy. Both 6.2 models
   answered a probe under a ChatGPT Pro sign-in, and the astra seat ran on `gpt-6.2-astra`.
-  The seat moved to it that day and kept the id `astra`.
+  The seat, the `astra` lead, and the astra driver moved to it that day. The seat kept
+  the id `astra`, because `gpt-6.2-astra` is a newer version of the same model line.
 - Set `TMPDIR` to a private scratch dir: the Rust binary extracts multi-MB temp
   `.dylib`s into `$TMPDIR` — *not* cwd, as first assumed. Some agent sandboxes point
   `TMPDIR` at the project checkout, which litters it with `.<hash>-00000000.dylib`
@@ -575,7 +578,7 @@ the credential, and the containment.
 
 | Driver seat | Harness | Model | Billing |
 |---|---|---|---|
-| astra | Codex CLI | `gpt-6-astra` | OpenAI Pro, flat (CLI OAuth) |
+| astra | Codex CLI | `gpt-6.2-astra` (since 2026-11-27; `gpt-6-astra` before) | OpenAI Pro, flat (CLI OAuth) |
 | *(budget driver, no seat id; not "sol", which is retired)* | Codex CLI | `gpt-6.2-sol` (since 2026-11-27) | OpenAI Pro, flat (CLI OAuth) |
 | astra via pi | pi ≥0.85, built-in `openai-codex` provider | `gpt-6-astra` (pi lists no 6.2 model yet, 2026-11-27) | Same subscription, flat — OpenAI endorses third-party use ("Codex for OSS") |
 | flash | pi | `deepseek/deepseek-v4.1-flash` via OpenRouter | metered at OpenRouter's list price; a few cents per session |

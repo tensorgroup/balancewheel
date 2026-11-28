@@ -152,7 +152,7 @@ plans:
     no quota reading yet; rotation is using observed caps only
   …
 leads:
-  astra: codex gpt-6-astra on chatgpt-plan · contained by self
+  astra: codex gpt-6.2-astra on chatgpt-plan · contained by self
   claude: claude-code opus on claude-plan · contained by self
 inbox: empty
 guard:

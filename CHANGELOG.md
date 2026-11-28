@@ -286,7 +286,7 @@ not against the prose.
 
 ### Changed
 
-- **`balancewheel.example.json`: the `astra` seat's model is now `gpt-6.2-astra` (was `gpt-6-astra`)**, OpenAI's new most capable model, since 2026-11-27. The `astra` lead keeps `gpt-6-astra`. GPT-6.2 Sol is a budget driver in the reference docs, not a seat.
+- **`balancewheel.example.json`: the `astra` seat and the `astra` lead now use `gpt-6.2-astra` (was `gpt-6-astra`)**, OpenAI's new most capable model, since 2026-11-27. The seat keeps its id: a newer version of the same model line keeps the id. GPT-6.2 Sol is a budget driver in the reference docs, not a seat.
 - **`balancewheel.example.json`: the metered pi seat `ox` (`openrouter/z-ai/glm-5.3-flash`) is now `flash` (`openrouter/deepseek/deepseek-v4.1-flash`, context 1,048,576)** in the seat list and both profiles' review rosters; the GLM seat was retired 2026-11-27.
 - `CLAUDE.md`: balancewheel writes esc's `pack.yaml`, only through `bw pack export`.
 - **Guard records keep the final decision and the rules' decision apart** (`lead/guard/record.py`,
