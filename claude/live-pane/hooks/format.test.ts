@@ -26,6 +26,18 @@ test('the width counts only what is drawn', () => {
   expect(clean('plain text, 中文 ok')).toBe('plain text, 中文 ok')
 })
 
+test('hostile control text is cleaned in linear time', () => {
+  for (const text of ['\u009d'.repeat(200_000), '\u009dab'.repeat(70_000), '\u001b]'.repeat(100_000),
+    `\u001b]${'x'.repeat(200_000)}`, '\u0090\u0098\u009e\u009f'.repeat(50_000)]) {
+    const t0 = performance.now()
+    clean(text)
+    cut(text, 40)
+    expect(performance.now() - t0).toBeLessThan(250)
+  }
+  expect(cut('\u009d0;t\u009dab\u009cok', 20)).toBe('ok') // a sequence ends at the next introducer
+  expect(cut(`${'x'.repeat(5000)}tail`, 10_000)).toBe('x'.repeat(4096)) // no more than DRAW_CHARS is read
+})
+
 test('a lane icon is cleaned too', () => {
   expect(glyph('local', '\u001b[31m')).toBe('▢ ')
   expect(glyph('local', '\u0007🦉')).toBe('🦉')

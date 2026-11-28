@@ -2,7 +2,7 @@
 // and how chart samples fold into columns. No `$` here. Times are milliseconds.
 
 import type { Chart, Sample } from '../types'
-import { clean } from './format'
+import { clean, DRAW_CHARS } from './format'
 
 export const FIGURE_ROWS = 2
 export const CHART_ROWS = 11
@@ -56,7 +56,7 @@ function isWide(text: string): boolean {
 
 /** A lane's mark, two columns wide: the seat's icon when set (an emoji fills both), else the kind's glyph. */
 export function glyph(kind: LaneKind, icon: string | null): string {
-  const mark = icon === null ? '' : clean(icon).trim()
+  const mark = icon === null ? '' : clean(icon.slice(0, DRAW_CHARS)).trim()
   if (mark === '') return `${GLYPH[kind]} `
   const first = [...mark].slice(0, mark.includes('️') ? 2 : 1).join('')
   return isWide(first) ? first : `${first} `

@@ -53,12 +53,17 @@ export function rateLimits(list: readonly { kind: string; percentUsed: number }[
 }
 
 // Terminal control text that a model or a log can put in a drawn string. A string sequence (OSC, DCS, SOS,
-// PM, APC; ESC or C1 form) goes whole, with its payload, up to BEL, ST, or the next ESC; one with no end
-// loses only its introducer. Then CSI sequences, then two-character escapes, then any C0, DEL, or C1 left.
-const STRING_SEQ = /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d\u009e\u009f])[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c|(?=\u001b))/g
+// PM, APC; ESC or C1 form) goes whole, with its payload, up to BEL, ST, or the next ESC or C1 introducer;
+// one with no end loses only its introducer. The payload never holds an introducer, so each match stops at
+// the next one and the scan stays linear. Then CSI sequences, then two-character escapes, then any C0,
+// DEL, or C1 left.
+const STRING_SEQ = /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d\u009e\u009f])[^\u0007\u001b\u009c\u0090\u0098\u009d\u009e\u009f]*(?:\u0007|\u001b\\|\u009c|(?=[\u001b\u0090\u0098\u009d\u009e\u009f]))/g
 const CSI = /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]?/g
 const ESCAPE = /\u001b[ -/]*[0-~]?/g
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g
+
+/** `cut` and the lane icon read at most this much of a text: the pane never draws more. */
+export const DRAW_CHARS = 4096
 
 /** The printable text of `text`: terminal sequences removed, other control characters made spaces. */
 export function clean(text: string): string {
@@ -70,7 +75,7 @@ export function clean(text: string): string {
  * the pane cuts. Every drawn text that a model or a log can set goes through here or through `pad`.
  */
 export function cut(text: string, n: number): string {
-  const chars = [...clean(text).replace(/\s+/g, ' ').trim()]
+  const chars = [...clean(text.slice(0, DRAW_CHARS)).replace(/\s+/g, ' ').trim()]
   if (n <= 0) return ''
   return chars.length <= n ? chars.join('') : `${chars.slice(0, Math.max(0, n - 1)).join('')}…`
 }

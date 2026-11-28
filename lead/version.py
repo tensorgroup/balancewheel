@@ -3,4 +3,4 @@
 commit as any change under `claude/live-pane/`: the bump changes the version that bw compares (it runs
 `claude plugin update` when the installed one differs) and that Claude Code shows. It does not control
 which files load: Claude Code reads the pane in place from bw's checkout at each session start."""
-VERSION = "0.2.0-dev.5"
+VERSION = "0.2.0-dev.6"

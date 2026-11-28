@@ -52,9 +52,10 @@ not against the prose.
   background lanes. A lane is dropped when a `source: local` `run` start of its seat (the `--seat` of a
   `bw run` that the command shows, else the lane's seat) begins at or after the lane's start less 2 s, with
   no upper limit while the lane is open (a call may wait at a permission prompt); one run drops one lane.
-  Every drawn text loses terminal escape sequences and other C0 and C1 control characters. After `/clear` or a resume the timer goes on and the session's state starts over. The
+  Every drawn text loses terminal escape sequences and other C0 and C1 control characters (a linear scan of at
+  most the first 4096 characters). After `/clear` or a resume the timer goes on and the session's state starts over. The
   plugin option `bwPath` (default `bw`) names the command; it must be absolute or the literal `bw` (a relative
-  one is never run, and the age line says why). `lead.version.VERSION` is `0.2.0-dev.5`; the
+  one is never run, and the age line says why). `lead.version.VERSION` is `0.2.0-dev.6`; the
   plugin's `plugin.json` and the `live-pane` entry of the new repo-root `.claude-plugin/marketplace.json`
   (marketplace `balancewheel`) carry the same version (tested). Bump the prerelease number in the same
   commit as any change under `claude/live-pane/`: the bump changes the version that bw compares and that

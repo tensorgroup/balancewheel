@@ -1,6 +1,6 @@
 # The stack — what we use, what we don't, and why
 
-*Revised 2026-11-27: the live pane plugin and the Claude Code version it needs (2.1.332; the plugin version is `lead/version.py`, now `0.2.0-dev.5`). Revised 2026-11-22: Orca is an optional canvas. Started 2026-10-25; revised 2026-10-25 for `bw guard` v0, again for cc-switch's adoption, for the Orca quota source as built, and (2026-10-26) for how cc-switch is read. One row per tool that has been used, planned, retired, or evaluated for
+*Revised 2026-11-27: the live pane plugin and the Claude Code version it needs (2.1.332; the plugin version is `lead/version.py`, now `0.2.0-dev.6`). Revised 2026-11-22: Orca is an optional canvas. Started 2026-10-25; revised 2026-10-25 for `bw guard` v0, again for cc-switch's adoption, for the Orca quota source as built, and (2026-10-26) for how cc-switch is read. One row per tool that has been used, planned, retired, or evaluated for
 the reference setup, with the reason and what would change the call. Update it in the same
 commit as any change of tool; date the row. Settings and boundaries for each adopted tool
 live in the owning doc linked from its row (the 2026-10-24 spec's "Third-party tools"

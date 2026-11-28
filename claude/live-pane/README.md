@@ -73,7 +73,7 @@ model column.
   with one belongs to a `bw seat` run.
 - **Text.** Every text that the pane draws loses terminal control characters first: escape sequences
   (CSI, OSC such as links and window titles, and the other string sequences) go whole, and other C0 and C1
-  characters become spaces.
+  characters become spaces. The pane reads at most the first 4096 characters of a text, and the scan is linear.
 - **Known limit:** a foreground call that the person moves to the background closes its lane at the
   move, because its result row comes then and does not say that the call goes on. Wrap the seat with
   `bw run` to track such a call.
