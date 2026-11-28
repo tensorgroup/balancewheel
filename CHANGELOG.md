@@ -58,8 +58,8 @@ not against the prose.
   not found, 126 not executable). `bw run start` prints only the run id and records no `pid`; `bw run end RUN_ID
   (--ok | --fail [--reason R])` copies `seat` and `dir` from the start and refuses a `bw seat` run. Rows go to the
   log; when that fails and `BW_CHECKPOINT` is set, to request files `<checkpoint dir>/runs/<run id>.<phase>.json`
-  (`runs.write_request`); else one `bw run: not tracked (...)` line, and the command still runs. `bw run` and the
-  placeholder `bw live` skip `bw`'s config exit.
+  (`runs.write_request`); else one `bw run: not tracked (...)` line, and the command still runs. `bw run` and `bw live`
+  skip `bw`'s config exit.
 - **The panel service appends run request files (`lead/runs.py`, `panel/service.py`).** At each drain, before
   the panel requests, `runs.ingest` takes at most 50 files `<checkpoint dir>/runs/<run id>.<start|beat|end>.json`
   (starts first, then beats, then ends), checks each (`runs.validate_request`), appends it, and unlinks it. The
@@ -71,6 +71,19 @@ not against the prose.
   whose start says `source: "bw"` or names another worktree. A fault in one file refuses only that file. When
   the log tail cannot be read in full, the files wait for the next drain. Problems go to one `panel` notice. `bw run end` also finds a start that is still a pending request file
   (`runs.read_requests(..., unlink=False)`).
+- **`bw live --json` (`lead/live.py`).** `bw live --json [--dir D] [--since EPOCH] [--limit N]` prints one v1
+  document for the worktree of `--dir` (default: the current directory; outside git, its real path): `open`
+  runs, `recent` runs, `usage` rows with no `run_id`, `local` (the local seats, each extra log with `ok` and
+  `error`, `families`, and the resolved `run_max_s`), and the worktree's open `panels`. It is read-only. It reads
+  the main log and every extra log back to `min(since, now - max(run_max_s, panel deep cap))`, the pending run
+  request files without taking them, and the panel files. Only rows whose `dir` is the worktree count. A start
+  with no end is open, with `state` `live`, `unknown` (its `pid` on this host is gone), or `stale` (no pid rule,
+  and more than `run_max_s` after its newest start or beat row). A run whose start is out of reach is found by
+  its newest beat (`start`, `model`, and `label` null). A panel seat that is done closes its run. A running panel
+  seat or ask with no run row shows as one entry with `run_id: null`. `recent` lists end rows in the window that
+  join a start, newest first, with tokens and cost from the run's `usage` row when the end row has none. An end
+  whose start is out of reach is not listed. `--since` (default: 24 h ago) is seconds; `--limit` (default 50)
+  is 1 to 500. On a config error it prints an empty document with `complete: false` and `error`, and exits 0.
 - **`bw pack export --to <dir> [--dry-run]` (`packs/export.py`).** It rewrites the `# bw:catalog:begin` / `# bw:catalog:end` block of esc's `model-seats` `pack.yaml` and its version (minor on a status, model, or membership change; patch on numbers only). It refuses a wrong name, a dirty file, a `pack.yaml` git does not track (untracked or ignored), and missing markers. It saves esc's changelog bullet to `state_dir/packs/` and logs a `pack_export` event. It reads every log in `improve.panel_logs`.
 - **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.
 - **The guard review offer (`lead/guard/offer.py`).** On a terminal, before the lead opens, `bw start` offers a

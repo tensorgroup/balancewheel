@@ -4,7 +4,7 @@
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
 Corrected the same day after review: the panel's summary line, the `bw start` prefix of the seat-check
-line, and a stale "not in v0" note on acting. Updated 2026-11-27: the `local` config section and `claude_pane`, `bw run`, and run request files.*
+line, and a stale "not in v0" note on acting. Updated 2026-11-27: the `local` config section and `claude_pane`, `bw run`, run request files, and `bw live`.*
 
 The **lead** is the agent you work in for a project; it is also the moderator of every
 panel it convenes. One plan usually runs out first, so a project's **profile** (config
@@ -345,6 +345,21 @@ once for each bw-contained lead runtime.
   run of another worktree. When it cannot read the log in full, it leaves the files for the next drain. `bw run end` also finds a start that is still a request file.
   When both fail, `bw run` prints one `bw run: not tracked (...)` line and still runs the command.
   `start` and `end` exit 0 when tracking fails. `bw run` does not stop on a config error.
+- **See what runs now (`bw live --json`, since 2026-11-27).** `bw live --json [--dir D] [--since EPOCH]
+  [--limit N]` prints one JSON document for the worktree of `--dir` (default: the current directory). The
+  Claude Code pane reads it every 5 s. `open` lists the runs that have a start and no end: `bw seat` runs,
+  `bw run` runs, and runs that a contained lead wrote as request files and that the panel service has not
+  appended yet. Each has a `state`. `live` means its `pid` is alive on this host, or, with no pid rule, its
+  newest start or beat row is at most `local.run_max_s` old. `unknown` means its `pid` on this host is gone.
+  `stale` means it is older than `run_max_s`. A long `bw run` shows from its newest beat when its start is
+  older than the read window. A panel seat that is done closes its run, and a running panel seat or ask shows
+  also when it has no run row. `recent` lists the runs that ended since `--since` (seconds; default 24 h
+  ago), newest first, at most `--limit` (default 50, at most 500), with tokens and cost. An end whose start
+  is not in the read window is not listed. `usage` lists `usage` rows that name no run. `local` lists the
+  local seats, each extra log (a missing or unreadable one has `ok: false` and an `error`), `families`, and
+  `run_max_s`. `panels` lists the worktree's open panels with each seat's status and the asks. `bw live`
+  writes nothing. On a config error it prints a document with empty lists, `complete: false`, and an
+  `error`, and exits 0.
 
 ## Start leading (first run)
 

@@ -70,7 +70,7 @@ from cockpit import server as cockpit_server, views as cockpit_views  # noqa: E4
 from lead import ccswitch, inbox, probes, quota, registry, runner, sandbox, start, status, verify  # noqa: E402
 from lead.guard import AGY_AWAITS, AGY_SPIKE_PASSED, evaluate as guard_eval, install as guard_install, review as guard_review  # noqa: E402
 from lead.guard.review import safe  # noqa: E402
-from lead import improve, run_cli, triage_install  # noqa: E402
+from lead import improve, live, run_cli, triage_install  # noqa: E402
 from seats import cli as seat_cli  # noqa: E402
 from panel import cli as panel_cli  # noqa: E402
 from packs import export as pack_export  # noqa: E402
@@ -487,9 +487,9 @@ def cmd_run(a):
     return run_cli.main(a.rest, sys.stdout, sys.stderr)
 
 
-def cmd_live_placeholder(a):
-    print("bw live: not built yet", file=sys.stderr)
-    return 2
+def cmd_live(a):
+    """`bw live` prints a v1 document also on a config error (PD-12), so it gets no config."""
+    return live.main(a.rest, sys.stdout, sys.stderr)
 
 
 def main(argv=None):
@@ -550,8 +550,8 @@ def main(argv=None):
 def _dispatch(a):
     if a.cmd == "run":  # handles a config error itself: the command still runs
         return cmd_run(a)
-    if a.cmd == "live":
-        return cmd_live_placeholder(a)
+    if a.cmd == "live":  # read-only; handles a config error itself
+        return cmd_live(a)
     if a.cmd == "setup":  # touches only the tool's own settings file, so it needs no config
         return cmd_setup(a)
     if a.cmd == "triage":  # touches only Claude Code's settings file, so it needs no config
