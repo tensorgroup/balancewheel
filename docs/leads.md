@@ -98,7 +98,13 @@ once for each bw-contained lead runtime.
   or when a check fails. Before it changes anything it prints one `bw: setting up the live
   pane: ...` line, and one more only when a step fails or you press Ctrl-C. Ctrl-C stops the
   step; the lead starts either way. `bw start --dry-run` only says "would ensure the live
-  pane plugin".
+  pane plugin". Every `claude` call runs from bw's checkout, not from the lead's worktree
+  (whose project `.claude/` settings a lead can edit), and the install is `--scope user`. A
+  repair uninstalls the old plugin before it adds the marketplace, so a failed step is tried
+  again at the next run. **One checkout per machine:** the pane's source is the checkout that
+  runs `bw`, so running `bw lead` or `bw setup claude-pane` from a second checkout (a worktree
+  of bw in development, say) treats the first checkout's pane as foreign: it uninstalls that
+  plugin and leaves the first checkout's marketplace in place.
 - **Autonomy per lead (config schema 3, `bw guard`, since 2026-10-25).** Each lead has an
   `autonomy`: `native` (Claude Code `--permission-mode auto`, Codex `--approve-for-me`: the
   runtime's own classifier decides), `guard` (bw's rules-only guard decides), `bypass`, or

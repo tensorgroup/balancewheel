@@ -42,7 +42,7 @@ class Recorder:
         self.plugins = [dict(p) for p in (plugins or [])]
         self.markets = [dict(m) for m in (markets or [])]
         self.worktrees = worktrees or {}  # project path -> list of worktree paths
-        self.calls, self.timeouts = [], []
+        self.calls, self.timeouts, self.cwds = [], [], []
 
     def __call__(self, argv, timeout, **kw):
         argv = list(argv)
@@ -59,6 +59,7 @@ class Recorder:
         assert argv[:len(cmd)] == cmd, argv
         args = argv[len(cmd):]
         self.calls.append(args)
+        self.cwds.append(kw.get("cwd"))
         if self.timeout:
             return Result(124, "", "", True)
         if self.slow_s:
@@ -79,7 +80,7 @@ class Recorder:
             return Result(0, json.dumps(self.markets), "", False)
         if args[:3] == ["plugin", "marketplace", "add"]:
             self.markets.append({"name": "balancewheel", "source": "directory", "path": args[3]})
-        elif args == ["plugin", "install", cp.PLUGIN_ID]:
+        elif args == cp.INSTALL:
             self.plugins.append(entry())
         elif args == ["plugin", "update", cp.PLUGIN_ID]:
             for p in self.plugins:
@@ -97,6 +98,11 @@ class Recorder:
     def verbs(self):
         """The changing calls as their verb tokens, e.g. "install", "uninstall", "marketplace add"."""
         return [" ".join(c[1:3]) if c[1] == "marketplace" else c[1] for c in self.changing()]
+
+    def fixed(self, *args):
+        """Let a failing (or interrupting) call work from now on."""
+        self.fail = set(self.fail) - {tuple(args)}
+        self.interrupt = set(self.interrupt) - {tuple(args)}
 
 
 class ClaudePaneCase(unittest.TestCase):
@@ -194,7 +200,7 @@ class Setup(ClaudePaneCase):
         rec = self.rec(version="2.1.332 (Claude Code)", plugins=[], markets=[])
         code, out = self.setup_out(rec)
         self.assertEqual(code, 0, out)
-        self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT], ["plugin", "install", cp.PLUGIN_ID]])
+        self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT], cp.INSTALL])
         self.assertTrue(all(t == cp.STEP_TIMEOUT_S for t in rec.timeouts), rec.timeouts)
         lines = out.splitlines()
         self.assertEqual(len(lines), 2, out)
@@ -270,9 +276,9 @@ class Setup(ClaudePaneCase):
             rec = self.rec(markets=[], plugins=plugins)
             code, out = self.setup_out(rec)
             self.assertEqual(code, 0, out)
-            self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT],
-                                              ["plugin", "uninstall", cp.PLUGIN_ID],
-                                              ["plugin", "install", cp.PLUGIN_ID]], plugins)
+            self.assertEqual(rec.changing(), [["plugin", "uninstall", cp.PLUGIN_ID],
+                                              ["plugin", "marketplace", "add", cp.ROOT],
+                                              cp.INSTALL], plugins)
             self.assertIn("installed with no balancewheel marketplace, so its source is unknown", out)
             self.assertNotIn("installed and current", out)
             self.assertEqual(rec.plugins, [entry()])
@@ -285,7 +291,7 @@ class Setup(ClaudePaneCase):
         self.assertEqual(rec.changing(), [])
 
     def test_a_failed_step_exits_1(self):
-        rec = self.rec(fail={("plugin", "install", cp.PLUGIN_ID)})
+        rec = self.rec(fail={tuple(cp.INSTALL)})
         code, out = self.setup_out(rec)
         self.assertEqual(code, 1)
         self.assertIn("failed", out.splitlines()[-1])
@@ -295,6 +301,33 @@ class Setup(ClaudePaneCase):
         code, out = self.setup_out(rec)
         self.assertEqual(code, 1)
         self.assertEqual(rec.changing(), [])
+
+    def test_a_failed_repair_is_retried_and_never_reads_as_current(self):
+        for plugins in ([entry()], [entry("0.0.1")]):
+            uninstall = ("plugin", "uninstall", cp.PLUGIN_ID)
+            rec = self.rec(markets=[], plugins=plugins, fail={uninstall})
+            code, out = self.setup_out(rec)
+            self.assertEqual(code, 1, out)
+            self.assertEqual(rec.verbs(), ["uninstall"])  # no marketplace was added beside the old files
+            self.assertEqual(rec.markets, [])
+            code, out = self.setup_out(rec)  # still failing: still untrusted
+            self.assertEqual(code, 1, out)
+            self.assertNotIn("installed and current", out)
+            rec.fixed(*uninstall)
+            n = len(rec.changing())
+            code, out = self.setup_out(rec)
+            self.assertEqual(code, 0, out)
+            self.assertNotIn("installed and current", out)
+            self.assertEqual(rec.verbs()[n:], ["uninstall", "marketplace add", "install"])
+            code, out = self.setup_out(rec)  # repaired: now it is current, and from ROOT
+            self.assertIn("installed and current", out)
+
+    def test_every_claude_call_runs_from_root(self):
+        rec = self.rec(markets=[], plugins=[entry("0.0.1")])
+        self.setup_out(rec)
+        self.setup_out(rec, remove=True)
+        self.assertTrue(rec.cwds)
+        self.assertEqual(set(rec.cwds), {cp.ROOT}, rec.cwds)
 
     def test_remove_touches_only_its_own(self):
         # Controller ruling (fix round 1): a plugin from a foreign marketplace is untrusted, so --remove
@@ -355,7 +388,7 @@ class Ensure(ClaudePaneCase):
     def test_absent_marketplace_is_added_first(self):
         rec = self.rec()
         self.ensure(rec)
-        self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT], ["plugin", "install", cp.PLUGIN_ID]])
+        self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT], cp.INSTALL])
         self.assertEqual(self.said, [f"bw: setting up the live pane: installing {cp.PLUGIN_ID} {version.VERSION} "
                                      "from this checkout…"])
 
@@ -372,13 +405,29 @@ class Ensure(ClaudePaneCase):
             self.said = []
             rec = self.rec(plugins=plugins, markets=[])
             self.ensure(rec)
-            self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT],
-                                              ["plugin", "uninstall", cp.PLUGIN_ID],
-                                              ["plugin", "install", cp.PLUGIN_ID]], plugins)
+            self.assertEqual(rec.changing(), [["plugin", "uninstall", cp.PLUGIN_ID],
+                                              ["plugin", "marketplace", "add", cp.ROOT],
+                                              cp.INSTALL], plugins)
             self.assertEqual(len(self.said), 1, self.said)
             self.assertIn("installing live-pane@balancewheel", self.said[0])
             self.assertIn("so its source is unknown", self.said[0])
             self.assertEqual(rec.plugins, [entry()])
+
+    def test_a_failed_or_interrupted_repair_is_retried_at_the_next_launch(self):
+        uninstall = ("plugin", "uninstall", cp.PLUGIN_ID)
+        old = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        self.addCleanup(signal.signal, signal.SIGINT, old)
+        for kind in ("fail", "interrupt"):
+            self.said = []
+            rec = self.rec(markets=[], plugins=[entry()], **{kind: {uninstall}})
+            self.ensure(rec)
+            self.assertEqual(rec.verbs(), ["uninstall"], kind)
+            self.assertEqual(rec.markets, [], kind)  # the old files never sit beside ROOT's marketplace
+            rec.fixed(*uninstall)
+            self.ensure(rec)
+            self.assertEqual(rec.verbs(), ["uninstall", "uninstall", "marketplace add", "install"], kind)
+            self.assertEqual((rec.plugins, len(rec.markets)), ([entry()], 1), kind)
+            self.assertEqual(set(rec.cwds), {cp.ROOT}, kind)
 
     def test_a_disabled_orphan_is_left_alone(self):
         rec = self.rec(plugins=[entry(enabled=False)], markets=[])
@@ -391,7 +440,7 @@ class Ensure(ClaudePaneCase):
         self.addCleanup(signal.signal, signal.SIGINT, old)
         rec = self.rec(plugins=[entry()], markets=[], interrupt={("plugin", "uninstall", cp.PLUGIN_ID)})
         self.ensure(rec)  # returns: no KeyboardInterrupt escapes
-        self.assertEqual(rec.verbs(), ["marketplace add", "uninstall"])  # install never ran
+        self.assertEqual(rec.verbs(), ["uninstall"])  # neither the add nor the install ran
         self.assertEqual(len(self.said), 2, self.said)
         self.assertIn("setting up the live pane", self.said[0])
         self.assertIn("interrupted; the lead starts without it", self.said[1])
@@ -469,7 +518,7 @@ class Ensure(ClaudePaneCase):
         self.assertEqual(self.said, [])
 
     def test_a_failed_install_says_one_more_line(self):
-        rec = self.rec(markets=[OURS], fail={("plugin", "install", cp.PLUGIN_ID)})
+        rec = self.rec(markets=[OURS], fail={tuple(cp.INSTALL)})
         self.ensure(rec)
         self.assertEqual(len(self.said), 2, self.said)
         self.assertIn("setting up the live pane", self.said[0])
@@ -492,11 +541,11 @@ class FakeClaude(unittest.TestCase):
             env["FAKE_CLAUDE_STATE"] = state
             out = subprocess.run(fake + ["--version"], env=env, capture_output=True, text=True)
             self.assertEqual(out.stdout.strip(), "2.0.0 (Claude Code)")
-            out = subprocess.run(fake + ["plugin", "install", cp.PLUGIN_ID], env=env, capture_output=True, text=True)
+            out = subprocess.run(fake + cp.INSTALL, env=env, capture_output=True, text=True)
             self.assertEqual(out.returncode, 0)
             with open(log) as f:
                 calls = [json.loads(line) for line in f]
-            self.assertEqual(calls, [["plugin", "list", "--json"], ["--version"], ["plugin", "install", cp.PLUGIN_ID]])
+            self.assertEqual(calls, [["plugin", "list", "--json"], ["--version"], cp.INSTALL])
 
 
 class SetupCli(unittest.TestCase):
@@ -517,7 +566,7 @@ class SetupCli(unittest.TestCase):
             with open(log) as f:
                 calls = [json.loads(line) for line in f]
             self.assertIn(["plugin", "marketplace", "add", cp.ROOT], calls)
-            self.assertIn(["plugin", "install", cp.PLUGIN_ID], calls)
+            self.assertIn(cp.INSTALL, calls)
             r = subprocess.run([sys.executable, str(ROOT / "bin" / "bw"), "setup", "claude-pane", "--remove"], env=env,
                                capture_output=True, text=True, cwd=d)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)  # the fake keeps no state: nothing to remove

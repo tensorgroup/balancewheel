@@ -17,7 +17,8 @@ one `bw: setting up the live pane: ...` line (and one more only on a failure or 
 step and the launch goes on. It never raises.
 
 Every `claude` call goes through `claude_cmd()`: BW_CLAUDE_CMD (a JSON list; tests point it at a fake)
-or plain `claude`.
+or plain `claude`. Every one runs with cwd ROOT (CLAUDE_CWD), never bw's own cwd: at `bw lead` that is the
+lead's worktree, whose project `.claude/` settings a lead can write. The install names `--scope user`.
 """
 import json
 import os
@@ -40,6 +41,8 @@ PLUGIN_ID = "live-pane@balancewheel"
 MIN_CLAUDE = (2, 1, 332)  # the version the pane is tested on; docs/stack.md records it
 STEP_TIMEOUT_S = 20
 CHECK_TIMEOUT_S = 5
+CLAUDE_CWD = ROOT  # bw's checkout: no lead writes it (setup and the launch check refuse otherwise)
+INSTALL = ["plugin", "install", "--scope", "user", PLUGIN_ID]
 
 
 class CheckFailed(Exception):
@@ -78,7 +81,7 @@ def _detail(r):
 
 
 def _list(run, args, timeout):
-    r = run(claude_cmd() + args, timeout)
+    r = run(claude_cmd() + args, timeout, cwd=CLAUDE_CWD)
     if r.timed_out or r.rc != 0:
         raise CheckFailed(f"claude {' '.join(args)}: {_detail(r)}")
     try:
@@ -146,7 +149,7 @@ def _refusal_text(real, path):
 
 def _step(run, args, say):
     """One changing `claude` call, bounded by STEP_TIMEOUT_S; True when it worked. A failure is one line."""
-    r = run(claude_cmd() + args, STEP_TIMEOUT_S)
+    r = run(claude_cmd() + args, STEP_TIMEOUT_S, cwd=CLAUDE_CWD)
     if r.timed_out or r.rc != 0:
         say(f"{shlex.join(['claude', *args])} failed ({_detail(r)})")
         return False
@@ -181,7 +184,7 @@ def setup(config: Optional[dict], remove: bool = False, run=proc.run, out=sys.st
     if why:
         say(why)
         return 1
-    r = run(claude_cmd() + ["--version"], STEP_TIMEOUT_S)
+    r = run(claude_cmd() + ["--version"], STEP_TIMEOUT_S, cwd=CLAUDE_CWD)
     v = parse_version(r.out) if r.rc == 0 and not r.timed_out else None
     if v is None or v < MIN_CLAUDE:
         found = f"Claude Code {_version_text(v)}" if v else f"Claude Code's version could not be read ({_detail(r)})"
@@ -205,16 +208,18 @@ def setup(config: Optional[dict], remove: bool = False, run=proc.run, out=sys.st
         say(f"{_foreign(source)}; remove it first")
         return 1
     if source is None:
-        if not _step(run, ["plugin", "marketplace", "add", ROOT], say):
-            return 1
-        say(f"added the {MARKETPLACE} marketplace at {ROOT}")
+        # Uninstall before the add: if a later step fails, the next run still sees no marketplace (or no
+        # plugin) and repairs again; ROOT's marketplace beside the old files would read as trusted.
         if entry is not None:  # installed with no marketplace: its files came from somewhere unknown
             if not _step(run, ["plugin", "uninstall", PLUGIN_ID], say):
                 return 1
             say(f"uninstalled {PLUGIN_ID}: {_untrusted(None)}")
             entry = None
+        if not _step(run, ["plugin", "marketplace", "add", ROOT], say):
+            return 1
+        say(f"added the {MARKETPLACE} marketplace at {ROOT}")
     if entry is None:
-        if not _step(run, ["plugin", "install", PLUGIN_ID], say):
+        if not _step(run, INSTALL, say):
             return 1
         say(f"installed {PLUGIN_ID} {VERSION}")
         return 0
@@ -285,7 +290,7 @@ def ensure(config: dict, run=proc.run, say=print, refused: Optional[str] = None)
         check = _budgeted(run, CHECK_TIMEOUT_S)
         if refusal(config, run=check):
             return
-        r = check(claude_cmd() + ["--version"], CHECK_TIMEOUT_S)
+        r = check(claude_cmd() + ["--version"], CHECK_TIMEOUT_S, cwd=CLAUDE_CWD)
         v = parse_version(r.out) if r.rc == 0 and not r.timed_out else None
         if v is None or v < MIN_CLAUDE:
             return
@@ -316,7 +321,7 @@ def _ensure_plan(source, entry):
     if entry is not None and entry.get("enabled") is False:
         return None
     add = [["plugin", "marketplace", "add", ROOT]] if source is None else []
-    install = [["plugin", "install", PLUGIN_ID]]
+    install = [INSTALL]
     uninstall = [["plugin", "uninstall", PLUGIN_ID]]
     if source is not None and not _ours(source):
         if entry is None:
@@ -326,7 +331,7 @@ def _ensure_plan(source, entry):
         return f"installing {PLUGIN_ID} {VERSION} from this checkout", add + install
     if source is None:
         return (f"installing {PLUGIN_ID} {VERSION} again from this checkout ({_untrusted(None)})",
-                add + uninstall + install)
+                uninstall + add + install)  # uninstall first: see setup
     if entry.get("version") == VERSION:
         return None
     return (f"updating {PLUGIN_ID} from {entry.get('version')} to {VERSION}",
@@ -341,8 +346,13 @@ def _ctrl_c_stops():
         yield
         return
     old = signal.getsignal(signal.SIGINT)
-    signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
+        signal.signal(signal.SIGINT, signal.default_int_handler)  # inside the try: a SIGINT after it restores
         yield
     finally:
-        signal.signal(signal.SIGINT, old)
+        while True:  # a second Ctrl-C landing here must not skip the restore
+            try:
+                signal.signal(signal.SIGINT, old)
+                break
+            except KeyboardInterrupt:
+                continue

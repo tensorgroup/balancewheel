@@ -28,7 +28,10 @@ not against the prose.
   `claude-code` lead it runs the same checks in one 5 s limit: it installs a missing plugin, updates one at
   another version, and does nothing when `claude_pane` is false, the plugin is disabled, or a check fails or times
   out. Before it changes anything it prints one `bw: setting up the live pane: ...` line, and one more only on a
-  failure or Ctrl-C; Ctrl-C stops the step, and the launch never stops. `bw start --dry-run` prints `would ensure the live pane
+  failure or Ctrl-C; Ctrl-C stops the step, and the launch never stops. Every `claude` call runs with cwd set to
+  bw's checkout, and the install is `claude plugin install --scope user live-pane@balancewheel`. A repair
+  uninstalls first, so a failed step is retried at the next run. Running bw from a second checkout uninstalls the
+  first checkout's pane (its marketplace stays). `bw start --dry-run` prints `would ensure the live pane
   plugin` when a lead in the profile's order runs `claude-code` and `claude_pane` is not false, and calls nothing.
   `BW_CLAUDE_CMD` (a JSON list) replaces `claude` for these calls; tests point it at `tests/fixtures/fake_claude.py`.
 - **The live pane plugin (`claude/live-pane/`) and `lead/version.py`.** A Claude Code plugin that shows one

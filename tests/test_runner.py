@@ -1668,7 +1668,7 @@ class LivePaneRunner(RunnerCase):
         calls = self.claude_calls()
         from lead import claude_pane
         self.assertIn(["plugin", "marketplace", "add", claude_pane.ROOT], calls)
-        self.assertIn(["plugin", "install", claude_pane.PLUGIN_ID], calls)
+        self.assertIn(claude_pane.INSTALL, calls)
         self.assertEqual(len([ln for ln in out.splitlines() if "live pane" in ln]), 1, out)
 
     def test_claude_pane_false_calls_nothing(self):
