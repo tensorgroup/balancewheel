@@ -206,7 +206,7 @@ def _wrap(argv, out, err, environ, now):
             signal.signal(s, h)
     reason = None if rc == 0 else f"signal {-rc}" if rc < 0 else f"exit {rc}"
     t1 = now()
-    sink.write(runs.end_row(run_id, seat, wt, rc == 0, reason, round(t1 - t0, 1), t=t1))
+    sink.write(runs.end_row(run_id, seat, wt, rc == 0, reason, round(t1 - t0, 1), t=t1, source="local"))
     return 128 - rc if rc < 0 else rc
 
 
@@ -265,7 +265,7 @@ def _end(argv, out, err, environ, now):
     t0 = start.get("t") if start else None
     duration = round(t - t0, 1) if isinstance(t0, (int, float)) and not isinstance(t0, bool) else None
     reason = (runs.label(got["--reason"]) or None) if "--reason" in got else None
-    sink.write(runs.end_row(run_id, seat, wt, "--ok" in got, reason, duration, t=t))
+    sink.write(runs.end_row(run_id, seat, wt, "--ok" in got, reason, duration, t=t, source="local"))
     return 0
 
 

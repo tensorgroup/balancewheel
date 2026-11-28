@@ -38,7 +38,7 @@ from seats.live import live_usage, seat_home_path
 DEFAULT_SINCE_S = 86400
 DEFAULT_LIMIT = 50
 LIMIT_MAX = 500
-DEEP_CAP_MIN_DEFAULT = 30
+SOURCES = ("bw", "local")
 LOCAL_SEAT_FIELDS = ("name", "match", "metric", "model", "icon", "color")
 USAGE = "usage: bw live --json [--dir D] [--since EPOCH] [--limit N]"
 
@@ -105,10 +105,14 @@ def _read_logs(config, cover, local):
     main = store.log_path(config)
     tail = store.read_tail(main, cover)
     complete = tail.complete and tail.error is None
-    rows = [(e, e.get("source") if _str(e.get("source")) else "bw") for e in tail.events]
+    rows = [(e, e.get("source") if e.get("source") in SOURCES else "bw") for e in tail.events]
     for path in metrics_config.extra_logs(config, exclude=main):
         if not os.path.exists(path):  # read_tail reads a missing file as an empty one (F9)
             local["logs"].append({"path": path, "ok": False, "error": "missing"})
+            continue
+        if not os.path.isfile(path):  # a FIFO would block the read; a dir cannot be read
+            local["logs"].append({"path": path, "ok": False, "error": "not a file"})
+            complete = False
             continue
         t = store.read_tail(path, cover)
         complete = complete and t.complete and t.error is None
@@ -301,6 +305,15 @@ def _open(by_id, panels, config, state, wt, now, host, run_max_s, alive, local_b
     return entries
 
 
+def _end_source(r):
+    """The source of an end with no start in reach. `r.end_src` is already the row's own `source` (main log)
+    or "local" (an extra log, a pending file). Only a main-log row without the field falls back: to "local"
+    after a beat (only `bw run` writes beats), else to "bw"."""
+    if r.beat is not None and r.end.get("source") not in SOURCES:
+        return "local"
+    return r.end_src
+
+
 def _recent(by_id, usage, since, limit):
     by_run = {}
     for row, _ in usage:
@@ -324,7 +337,7 @@ def _recent(by_id, usage, since, limit):
                 "label": st.get("label") if _str(st.get("label")) else None, "start": _time(st) if st else None, "end": te,
                 "ok": end.get("ok") if isinstance(end.get("ok"), bool) else None,
                 "reason": end.get("reason") if _str(end.get("reason")) else None,
-                "source": r.src if r.start is not None else "local" if r.beat is not None else r.end_src,
+                "source": r.src if r.start is not None else _end_source(r),
                 "stand_in_for": st.get("stand_in_for") if _str(st.get("stand_in_for")) else None}
         for k in ("tokens_in", "tokens_out", "cost_usd"):
             v = _num(end.get(k))
@@ -371,14 +384,14 @@ def build(config, state, cwd, since=None, limit=DEFAULT_LIMIT, now=None, run=pro
     host = socket.gethostname() if host is None else host
     local = _local_view(config)
     run_max_s = local["run_max_s"]
-    deep_s = ((config.get("panel") or {}).get("deep_cap_min") or DEEP_CAP_MIN_DEFAULT) * 60
+    deep_s = ((config.get("panel") or {}).get("deep_cap_min") or metrics_config.PANEL_DEFAULTS["deep_cap_min"]) * 60
     cover = min(since, now - max(run_max_s, deep_s))
     rows, complete = _read_logs(config, cover, local)
     wt = worktree(cwd, config, run=run)
     by_id, usage = _index(rows, _pending(state, wt, now), wt)
     local_by_name = {s.get("name"): s for s in (config.get("local") or {}).get("seats") or []}
-    panels = _panel_map(state, wt, {r.start.get("panel") for r in by_id.values()
-                                    if r.start is not None and r.end is None})
+    panels = _panel_map(state, wt, {r.start["panel"] for r in by_id.values()
+                                    if r.start is not None and r.end is None and _str(r.start.get("panel"))})
     return {"v": 1, "now": now, "complete": complete,
             "open": _open(by_id, panels, config, state, wt, now, host, run_max_s, alive, local_by_name),
             "recent": _recent(by_id, usage, since, limit), "usage": _usage(usage, since, limit),

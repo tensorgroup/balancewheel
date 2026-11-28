@@ -356,8 +356,8 @@ once for each bw-contained lead runtime.
   also when it has no run row. `recent` lists the runs that ended since `--since` (seconds; default 24 h
   ago), newest first, at most `--limit` (default 50, at most 500), with tokens and cost. An end whose start
   is not in the read window still shows, with no start time. A long `bw run` that `open` found by its beats
-  moves to `recent` when it ends. An end with no seat or no worktree (`bw run end` found no start) is not
-  listed. `usage` lists `usage` rows that name no run. `local` lists the
+  moves to `recent` when it ends. `bw run` marks each end row `source: "local"`, so such a run keeps its local
+  mark. An end with no seat or no worktree (`bw run end` found no start) is not listed. `usage` lists `usage` rows that name no run. `local` lists the
   local seats, each extra log (a missing or unreadable one has `ok: false` and an `error`), `families`, and
   `run_max_s`. `panels` lists the worktree's open panels with each seat's status and the asks. `bw live`
   writes nothing. On a config error it prints a document with empty lists, `complete: false`, and an

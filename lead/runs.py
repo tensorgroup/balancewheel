@@ -64,11 +64,15 @@ def start_row(seat, model, dir, label, source, *, pid=None, host=None, panel=Non
 
 
 def end_row(run_id, seat, dir, ok, reason, duration_s, *, tokens_in=None, tokens_out=None, cost_usd=None,
-            ctx_peak=None, t=None) -> dict:
-    """An end row. It always holds every field; an unknown one is null."""
-    return {"type": "run", "phase": "end", "run_id": run_id, "t": time.time() if t is None else t,
-            "seat": seat, "dir": dir, "ok": ok, "reason": reason, "duration_s": duration_s,
-            "tokens_in": tokens_in, "tokens_out": tokens_out, "cost_usd": cost_usd, "ctx_peak": ctx_peak}
+            ctx_peak=None, t=None, source=None) -> dict:
+    """An end row. It always holds every field; an unknown one is null. `source` (`bw run` passes "local") is
+    added only when given, so `bw live` can name an end whose start is out of reach; with none it reads "bw"."""
+    row = {"type": "run", "phase": "end", "run_id": run_id, "t": time.time() if t is None else t,
+           "seat": seat, "dir": dir, "ok": ok, "reason": reason, "duration_s": duration_s,
+           "tokens_in": tokens_in, "tokens_out": tokens_out, "cost_usd": cost_usd, "ctx_peak": ctx_peak}
+    if source is not None:
+        row["source"] = source
+    return row
 
 
 def beat_row(run_id, seat, dir, t=None) -> dict:
@@ -170,7 +174,7 @@ def validate_request(obj, worktree: str, now: float) -> dict:
             raise ValueError(f"{k} must be a non-negative number")
     return end_row(run_id, seat, worktree, obj["ok"], _text(obj, "reason", REASON_CHARS), obj.get("duration_s"),
                   tokens_in=obj.get("tokens_in"), tokens_out=obj.get("tokens_out"), cost_usd=obj.get("cost_usd"),
-                  ctx_peak=obj.get("ctx_peak"), t=t)
+                  ctx_peak=obj.get("ctx_peak"), t=t, source="local")
 
 
 def _open_requests(dir_path):

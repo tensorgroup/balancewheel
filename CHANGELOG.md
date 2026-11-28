@@ -82,8 +82,10 @@ not against the prose.
   its newest beat (`start`, `model`, and `label` null). A panel seat that is done closes its run. A running panel
   seat or ask with no run row shows as one entry with `run_id: null`. `recent` lists end rows in the window,
   newest first, with tokens and cost from the run's `usage` row when the end row has none. An end whose start is
-  out of reach still shows, with `start`, `model`, and `label` null; an end with a null `seat` or `dir` is not
-  listed. `--since` (default: 24 h ago) is seconds; `--limit` (default 50)
+  out of reach still shows, with `start`, `model`, and `label` null, and its own `source` (`runs.end_row` takes
+  an optional `source`; `bw run` and the panel service's ingest write `"local"` on every end row; an end row
+  without it reads as `"bw"`); an end with a null `seat` or `dir` is not listed. An extra log that is not a
+  regular file (a FIFO, a dir) is reported as `"not a file"` and never opened. `--since` (default: 24 h ago) is seconds; `--limit` (default 50)
   is 1 to 500. On a config error it prints an empty document with `complete: false` and `error`, and exits 0.
 - **`bw pack export --to <dir> [--dry-run]` (`packs/export.py`).** It rewrites the `# bw:catalog:begin` / `# bw:catalog:end` block of esc's `model-seats` `pack.yaml` and its version (minor on a status, model, or membership change; patch on numbers only). It refuses a wrong name, a dirty file, a `pack.yaml` git does not track (untracked or ignored), and missing markers. It saves esc's changelog bullet to `state_dir/packs/` and logs a `pack_export` event. It reads every log in `improve.panel_logs`.
 - **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.

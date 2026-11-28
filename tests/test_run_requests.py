@@ -248,8 +248,10 @@ class RunRequests(unittest.TestCase):
         self.assertEqual(beat, {"type": "run", "phase": "beat", "run_id": "r0123456789ab", "t": now, "seat": None,
                                 "dir": wt})
         end = runs.validate_request({**base, "phase": "end", "ok": True, "duration_s": 2.5, "tokens_in": 3}, wt, now)
-        self.assertEqual(set(end), set(runs.end_row("r0123456789ab", "s", wt, True, None, None)))
-        self.assertEqual((end["duration_s"], end["tokens_in"], end["cost_usd"]), (2.5, 3, None))
+        self.assertEqual(set(end), set(runs.end_row("r0123456789ab", "s", wt, True, None, None, source="local")))
+        self.assertEqual((end["duration_s"], end["tokens_in"], end["cost_usd"], end["source"]), (2.5, 3, None, "local"))
+        self.assertEqual(runs.validate_request({**base, "phase": "end", "ok": True, "source": "bw"}, wt, now)["source"],
+                         "local")  # forced, as for a start
 
 
 if __name__ == "__main__":

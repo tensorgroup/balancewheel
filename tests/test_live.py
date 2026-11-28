@@ -231,6 +231,15 @@ class Live(unittest.TestCase):
                                         "stand_in_for": None, "tokens_in": None, "tokens_out": None,
                                         "cost_usd": None, "ctx_peak": None}])
 
+    def test_an_end_with_no_start_in_reach_keeps_its_own_source(self):
+        store.append(self.log, runs.end_row("r0123456789ab", "my-seat", self.wt, True, None, 1.0, t=NOW - 3,
+                                            source="local"))
+        store.append(self.log, {**runs.end_row("r0123456789ac", "my-seat", self.wt, True, None, 1.0, t=NOW - 2),
+                                "source": "other"})
+        store.append(self.log, runs.end_row("r0123456789ad", "astra", self.wt, True, None, 1.0, t=NOW - 1))
+        self.assertEqual({r["run_id"]: r["source"] for r in self.build()["recent"]},
+                         {"r0123456789ab": "local", "r0123456789ac": "bw", "r0123456789ad": "bw"})
+
     def test_an_end_with_null_seat_or_dir_opens_nothing_and_is_not_recent(self):
         store.append(self.log, runs.end_row("r0123456789ac", None, None, False, "exit 1", None, t=NOW - 2))
         store.append(self.log, runs.end_row("r0123456789ad", None, self.wt, False, "exit 1", None, t=NOW - 2))
@@ -279,11 +288,27 @@ class Live(unittest.TestCase):
                     {"type": "run", "phase": "beat", "run_id": "r0123456789ac", "dir": self.wt, "seat": 5, "t": "x"},
                     {"type": "usage", "dir": self.wt, "run_id": ["r"], "seat": {"x": 1}},
                     {"type": "run", "phase": "start", "run_id": "r0123456789ad", "dir": self.wt, "pid": 10 ** 30,
-                     "host": socket.gethostname(), "seat": "my-seat", "t": NOW - 5}):
+                     "host": socket.gethostname(), "seat": "my-seat", "t": NOW - 5},
+                    {"type": "run", "phase": "start", "run_id": "r0123456789ae", "dir": self.wt, "panel": ["x"],
+                     "seat": "my-seat", "t": NOW - 5},
+                    {"type": "run", "phase": "start", "run_id": "r0123456789af", "dir": self.wt, "panel": {"a": 1},
+                     "seat": ["s"], "model": {"m": 1}, "label": 7, "stand_in_for": [], "t": NOW - 5},
+                    {"type": "run", "phase": "end", "run_id": "r0123456789b0", "dir": self.wt, "seat": "my-seat",
+                     "source": ["local"], "ok": "yes", "tokens_in": [1], "cost_usd": {"x": 1}, "ctx_peak": "9",
+                     "t": NOW - 4},
+                    {"type": "usage", "dir": self.wt, "seat": "my-seat", "t": [NOW], "ts": 5},
+                    {"type": "run", "phase": "start", "run_id": "r0123456789b1", "dir": self.wt, "source": {"bw": 1},
+                     "seat": "my-seat", "t": NOW - 5}):
             store.append(extra, row)
-        d = live.build(self.with_local_logs([extra]), self.state, self.wt, now=NOW)
-        self.assertEqual(d["v"], 1)
-        json.dumps(d)
+        for log in (extra, self.log):  # an extra log, and the main log (whose rows keep their own source)
+            for row in store.read_events(extra)[0]:
+                if log == self.log:
+                    store.append(self.log, row)
+            d = live.build(self.with_local_logs([extra] if log == extra else []), self.state, self.wt, now=NOW)
+            self.assertEqual(d["v"], 1)
+            json.dumps(d)
+            self.assertIn("r0123456789ae", [o["run_id"] for o in d["open"]])  # a bad panel is no panel
+        self.assertEqual({o["run_id"]: o["source"] for o in d["open"]}["r0123456789b1"], "bw")
 
     # --- panels ---
 
@@ -418,10 +443,21 @@ class Live(unittest.TestCase):
 
     def test_extra_log_unreadable_is_reported(self):
         d = live.build(self.with_local_logs([self.tmp]), self.state, self.wt, now=NOW)
-        [entry] = d["local"]["logs"]
-        self.assertEqual((entry["path"], entry["ok"]), (self.tmp, False))
-        self.assertIsInstance(entry["error"], str)
+        self.assertEqual(d["local"]["logs"], [{"path": self.tmp, "ok": False, "error": "not a file"}])
         self.assertFalse(d["complete"])
+        noread = os.path.join(self.tmp, "noread.jsonl")
+        Path(noread).write_text("")
+        os.chmod(noread, 0)
+        self.addCleanup(os.chmod, noread, 0o600)
+        if not os.access(noread, os.R_OK):  # root reads any file
+            [entry] = live.build(self.with_local_logs([noread]), self.state, self.wt, now=NOW)["local"]["logs"]
+            self.assertEqual((entry["ok"], type(entry["error"])), (False, str))
+
+    def test_extra_log_fifo_is_not_read(self):  # a FIFO would block the read until a writer opens it
+        fifo = os.path.join(self.tmp, "fifo.jsonl")
+        os.mkfifo(fifo)
+        d = live.build(self.with_local_logs([fifo]), self.state, self.wt, now=NOW)
+        self.assertEqual(d["local"]["logs"], [{"path": fifo, "ok": False, "error": "not a file"}])
 
     def test_dir_resolution(self):
         sub = os.path.join(self.wt, "sub")

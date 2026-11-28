@@ -43,6 +43,12 @@ class Runs(unittest.TestCase):
                          ctx_peak=100)
         self.assertEqual((e["tokens_in"], e["tokens_out"], e["cost_usd"], e["ctx_peak"], e["reason"]),
                          (1, 2, 0.5, 100, None))
+        self.assertNotIn("source", e)  # bw seat writes none; bw live reads a missing source as "bw"
+
+    def test_end_row_takes_an_optional_source(self):
+        e = runs.end_row("r0123456789ab", "my-seat", "/w", True, None, 1.0, t=9.0, source="local")
+        self.assertEqual(set(e), END_KEYS | {"source"})
+        self.assertEqual(e["source"], "local")
 
     def test_label_first_line_and_length(self):
         self.assertEqual(runs.label("a\nb" + "x" * 200), "a")

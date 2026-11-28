@@ -80,6 +80,7 @@ class RunCli(unittest.TestCase):
         self.assertEqual((s["source"], s["seat"], s["label"], s["pid"], e["ok"], e["reason"]),
                          ("local", "my-seat", "lint", os.getpid(), True, None))
         self.assertEqual((s["run_id"], e["seat"], e["dir"]), (e["run_id"], "my-seat", s["dir"]))
+        self.assertEqual(e["source"], "local")  # bw live names it also when its start is out of reach
         self.assertIn("host", s)
         self.assertEqual(s["dir"], os.path.realpath(str(ROOT)))  # the cwd resolves to the worktree root
 
@@ -204,6 +205,7 @@ class RunCli(unittest.TestCase):
         self.assertEqual(self.main(["end", rid, "--fail", "--reason", "lint failed"]), 0)
         self.assertEqual((self.runs()[-1]["seat"], self.runs()[-1]["reason"]), ("s", "lint failed"))
         self.assertEqual((self.runs()[-1]["dir"], self.runs()[-1]["ok"]), (self.runs()[0]["dir"], False))
+        self.assertEqual(self.runs()[-1]["source"], "local")
 
     def test_start_prints_the_id_also_when_untracked(self):
         rc, err = self.main_env({"BALANCEWHEEL_CONFIG": "/nonexistent.json"}, ["start", "--seat", "s"])
