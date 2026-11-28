@@ -486,6 +486,18 @@ class StartCase(unittest.TestCase):
         self.assertIn(f"bw: updated {before} → {after}; starting again on the new version", out)
         self.assertNotIn("lead:", out)  # nothing else ran on the old code
 
+    def test_a_restart_runs_no_pane_check_on_the_old_code(self):
+        # the pane check belongs to `bw lead`, once per launch; bw start (old code or new) never calls claude
+        writer, install, commit, git = self.install()
+        commit(writer, "b")
+        git(writer, "push", "-q", "origin", "main")
+        self.config["leads"]["lp"]["runtime"] = "claude-code"
+        run, envs = FakeRun(), []
+        code, out = self.start(run, bw_path=str(install / "bin" / "bw"), self_update=True, restart=envs.append)
+        self.assertEqual((code, len(envs)), (0, 1), out)
+        self.assertNotIn("live pane", out)
+        self.assertEqual([a for a in run.argvs() if a[0] != "git"], [])
+
     def test_after_the_restart_it_says_what_changed_and_does_not_pull_again(self):
         writer, install, commit, git = self.install()
         run = FakeRun()
