@@ -341,7 +341,8 @@ once for each bw-contained lead runtime.
   The panel service takes these files at each drain (at most 50 at a time), checks each one, and
   appends it with `source: "local"` and `dir` set to the worktree. It refuses a file whose body names
   another run id or phase than its file name, a link, and a file of 4 KiB or more, and says so in one
-  notice. `bw run end` also finds a start that is still a request file.
+  notice. It also refuses a second start for a run id, and a beat or end for a `bw seat` run or for a
+  run of another worktree. When it cannot read the log in full, it leaves the files for the next drain. `bw run end` also finds a start that is still a request file.
   When both fail, `bw run` prints one `bw run: not tracked (...)` line and still runs the command.
   `start` and `end` exit 0 when tracking fails. `bw run` does not stop on a config error.
 

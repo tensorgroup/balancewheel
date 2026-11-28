@@ -36,6 +36,7 @@ T_SKEW_S = 86400
 REQUEST_NAME = re.compile(r"(r[0-9a-f]{12})\.(start|beat|end)\.json")
 PHASES = ("start", "beat", "end")
 PID_MAX = 2 ** 31 - 1
+NUMBER_MAX = 2 ** 53  # the largest bound for a number field: exact as a float
 NAME_CHARS = 80  # a lead-chosen file name, as shown in a problem line
 
 
@@ -109,11 +110,14 @@ def write_request(dir_path: str, row: dict) -> str:
 # --- request files from contained leads (the panel service appends them) ---
 
 def _number(v) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+    """A finite JSON number within +/-NUMBER_MAX (a huge JSON integer never reaches float math)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    return -NUMBER_MAX <= v <= NUMBER_MAX if isinstance(v, int) else math.isfinite(v) and abs(v) <= NUMBER_MAX
 
 
 def _count(v) -> bool:
-    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+    return isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= NUMBER_MAX
 
 
 def _text(obj, key, limit):
@@ -249,45 +253,69 @@ def _capped(problems) -> list:
     return problems if more <= 0 else problems[:inbox.NAMES_SHOWN] + [f"and {more} more"]
 
 
+def _validated(name, obj, worktree, now):
+    """(row, None) or (None, problem line) for one item: any fault in one file refuses only that file."""
+    shown = safe(name)[:NAME_CHARS]
+    if not isinstance(obj, ValueError):
+        try:
+            return validate_request(obj, worktree, now), None
+        except Exception as e:  # ValueError, or a fault the checks missed (OverflowError, TypeError, ...)
+            obj = e if isinstance(e, ValueError) else ValueError(f"malformed run request: {type(e).__name__}")
+    return None, f"a run request was refused: {shown} ({safe(str(obj))[:REASON_CHARS]})"
+
+
 def ingest(config: dict, state: str, project, now: Optional[float] = None) -> list:
     """Append the pending run requests of `project`'s checkpoint dir; returns problem lines (capped).
-    Starts first, then beats, then ends. A beat or end without `seat` takes it from its start (the log
-    first, then this batch); with none found it stays null. A request for a run whose logged start says
-    `source: "bw"` is refused (`bw seat` closes it). Every file taken is unlinked before its row is
-    appended, so a failed append loses that row and says so."""
+    The log tail is read first: when it has an error or is incomplete, every file stays for the next drain
+    (the ownership checks below must not fail open). Then the files are taken (unlinked) and checked one
+    by one; a fault in one file refuses only that file. Starts first, then beats, then ends. A start whose
+    `run_id` is already logged is a duplicate. A beat or end whose start (logged, or in this batch) has
+    `source: "bw"` or another worktree's `dir` is refused. A beat or end without `seat` takes it from its
+    start; with no start found it stays null. A failed append loses that row and says so."""
     now = time.time() if now is None else now
-    items, problems = read_requests(requests_dir(handoff.checkpoint_dir(state, project.worktree_key)))
-    if not items:
+    d = requests_dir(handoff.checkpoint_dir(state, project.worktree_key))
+    pending, problems = read_requests(d, unlink=False)
+    if not pending:
         return _capped(problems)
+    log = store.log_path(config)
+    tail = store.read_tail(log, now - END_LOOKBACK_S)
+    if tail.error is not None or not tail.complete:
+        why = safe(tail.error)[:REASON_CHARS] if tail.error else "the read stopped at its cap"
+        return [f"run requests wait for the next drain: the metrics log cannot be read in full ({why})"]
+    logged = {}  # run_id -> every logged start of it (more than one only when the log was written around bw)
+    for e in tail.events:
+        if e.get("type") == "run" and e.get("phase") == "start" and isinstance(e.get("run_id"), str):
+            logged.setdefault(e["run_id"], []).append(e)
+    items, problems = read_requests(d)
     rows = []
     for name, obj in items:
-        shown = safe(name)[:NAME_CHARS]
-        if not isinstance(obj, ValueError):
-            try:
-                rows.append((shown, validate_request(obj, project.worktree, now)))
-                continue
-            except ValueError as e:
-                obj = e
-        problems.append(f"a run request was refused: {shown} ({safe(str(obj))})")
-    log = store.log_path(config)
-    logged = {}
-    if rows:
-        for e in store.read_tail(log, now - END_LOOKBACK_S).events:
-            if e.get("type") == "run" and e.get("phase") == "start" and isinstance(e.get("run_id"), str):
-                logged[e["run_id"]] = e
+        row, problem = _validated(name, obj, project.worktree, now)
+        if problem:
+            problems.append(problem)
+        else:
+            rows.append((safe(name)[:NAME_CHARS], row))
     batch = {}
     for shown, row in sorted(rows, key=lambda r: PHASES.index(r[1]["phase"])):
-        start = logged.get(row["run_id"]) or batch.get(row["run_id"])
-        if start is not None and start.get("source") == "bw":
-            problems.append(f"a run request was refused: {shown} (a bw seat run; bw seat closes it)")
+        rid = row["run_id"]
+        starts = logged.get(rid) or ([batch[rid]] if rid in batch else [])
+        why = None
+        if row["phase"] == "start":
+            if starts:
+                why = "a start for this run id is already logged"
+        elif any(st.get("source") == "bw" for st in starts):
+            why = "a bw seat run; bw seat closes it"
+        elif any(st.get("dir") != project.worktree for st in starts):
+            why = "a run of another worktree"
+        if why:
+            problems.append(f"a run request was refused: {shown} ({why})")
             continue
-        if row["seat"] is None and start is not None:
-            row["seat"] = start.get("seat")
+        if row["seat"] is None and starts:
+            row["seat"] = starts[-1].get("seat")
         try:
             store.append(log, row)
         except OSError as e:
             problems.append(f"a run request was not logged: {shown} ({type(e).__name__})")
             continue
         if row["phase"] == "start":
-            batch[row["run_id"]] = row
+            batch[rid] = row
     return _capped(problems)

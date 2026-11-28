@@ -67,8 +67,9 @@ not against the prose.
   to the worktree; `seat` must match `[a-z0-9-]+` on a start; strings are one line and bounded (model 120,
   label 80, reason 200, host 255); `t` must be within a day of now; `pid` is 1 to 2^31-1; a file of 4096 bytes
   or more, a link, a FIFO, or a second hard link is refused; other keys are dropped. A beat or end without
-  `seat` takes it from its start. A request for a run whose logged start says `source: "bw"` is refused.
-  Problems go to one `panel` notice. `bw run end` also finds a start that is still a pending request file
+  `seat` takes it from its start. A start whose run id is already logged is refused, and so is a beat or end
+  whose start says `source: "bw"` or names another worktree. A fault in one file refuses only that file. When
+  the log tail cannot be read in full, the files wait for the next drain. Problems go to one `panel` notice. `bw run end` also finds a start that is still a pending request file
   (`runs.read_requests(..., unlink=False)`).
 - **`bw pack export --to <dir> [--dry-run]` (`packs/export.py`).** It rewrites the `# bw:catalog:begin` / `# bw:catalog:end` block of esc's `model-seats` `pack.yaml` and its version (minor on a status, model, or membership change; patch on numbers only). It refuses a wrong name, a dirty file, a `pack.yaml` git does not track (untracked or ignored), and missing markers. It saves esc's changelog bullet to `state_dir/packs/` and logs a `pack_export` event. It reads every log in `improve.panel_logs`.
 - **Seat key `title`** (an optional catalog name for `bw pack export`), schema 2 and 3; the example's seats carry a real `policy`.

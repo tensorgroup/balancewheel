@@ -234,6 +234,16 @@ class RunCli(unittest.TestCase):
         self.assertEqual((end["seat"], end["dir"], end["ok"]), ("s", self.tmp, True))
         self.assertIsInstance(end["duration_s"], float)
 
+    def test_end_survives_a_hostile_pending_start(self):
+        cp = os.path.join(self.tmp, "handoffs", "k"); os.makedirs(os.path.join(cp, "runs"))
+        Path(cp, "runs", "r0123456789ab.start.json").write_text('{"seat": "s", "t": 1%s}' % ("0" * 400))
+        rc, err = self.main_env({"BW_CHECKPOINT": os.path.join(cp, "checkpoint.md")}, ["end", "r0123456789ab", "--ok"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(err.count("\n"), 1, err)
+        self.assertIn("refused", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual((self.runs()[-1]["seat"], self.runs()[-1]["ok"]), (None, True))
+
     def test_end_refuses_a_bw_seat_run(self):
         store.append(self.log, runs.start_row("astra", "model-a", "/w", "x", "bw"))
         rc, err = self.main_env({}, ["end", self.runs()[0]["run_id"], "--ok"])

@@ -166,6 +166,56 @@ class RunRequests(unittest.TestCase):
             probs = runs.ingest(self.config, self.state, self.project, now=self.now)
         self.assertEqual(len(probs), 1)
 
+    # --- fix round 1: totality, ownership, fail closed ---
+
+    def test_a_huge_integer_refuses_only_its_file(self):
+        self.put("r0123456789ab.start.json", {"seat": "s", "t": self.now})
+        self.put("r0123456789ac.start.json", {"seat": "s", "t": 10 ** 400})
+        self.put("r0123456789ad.end.json", {"ok": True, "t": self.now, "duration_s": 10 ** 400})
+        probs = runs.ingest(self.config, self.state, self.project, now=self.now)
+        self.assertEqual(len(probs), 2, probs)
+        self.assertTrue(all("refused" in p for p in probs))
+        self.assertEqual([(r["run_id"], r["phase"]) for r in self.logged()], [("r0123456789ab", "start")])
+        self.assertEqual(os.listdir(self.runs_dir), [])
+
+    def test_beat_or_end_for_another_worktrees_run_is_refused(self):
+        store.append(self.log, {**runs.start_row("s", None, "/other/wt", None, "local"), "run_id": "r0123456789ab"})
+        self.put("r0123456789ab.beat.json", {"seat": "s", "t": self.now})
+        self.put("r0123456789ab.end.json", {"seat": "s", "ok": True, "t": self.now})
+        probs = runs.ingest(self.config, self.state, self.project, now=self.now)
+        self.assertEqual(len(probs), 2, probs)
+        self.assertTrue(all("another worktree" in p for p in probs))
+        self.assertEqual([r["phase"] for r in self.logged()], ["start"])
+
+    def test_a_bw_start_is_not_hidden_by_a_later_logged_start(self):
+        for source in ("bw", "local"):
+            store.append(self.log, {**runs.start_row("s", None, self.project.worktree, None, source),
+                                    "run_id": "r0123456789ab"})
+        self.put("r0123456789ab.end.json", {"ok": True, "t": self.now})
+        self.assertIn("bw seat", "; ".join(runs.ingest(self.config, self.state, self.project, now=self.now)))
+        self.assertEqual([r["phase"] for r in self.logged()], ["start", "start"])
+
+    def test_a_duplicate_start_is_refused(self):
+        store.append(self.log, {**runs.start_row("s", None, self.project.worktree, None, "local"),
+                                "run_id": "r0123456789ab"})
+        self.put("r0123456789ab.start.json", {"seat": "s", "t": self.now})
+        probs = runs.ingest(self.config, self.state, self.project, now=self.now)
+        self.assertEqual(len(probs), 1)
+        self.assertIn("already", probs[0])
+        self.assertEqual([r["phase"] for r in self.logged()], ["start"])
+
+    def test_an_unreadable_or_incomplete_tail_leaves_the_files(self):
+        self.put("r0123456789ab.start.json", {"seat": "s", "t": self.now})
+        self.put("r0123456789ab.end.json", {"ok": True, "t": self.now})
+        for tail in (store.Tail([], False, "Permission denied"), store.Tail([], False, None)):
+            with mock.patch.object(runs.store, "read_tail", return_value=tail):
+                probs = runs.ingest(self.config, self.state, self.project, now=self.now)
+            self.assertEqual(len(probs), 1, probs)
+            self.assertEqual(sorted(os.listdir(self.runs_dir)), ["r0123456789ab.end.json", "r0123456789ab.start.json"])
+            self.assertEqual(self.logged(), [])
+        self.assertEqual(runs.ingest(self.config, self.state, self.project, now=self.now), [])
+        self.assertEqual([r["phase"] for r in self.logged()], ["start", "end"])
+
     # --- validate_request ---
 
     def test_validate_request_rules(self):
@@ -185,7 +235,12 @@ class RunRequests(unittest.TestCase):
                {**base, "phase": "end"}, {**base, "phase": "end", "ok": 1},
                {**base, "phase": "end", "ok": True, "reason": "r" * (runs.REASON_CHARS + 1)},
                {**base, "phase": "end", "ok": True, "duration_s": -1},
-               {**base, "phase": "end", "ok": True, "tokens_in": 1.5}]
+               {**base, "phase": "end", "ok": True, "tokens_in": 1.5},
+               {**base, "t": 10 ** 400}, {**base, "t": -10 ** 400}, {**base, "pid": 10 ** 400},
+               {**base, "phase": "end", "ok": True, "duration_s": 10 ** 400},
+               {**base, "phase": "end", "ok": True, "cost_usd": 10 ** 400},
+               {**base, "phase": "end", "ok": True, "tokens_in": 10 ** 400},
+               {**base, "phase": "end", "ok": True, "ctx_peak": 2 ** 60}]
         for obj in bad:
             with self.assertRaises(ValueError, msg=repr(obj)[:120]):
                 runs.validate_request(obj, wt, now)
