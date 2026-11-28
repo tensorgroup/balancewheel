@@ -283,9 +283,9 @@ class StartCase(unittest.TestCase):
             seen["refresh"] = now
             return real_refresh(config, state, now, **kw)
 
-        def ql(config, state, project, profile, plans, now, say):
+        def ql(config, state, project, profile, plans, now, rep):
             seen["decide"] = now
-            return real_ql(config, state, project, profile, plans, now, say)
+            return real_ql(config, state, project, profile, plans, now, rep)
 
         def build(config, state, now, **kw):
             seen["registry"] = now
@@ -485,9 +485,9 @@ class StartCase(unittest.TestCase):
                               else f"bw start: {tool}:", out)
             self.assertIn("would update pi: brew upgrade pi · lock runtime-pi · installer brew", out)
             self.assertIn("would update codex: npm i -g codex · lock runtime-codex · installer npm", out)
-            self.assertIn("bw start: would check keys for pi: containment", out)
+            self.assertIn("bw start: would check pi: sandbox", out)
             self.assertIn("bw start: would read quota for plan ps", out)
-            self.assertIn("bw start: lead: lp (order)", out)
+            self.assertIn("bw start: lead: lp (first in the profile's lead order)", out)
             if orca == "running":
                 self.assertIn("bw start: would run: orca terminal create --worktree", out)
             else:
@@ -504,7 +504,7 @@ class StartCase(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual([c for c in run.argvs() if tuple(c) in {tuple(PI_UPDATE), tuple(KIMI_UPDATE)}], [])
         self.assertTrue(any("lead_containment.sh" in c[0][0] for c in self.attacks(run)))
-        self.assertIn("bw start: verify pi containment: passed", out)
+        self.assertIn("bw start: pi sandbox: passed", out)
 
     def test_reverify_of_fast_tool_starts_before_slowest_update_ends(self):
         run = FakeRun()
@@ -517,14 +517,14 @@ class StartCase(unittest.TestCase):
         pi_attack = [c for c in self.attacks(run) if "--" in c[0] and "pi" in c[0][c[0].index("--") + 1:]]
         self.assertTrue(pi_attack, out)
         self.assertLess(pi_attack[0][1], codex_end)
-        self.assertIn("bw start: pi: pi 1.0 → pi 1.1 updated (", out)
+        self.assertIn("bw start: pi: updated pi 1.0 → pi 1.1", out)
 
     def test_unreadable_version_after_update_marks_pending(self):
         run = FakeRun()
         run.updates[tuple(PI_UPDATE)] = ("pi", None, 0.0, 0)
         code, out = self.start(run)
         self.assertEqual(code, 0, out)
-        self.assertIn("bw start: verify pi containment: pending — version unreadable", out)
+        self.assertIn("bw start: pi sandbox: not tested: version unreadable", out)
         self.assertFalse([c for c in self.attacks(run) if "pi" in c[0]])
 
     def test_version_ok_follows_the_after_version_not_the_result_label(self):
@@ -532,21 +532,21 @@ class StartCase(unittest.TestCase):
         run.versions["pi"] = None  # unreadable before: the label is "unreadable", the after version is not
         run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.1", 0.0, 0)
         code, out = self.start(run)
-        self.assertIn("pi: unreadable → pi 1.1 unreadable", out)
-        self.assertIn("bw start: verify pi containment: passed", out)
+        self.assertIn("bw start: pi: updated, but its version cannot be read (version unreadable before update)", out)
+        self.assertIn("bw start: pi sandbox: passed", out)
         run = FakeRun()
         run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.2", 0.0, 3)  # failed, yet a readable version after
         code, out = self.start(run)
-        self.assertIn("pi 1.2 failed", out)
-        self.assertIn("bw start: verify pi containment: passed", out)
+        self.assertIn("bw start: pi: update failed (exit 3: boom)", out)
+        self.assertIn("bw start: pi sandbox: passed", out)
 
     def test_no_verify_marks_changed_keys_pending(self):
         self.record_pi("pi 0.9")
         run = FakeRun()
         code, out = self.start(run, verify=False)
         self.assertEqual(code, 0, out)
-        self.assertIn("bw start: verify pi containment: pending — --no-verify", out)
-        self.assertIn("bw start: verify kimi containment: pending — --no-verify", out)
+        self.assertIn("bw start: pi sandbox: not tested (--no-verify)", out)
+        self.assertIn("bw start: kimi sandbox: not tested (--no-verify)", out)
         self.assertEqual(self.attacks(run), [])
 
     def test_start_runs_the_guard_eval_when_its_key_changed(self):
@@ -656,9 +656,10 @@ class StartCase(unittest.TestCase):
         del self.config["tools"]["kimi"]
         run = FakeRun()
         code, out = self.start(run, verify=False)
-        self.assertEqual(out.count("bw start: no update lock for runtime kimi"), 1)
-        self.assertNotIn("no update lock for runtime pi", out)
-        self.assertIn("bw start: verify kimi containment: pending — --no-verify", out)
+        self.assertEqual(out.count("no tool in your config updates"), 1)
+        self.assertIn("bw start: not updated: no tool in your config updates kimi ", out)
+        self.assertNotIn("updates pi", out)
+        self.assertIn("bw start: kimi sandbox: not tested (--no-verify)", out)
 
     def test_start_writes_the_registry_with_versions_from_start_json(self):
         run = FakeRun()
@@ -699,7 +700,7 @@ class StartCase(unittest.TestCase):
 
     def test_spawn_line(self):
         _, out = self.calls_of(FakeRun())
-        self.assertIn("bw start: checking seats in the background (log: ", out)
+        self.assertIn("bw start: seats: checking in the background. Log: ", out)
         self.assertIn("verify-log.txt", out)
 
     def test_seat_verify_child_gets_start_env(self):
@@ -733,10 +734,10 @@ class StartCase(unittest.TestCase):
         run = FakeRun()
         code, out = self.start(run, verify=False, update=False)
         for plan in ("pp", "pk", "ps"):
-            self.assertIn(f"bw start: quota {plan}: quota unknown", out)
+            self.assertIn(f"bw start: quota {plan}: unknown (bw has no reader for this plan yet)", out)
         self.assertNotIn("quota pc:", out)  # lc is not in this profile
-        self.assertIn("bw start: lead: lp (order)", out)
-        self.assertIn("bw start: cockpit: run bw cockpit", out)
+        self.assertIn("bw start: lead: lp (first in the profile's lead order)", out)
+        self.assertIn("bw start: cockpit: run `bw cockpit` to see all of this in a browser", out)
 
     def openrouter_plan(self):
         self.config["plans"]["po"] = {"billing": "metered", "quota": "probe", "probe": "openrouter",
@@ -757,8 +758,8 @@ class StartCase(unittest.TestCase):
                                env=dict(self.env, OPENROUTER_API_KEY="sk-or-SYNTHETIC-CANARY"))
         self.assertEqual(code, 0, out)
         self.assertEqual(len(calls), 1)
-        self.assertIn("bw start: quota po: budget 75% · probe 0m", out)
-        self.assertIn("bw start: quota pp: quota unknown — probe: no probe for this plan", out)
+        self.assertIn("bw start: quota po: 25% of the monthly budget used · read just now from OpenRouter", out)
+        self.assertIn("bw start: quota pp: unknown (bw has no reader for this plan yet)", out)
         self.assertNotIn("SYNTHETIC-CANARY", out)
 
     def test_a_refresh_that_raises_is_one_line_and_start_continues(self):
@@ -821,6 +822,147 @@ class StartCase(unittest.TestCase):
         self.start(FakeRun(), verify=False, update=False)
         f = status.facts(self.config, self.state, NOW, run=FakeRun())
         self.assertIn(f"last start: {time.ctime(NOW)}", status.render(f))
+
+    # --- the terminal layout: sections with marks on a terminal, plain `bw start: ` lines elsewhere ---
+
+    def tty_start(self, run, **kw):
+        out = Tty()
+        kw.setdefault("bw_path", self.bw)
+        kw.setdefault("env", self.env)
+        kw.setdefault("now", NOW)
+        kw.setdefault("width", 88)
+        with mock.patch.dict(os.environ, {"HOME": str(self.root)}):
+            code = start.start(self.config, self.state, str(self.repo), run=run, out=out, **kw)
+        return code, out.getvalue()
+
+    def test_sections_come_in_order_under_a_header_with_the_home_path_as_tilde(self):
+        code, out = self.tty_start(FakeRun(orca="running"))
+        self.assertEqual(code, 0, out)
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "bw start · ~/app")
+        self.assertEqual([ln for ln in lines[1:] if ln and not ln.startswith(" ")],
+                         ["Updates", "Checks", "Quota", "Lead", "Also"])
+        self.assertFalse([ln for ln in lines if ln.startswith("bw start:")], out)
+        self.assertIn("  ✓ lp (first in the profile's lead order)", lines)
+        self.assertIn("  ✓ opened a Terminal tab for ~/app", lines)
+        self.assertTrue(any(ln.startswith("  · seats: checking in the background. Log: ~/state/seats/") for ln in lines), out)
+        self.assertIn("  · cockpit: run `bw cockpit` to see all of this in a browser", lines)
+        self.assertTrue(any(ln.startswith("  · registry: ~/state/registry.json") for ln in lines), out)
+
+    def test_updates_say_what_will_take_time_then_each_tool_in_plain_words(self):
+        run = FakeRun()
+        run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.1", 0.0, 0)
+        run.updates[tuple(KIMI_UPDATE)] = ("kimi", "kimi 1.0", 0.0, 7)
+        code, out = self.tty_start(run)
+        lines = out.splitlines()
+        self.assertIn("  … updating pi, kimi, codex. This can take a minute.", lines)
+        self.assertIn("  ✓ pi: updated pi 1.0 → pi 1.1", lines)
+        self.assertIn("  ✗ kimi: update failed (exit 7: boom)", lines)
+        self.assertIn("  ✗ codex: update failed (exit 127: npm: not found)", lines)
+        self.assertLess(lines.index("  … updating pi, kimi, codex. This can take a minute."), lines.index("  ✓ pi: updated pi 1.0 → pi 1.1"))
+
+    def test_a_config_with_no_update_commands_gets_one_line(self):
+        self.config["tools"] = {}
+        for tty in (True, False):
+            code, out = (self.tty_start(FakeRun()) if tty else self.start(FakeRun()))
+            want = 'skipped: your config lists no update commands (see "tools" in docs/leads.md)'
+            self.assertEqual(out.count(want), 1, out)
+            self.assertNotIn("no update lock", out)
+            self.assertIn(("  · " if tty else "bw start: ") + want, out.splitlines())
+
+    def test_the_wait_notice_is_printed_before_the_attack_starts_and_says_why(self):
+        outs = []
+
+        class Watching(FakeRun):
+            def answer(inner, argv):
+                if argv[0].endswith(".sh"):
+                    outs.append(buf.getvalue())
+                return super().answer(argv)
+        buf = Tty()
+        run = Watching()
+        self.record_pi("pi 0.9")  # recorded on another version: pi's key changed
+        with mock.patch.dict(os.environ, {"HOME": str(self.root)}):
+            start.start(self.config, self.state, str(self.repo), run=run, out=buf, bw_path=self.bw, env=self.env,
+                        now=NOW, update=False, width=100)
+        self.assertEqual(len(outs), 2)  # pi and kimi each ran an attack
+        wait_pi = ("  … testing the pi lead's sandbox. This takes about a minute and uses a little model quota, because "
+                   "pi's version changed since its last test. Please wait.")
+        wait_kimi = wait_pi.replace("pi's version changed since its last test", "kimi's sandbox has not been tested yet").replace("the pi", "the kimi")
+        flat = [" ".join(o.split()) for o in outs]  # the lines wrap at the width
+        wait_pi, wait_kimi = " ".join(wait_pi[4:].split()), " ".join(wait_kimi[4:].split())
+        self.assertTrue(all(wait_pi in o or wait_kimi in o for o in flat), flat)
+        self.assertTrue(any(wait_pi in o for o in flat) and any(wait_kimi in o for o in flat))
+        text = buf.getvalue()
+        self.assertEqual(text.count("Please wait."), 2)
+
+    def test_the_wait_notice_names_a_tool_that_was_just_updated(self):
+        self.record_pi("pi 1.0")
+        run = FakeRun()
+        run.updates[tuple(PI_UPDATE)] = ("pi", "pi 1.1", 0.0, 0)
+        code, out = self.tty_start(run)
+        self.assertIn("because pi was just updated. Please wait.", " ".join(out.split()))
+
+    def test_nothing_slow_means_no_wait_notice(self):
+        code, out = self.tty_start(FakeRun(), verify=False, update=False)
+        self.assertNotIn("Please wait", out)
+        self.assertNotIn("…", out)
+        self.assertNotIn("updating", out)
+        code, plain = self.start(FakeRun(), verify=False, update=False)
+        self.assertNotIn("Please wait", plain)
+
+    def test_a_failed_attack_names_its_evidence(self):
+        class Failing(FakeRun):
+            def answer(self, argv):
+                if argv[0].endswith(".sh"):
+                    return Result(1, "FAIL: outside-written:x — evidence in /ev/guard.1\n", "", False)
+                return super().answer(argv)
+        code, out = self.tty_start(Failing(), update=False)
+        self.assertIn("  ✗ pi sandbox: failed: the containment attack failed. Evidence: /ev/guard.1", out.splitlines())
+
+    def test_quota_rows_are_aligned_and_in_plain_words(self):
+        self.config["plans"]["pp"]["probe"] = "openrouter"
+        self.config["plans"]["pp"]["budget_usd_month"] = 100
+        body = (ROOT / "tests" / "fixtures" / "openrouter" / "key_ok.json").read_bytes()
+        code, out = self.tty_start(FakeRun(), verify=False, update=False, fetch=lambda u, k, t: (200, body, ""),
+                                   env=dict(self.env, OPENROUTER_API_KEY="k"))
+        rows = out.split("\nQuota\n")[1].split("\n\n")[0].splitlines()
+        self.assertTrue(rows[0].startswith("  pp  "), rows)
+        self.assertIn("of the monthly budget used · read just now from OpenRouter", rows[0])
+        self.assertTrue(rows[1].startswith("  pk  unknown (bw has no reader for this plan yet)"), rows)
+        self.assertTrue(rows[2].startswith("      using only"), rows)  # a wrapped row hangs under its text
+        for word in ("probe", "Task G", "observed caps", "statusline"):
+            self.assertNotIn(word, out)
+
+    def test_a_pipe_gets_plain_prefixed_lines_with_no_marks_headers_or_tilde(self):
+        for dry in (False, True):
+            code, out = self.start(FakeRun(), dry_run=dry)
+            for ln in out.splitlines():
+                self.assertTrue(ln.startswith("bw start: "), ln)
+            for mark in "✓✗…":
+                self.assertNotIn(mark, out)
+            self.assertNotIn("\nUpdates", "\n" + out)
+            self.assertIn(str(self.repo), out)
+
+    def test_dry_run_on_a_terminal_uses_the_layout(self):
+        code, out = self.tty_start(FakeRun(), dry_run=True)
+        lines = out.splitlines()
+        self.assertEqual(lines[:2], ["bw start · ~/app", "  dry run (profile p): nothing is run or written"])
+        self.assertEqual([ln for ln in lines[2:] if ln and not ln.startswith(" ")],
+                         ["Updates", "Checks", "Quota", "Lead", "Also"])
+        self.assertIn("  · would check pi: sandbox", lines)
+        self.assertIn("  · would read quota for plan ps", lines)
+        self.assertTrue(any(ln.startswith("  · would write ~/state/start/") for ln in lines), out)
+        self.assertIn("      exec " + shlex.quote(self.bw) + " lead", lines)
+
+    def test_a_worktree_that_has_a_lead_prints_one_line_and_no_lead_line(self):
+        child = subprocess.Popen([sys.executable, "-c", HOLDER, str(ROOT), self.state, runner_key(self.repo)],
+                                 stdout=subprocess.PIPE, text=True)
+        self.addCleanup(child.kill)
+        self.assertEqual(child.stdout.readline().strip(), "ready")
+        code, out = self.tty_start(FakeRun(), verify=False, update=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("not opening another", out)
+        self.assertNotIn("first in the profile", out)
 
 
 HOLDER = """

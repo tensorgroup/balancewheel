@@ -239,6 +239,41 @@ class Reverify(unittest.TestCase):
         self.assertEqual([(i.kind, i.state, i.reason) for i in items], [("guard", "pending", guardpkg.AGY_AWAITS)])
         self.assertEqual(self.attacks(run), [])
 
+    def test_on_attack_is_told_once_before_the_first_attack_with_each_kind_and_why(self):
+        seen = []
+        order = []
+
+        class Run(FakeRun):
+            def __call__(self, argv, timeout, *a, **kw):
+                if argv[0].endswith(".sh"):
+                    order.append(("attack", len(seen)))
+                return super().__call__(argv, timeout, *a, **kw)
+        run = Run("PASS — evidence in /e")
+        verify.reverify(REVERIFY_CONFIG, self.state, "pi", NOW, run=run, on_attack=lambda rt, todo: seen.append((rt, todo)))
+        self.assertEqual(seen, [("pi", [("containment", "never tested"), ("guard", "never tested")])])
+        self.assertTrue(order and all(n == 1 for _, n in order), order)  # every attack came after the call
+
+    def test_on_attack_says_why_a_recorded_key_no_longer_matches(self):
+        self.record_current("containment", "kimi")  # recorded while the tool read "tool 1.0"
+        run = FakeRun("PASS", after="tool 2.0")
+        run.attacked = True  # every version read now says "tool 2.0": the tool updated
+        seen = []
+        verify.reverify(REVERIFY_CONFIG, self.state, "kimi", NOW, run=run, on_attack=lambda rt, todo: seen.append(todo))
+        self.assertEqual(seen, [[("containment", "version changed")]])
+        with open(os.path.join(self.state, "containment.json")) as f:
+            recorded = json.load(f)["kimi"]["key"]  # the pass this run recorded
+        self.assertEqual(containment.change_reason(self.state, "kimi", dict(recorded, adapter_sha="zz")), "settings changed")
+        self.assertEqual(containment.change_reason(self.state, "kimi", dict(recorded, runtime_version="tool 3")), "version changed")
+        self.assertEqual(containment.change_reason(self.state, "nobody", recorded), "never tested")
+
+    def test_on_attack_is_not_called_for_verified_or_pending_items(self):
+        seen = []
+        self.record_current("containment", "kimi")
+        verify.reverify(REVERIFY_CONFIG, self.state, "kimi", NOW, run=FakeRun("PASS"), on_attack=lambda *a: seen.append(a))
+        verify.reverify(REVERIFY_CONFIG, self.state, "pi", NOW, run=FakeRun("PASS"), allow_run=False,
+                        on_attack=lambda *a: seen.append(a))
+        self.assertEqual(seen, [])
+
     def test_changed_key_runs_the_attack_and_records_the_pass(self):
         run = FakeRun("PASS — evidence in /e")
         items = verify.reverify(REVERIFY_CONFIG, self.state, "kimi", NOW, run=run)

@@ -76,6 +76,27 @@ def _failure_detail(r):
     return f"exit {r.rc}" + (f": {first}" if first else "")
 
 
+def interval_seconds(config):
+    return int((config.get("updates") or {}).get("min_interval_hours", 0)) * 3600
+
+
+def will_update(name, tool_cfg, previous, now, interval_s) -> bool:
+    """Whether `_update_one` would run this tool's update command (a lock held by a running lead is
+    not known until it tries). It lets `bw start` say what it is about to wait for."""
+    tool_cfg = tool_cfg or {}
+    if tool_cfg.get("self_updating") or not tool_cfg.get("update"):
+        return False
+    prev_at = ((previous or {}).get(name) or {}).get("last_update_at")
+    if interval_s and isinstance(prev_at, (int, float)) and now - prev_at < interval_s:
+        return False
+    return tool_runtime(name, tool_cfg) is not None or name in NON_RUNTIME_TOOLS
+
+
+def will_update_names(config, previous, now) -> list:
+    interval_s = interval_seconds(config)
+    return [n for n, t in orca.active_tools(config).items() if will_update(n, t, previous, now, interval_s)]
+
+
 def _update_one(name, tool_cfg, state, now, interval_s, previous, run):
     """-> (ToolResult, last_update_at)."""
     t0 = time.monotonic()
@@ -128,7 +149,7 @@ def update_all(config, state, now, run=proc.run, on_done=None, previous=None) ->
     is called in the calling thread with each ToolResult as that tool finishes."""
     tools = orca.active_tools(config)
     previous = previous or {}
-    interval_s = int((config.get("updates") or {}).get("min_interval_hours", 0)) * 3600
+    interval_s = interval_seconds(config)
     groups = {}
     for name, tcfg in tools.items():
         inst = installer_of(tcfg)

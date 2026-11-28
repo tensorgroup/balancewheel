@@ -162,20 +162,22 @@ def _pending_reason(config, state, runtime, kind, lead_name, now, allow_run, ver
     return None
 
 
-def reverify(config, state, runtime, now, run=proc.run, allow_run=True, version_ok=True) -> list:
+def reverify(config, state, runtime, now, run=proc.run, allow_run=True, version_ok=True, on_attack=None) -> list:
+    """`on_attack(runtime, [(kind, why)])` is called once, before the first attack test starts, when
+    any key needs one (`why`: "never tested", "version changed", or "settings changed")."""
     if not items_for_runtime(config, runtime):
         return []
     lock = RuntimeLock(state, runtime)
     try:
         lock.shared()  # the key read here is the key attacked and recorded (the attack's own is nested)
-        return _reverify(config, state, runtime, now, run, allow_run, version_ok)
+        return _reverify(config, state, runtime, now, run, allow_run, version_ok, on_attack)
     finally:
         lock.release()
 
 
-def _reverify(config, state, runtime, now, run, allow_run, version_ok):
+def _reverify(config, state, runtime, now, run, allow_run, version_ok, on_attack=None):
     ad = ADAPTERS.get(runtime)
-    items = []
+    plan = []  # (kind, lead_name, finished Item or None, attack, why)
     for kind, lead_name in items_for_runtime(config, runtime):
         which = sandbox.backend()
         if kind == "containment":
@@ -187,12 +189,20 @@ def _reverify(config, state, runtime, now, run, allow_run, version_ok):
                                                        ports=sandbox.denied_ports(config)), \
                 "guard-verify.json", guard_verify
         if containment.is_verified(state, runtime, key, store=store):
-            items.append(Item(runtime, kind, "verified", "key matches the recorded pass"))
+            plan.append((kind, lead_name, Item(runtime, kind, "verified", "key matches the recorded pass"), None, None))
             continue
         why = _pending_reason(config, state, runtime, kind, lead_name, now, allow_run, version_ok)
         if why:
-            items.append(Item(runtime, kind, "pending", why))
+            plan.append((kind, lead_name, Item(runtime, kind, "pending", why), None, None))
             continue
-        ok, msg = attack(config, state, runtime, lead_name=lead_name, run=run)
-        items.append(Item(runtime, kind, "passed" if ok else "failed", msg))
+        plan.append((kind, lead_name, None, attack, containment.change_reason(state, runtime, key, store=store)))
+    todo = [(kind, why) for kind, _, _, attack, why in plan if attack]
+    if todo and on_attack is not None:
+        on_attack(runtime, todo)
+    items = []
+    for kind, lead_name, item, attack, _ in plan:
+        if item is None:
+            ok, msg = attack(config, state, runtime, lead_name=lead_name, run=run)
+            item = Item(runtime, kind, "passed" if ok else "failed", msg)
+        items.append(item)
     return items

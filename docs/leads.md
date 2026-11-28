@@ -1,7 +1,8 @@
 # Leads and rotation (`bw`, since 2026-10-24)
 
 *Updated 2026-11-27: `canvas: "ghostty"` (a Ghostty tab instead of a Terminal tab); a Claude Code lead gets the
-lead protocol as a system prompt and `--add-dir` for the checkpoint dir.
+lead protocol as a system prompt and `--add-dir` for the checkpoint dir; `bw start` prints sections with marks on
+a terminal, and says what it is waiting for before a slow step.
 Written 2026-11-24: moved here, unchanged, from the README's "Leads and rotation" section, so the README
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
@@ -198,6 +199,19 @@ once for each bw-contained lead runtime.
      worktree that already has a lead is not opened again. `bw start` never starts the
      cockpit; it prints the `bw cockpit` hint.
 
+  **What `bw start` prints.** On a terminal it prints a header and the sections Updates, Checks,
+  Quota, Lead, and Also. A `✓` is a pass, a `✗` is a failure, a `·` is information, and a `…`
+  is a wait. Paths under your home directory print with `~`. Before a slow step it prints a `…`
+  line that says what it is doing. Before the tool updates, it names the tools. Before a
+  sandbox or guard attack test, it names the test, says it takes about a minute and uses a
+  little model quota, gives the reason (the test never ran, the tool's version changed, or its
+  settings changed), and asks you to wait. When nothing slow runs, it prints no wait line.
+  Quota lines are in plain words: `63% left this week` for a window of seven days,
+  `78% left in the 5-hour window`, `19% of the monthly budget used` for an OpenRouter budget,
+  the source of the reading, and its age (`read just now`, `read 12 min ago`). When stdout is
+  not a terminal (a pipe or a file), it prints the same facts as plain lines that start with
+  `bw start: `, with no header, no sections, and no marks.
+
   Runs are recorded in `start.json` in the state dir (`bw status` shows the `last start:`
   line). `--dry-run` runs only git (and `orca status` when the canvas is Orca) and changes nothing. **Runtime locks:**
   every `bw lead` holds a shared lock on its runtime from before the verification check
@@ -360,8 +374,8 @@ once for each bw-contained lead runtime.
    lead to end the session; `bw guard review` later shows what a guarded lead's guard
    logged.
 6. **Seats.** You do not need `bw seat` in normal use: the panel runs the seats. `bw start`
-   checks changed seats in the background after the lead opens. It prints `bw start: checking
-   seats in the background (log: <path>)`. `bw seat verify` does the same check by hand, and
+   checks changed seats in the background after the lead opens. It prints `seats: checking in the
+   background. Log: <path>`. `bw seat verify` does the same check by hand, and
    `bw seat list` shows the state of each seat. Each seat has its own login step:
    - **Claude seat.** The keychain login does not carry over to the seat's private home. Run
      `claude setup-token` once. Export `CLAUDE_CODE_OAUTH_TOKEN` in the shell that runs `bw`.

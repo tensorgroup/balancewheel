@@ -1,6 +1,6 @@
 """start.py — `bw start [path]`: update the tools, re-verify, read quota, pick the lead, open it.
 
-One `bw start:` line per event. Steps:
+What it prints (sections on a terminal, `bw start: ` lines elsewhere) is `lead/startout.py`'s. Steps:
   1. resolve the project; refuse when bw's own real path or its config file lies inside the
      target worktree or its common git dir (`projects.refuse_inside`, shared with `bw lead`: a
      lead could edit the next `bw lead`, or the update/version commands bw runs unsandboxed);
@@ -30,9 +30,9 @@ when the canvas is Orca) and writes nothing.
 """
 import os
 import pwd
+import re
 import shlex
 import sys
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -42,6 +42,7 @@ from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
 from .paths import ROOT, read_json, write_json_atomic
 from .projects import refuse_inside, resolve_project
 from .rotation import decide
+from .startout import BAD, INFO, OK, Report
 from .guard import evaluate, gate, interactive, offer
 from seats import verify as seat_verify
 
@@ -163,34 +164,102 @@ def _tool_plan_line(name, tcfg, update):
     return f"would update {name}: {shlex.join(tcfg['update'])} · {lock} · installer {updates.installer_of(tcfg)}"
 
 
-def _item_line(item):
-    lines = [ln for ln in (item.reason or "").splitlines() if ln.strip()]
-    return f"verify {item.runtime} {item.kind}: {item.state}" + (f" — {lines[-1].strip()}" if lines else "")
+KIND_WORDS = {"containment": "sandbox", "guard": "guard"}
+LEAD_REASONS = {"pinned": "pinned to this worktree", "order": "first in the profile's lead order",
+                "capped": "an earlier lead's plan is capped", "quota-low": "an earlier lead's quota is low",
+                "pool-full": "an earlier lead is in a full quota pool"}
+
+
+def _tool_line(rep, res):
+    """One tool's result in plain words."""
+    name, ver = res.tool, res.after
+    if res.result == "updated":
+        rep.ok("Updates", f"{name}: updated {res.before} → {res.after}")
+    elif res.result == "current":
+        rep.ok("Updates", f"{name}: {ver}, current")
+    elif res.result == "failed":
+        rep.bad("Updates", f"{name}: update failed ({res.detail})")
+    elif res.result == "timed-out":
+        rep.bad("Updates", f"{name}: update timed out ({res.detail})")
+    elif res.result == "unreadable":
+        rep.bad("Updates", f"{name}: updated, but its version cannot be read ({res.detail})")
+    elif res.result == "no-update-command":
+        rep.line("Updates", f"{name}: {ver}, no update command")
+    elif res.result == "self-updating":
+        rep.line("Updates", f"{name}: {ver}, updates itself")
+    else:  # skipped-locked, skipped-interval, skipped-no-lock
+        rep.line("Updates", f"{name}: {ver}, not updated ({res.detail})")
+
+
+def _no_lock_line(rep, config, runtimes, rt_tool, tools):
+    """One line for every runtime that no tool updates (it was one line each)."""
+    missing = [rt for rt in runtimes if rt not in rt_tool]
+    if not missing:
+        return
+    if not any((t or {}).get("update") for t in tools.values()):
+        rep.line("Updates", 'skipped: your config lists no update commands (see "tools" in docs/leads.md)')
+    else:
+        rep.line("Updates", f"not updated: no tool in your config updates {', '.join(missing)} "
+                            '(set tools.<name>.runtime; see "tools" in docs/leads.md)')
+
+
+def _item_line(rep, item):
+    label = f"{item.runtime} {KIND_WORDS.get(item.kind, item.kind)}"
+    reason = item.reason or ""
+    if item.state == "verified":
+        rep.ok("Checks", f"{label}: passed earlier, nothing changed since")
+    elif item.state == "passed":
+        rep.ok("Checks", f"{label}: passed")
+    elif item.state == "pending":
+        rep.line("Checks", f"{label}: not tested (--no-verify)" if reason == "--no-verify" else f"{label}: not tested: {reason}")
+    else:
+        lines = [ln.strip() for ln in reason.splitlines() if ln.strip()]
+        why = re.sub(r"^bw: (not recorded — )?", "", lines[-1]) if lines else ""
+        found = re.findall(r"evidence in (\S+)", reason)
+        why = why.replace("; see the evidence", "") if found else why
+        rep.bad("Checks", f"{label}: failed" + (f": {why}" if why else "") + (f". Evidence: {found[-1]}" if found else ""))
+
+
+def _wait_text(runtime, todo, updated):
+    """What an attack test is about to do and why, for the line printed before the first one starts."""
+    kinds = " and ".join(KIND_WORDS.get(k, k) for k, _ in todo)
+    reasons = []
+    for kind, why in todo:
+        word = KIND_WORDS.get(kind, kind)
+        if why == "never tested":
+            text = f"{runtime}'s {word} has not been tested yet"
+        elif why == "version changed":
+            text = f"{runtime} was just updated" if runtime in updated else f"{runtime}'s version changed since its last test"
+        else:
+            text = f"{runtime}'s settings changed since its last test"
+        if text not in reasons:
+            reasons.append(text)
+    return (f"testing the {runtime} lead's {kinds}. This takes about a minute and uses a little model quota, "
+            f"because {' and '.join(reasons)}. Please wait.")
 
 
 def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=False, verify=True, update=True,
-          bw_path=None, env=os.environ, fetch=probes._fetch, clock=None, stdin=None) -> int:
+          bw_path=None, env=os.environ, fetch=probes._fetch, clock=None, stdin=None, tty=None, width=None) -> int:
     """`clock` (default time.time; a fixed `now` freezes it) is read at the start, again before
-    quota (step 4, after updates and attacks that can take minutes), and again before the registry."""
+    quota (step 4, after updates and attacks that can take minutes), and again before the registry.
+    `tty` (default: `out` is a terminal) picks the sectioned layout; `width` its line width."""
     if clock is None:
         clock = time.time if now is None else (lambda: now)
     now = clock()
-    print_lock = threading.Lock()
-
-    def say(msg):
-        with print_lock:
-            print(f"bw start: {msg}", file=out, flush=True)
+    if tty is None:
+        tty = bool(getattr(out, "isatty", lambda: False)())
+    rep = Report(out, tty=tty, width=width)
 
     # 1. the project, and bw itself outside it
     try:
         project = resolve_project(path or os.getcwd(), config, run)
     except ValueError as e:
-        say(str(e))
+        rep.say(str(e))
         return 2
     bw = os.path.realpath(bw_path or os.path.join(ROOT, "bin", "bw"))
     refusal = refuse_inside(project, bw, config.get("path"))
     if refusal:
-        say(refusal)
+        rep.say(refusal)
         return 2
     profile = (config.get("profiles") or {}).get(project.profile) or {}
     runtimes = verifymod.lead_runtimes(config)
@@ -199,19 +268,24 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     plans = rotation.plans_touched(config, profile, runner.read_pin(state, project.worktree_key))
     if dry_run:
         return _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify,
-                        bw, env, say)
+                        bw, env, rep)
+    rep.header(project.worktree)
 
     # 2 and 3. updates, and the re-verify pool fed as each tool finishes
-    items_by_rt = {}
+    items_by_rt, updated_rts = {}, set()
+
+    def on_attack(rt, todo):
+        rep.wait("Checks", _wait_text(rt, todo, updated_rts))
 
     def check(rt, version_ok):
         try:
-            items = verifymod.reverify(config, state, rt, now, run=run, allow_run=verify, version_ok=version_ok)
+            items = verifymod.reverify(config, state, rt, now, run=run, allow_run=verify, version_ok=version_ok,
+                                       on_attack=on_attack)
         except Exception as e:  # one runtime's failure is its line, never the start's end
             items = [verifymod.Item(rt, "verify", "failed", f"{type(e).__name__}: {e}")]
         items_by_rt[rt] = items
         for item in items:
-            say(_item_line(item))
+            _item_line(rep, item)
 
     submitted = set()
     waiting = [rt for rt in runtimes if update and rt in rt_tool]
@@ -219,31 +293,38 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     previous = last.get("tools") if isinstance(last, dict) else None
     previous = previous if isinstance(previous, dict) else {}
     results = dict(previous)  # --no-update keeps each tool's history (last_update_at) for the next start
-    with ThreadPoolExecutor(max_workers=max(1, len(runtimes))) as pool:
-        def submit(rt, version_ok):
-            if rt not in submitted:
-                submitted.add(rt)
-                pool.submit(check, rt, version_ok)
+    if update:
+        rep.begin("Updates")
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, len(runtimes))) as pool:
+            def submit(rt, version_ok):
+                if rt not in submitted:
+                    submitted.add(rt)
+                    pool.submit(check, rt, version_ok)
 
-        for rt in runtimes:
-            if rt not in waiting:
-                submit(rt, True)
-        if update:
             for rt in runtimes:
-                if rt not in rt_tool:
-                    say(f"no update lock for runtime {rt}")
+                if rt not in waiting:
+                    submit(rt, True)
+            if update:
+                _no_lock_line(rep, config, runtimes, rt_tool, tools)
+                names = updates.will_update_names(config, previous, now)
+                if names:
+                    rep.wait("Updates", f"updating {', '.join(names)}. This can take a minute.")
 
-            def on_done(res):
-                say(f"{res.tool}: {res.before} → {res.after} {res.result} ({res.seconds}s)"
-                    + (f" — {res.detail}" if res.detail else ""))
-                if res.runtime in waiting:
-                    submit(res.runtime, res.after != updates.UNREADABLE)
+                def on_done(res):
+                    if res.result == "updated":
+                        updated_rts.add(res.runtime)
+                    _tool_line(rep, res)
+                    if res.runtime in waiting:
+                        submit(res.runtime, res.after != updates.UNREADABLE)
 
-            results = updates.update_all(config, state, now, run=run, on_done=on_done, previous=previous)
-            for rt in waiting:  # a runtime whose tool never reported still gets its check
-                submit(rt, True)
+                results = updates.update_all(config, state, now, run=run, on_done=on_done, previous=previous)
+                for rt in waiting:  # a runtime whose tool never reported still gets its check
+                    submit(rt, True)
+    finally:
+        rep.end("Updates")
     verify_items = [i for rt in runtimes for i in items_by_rt.get(rt, [])]
-    _guard_evals(config, runtimes, state, verify, run, say, profile=project.profile)
+    _guard_evals(config, runtimes, state, verify, run, rep, profile=project.profile)
 
     # 4. quota (probes, one Orca read; expired caps cleared) and the lead, on a fresh clock
     started, now = now, clock()
@@ -255,46 +336,50 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     except Exception as e:  # never the text: it can carry a URL or a header
         refreshed = {"notes": [f"quota refresh failed ({type(e).__name__}); deciding on what is on disk"]}
     for line in refreshed["notes"]:
-        say(line)
-    _quota_and_lead(config, state, project, profile, plans, now, say)
+        rep.line("Quota", line)
+    decision = _quota_and_lead(config, state, project, profile, plans, now, rep)
     write_json_atomic(os.path.join(state, "start.json"),
                       {"ts": started, "project": project.worktree, "tools": results,
                        "verify": [i._asdict() for i in verify_items], "orca_version": orca_version})
 
-    # 5. the registry (derived; after start.json, which holds the versions it shows)
+    # 5. the registry (derived; after start.json, which holds the versions it shows); its line prints last
+    rep.begin("Lead")  # the epilogue (Also) waits for the lead's section
     try:
         registry.write(state, registry.build(config, state, clock(), run=run))
-        say(f"registry: {registry.path(state)}")
+        registry_line = (rep.line, f"registry: {registry.path(state)}")
     except Exception as e:  # a derived file; never the start's end, and never the exception's text
-        say(f"registry not written ({type(e).__name__})")
+        registry_line = (rep.bad, f"registry not written ({type(e).__name__})")
 
     if verify:
         try:
             interactive.maybe_offer(config, state, stdin or sys.stdin, out, profile=project.profile)
         except Exception as e:  # never the start's end, and never the exception's text
-            say(f"guard interactive check: failed to run ({type(e).__name__})")
+            rep.bad("Also", f"guard interactive check: failed to run ({type(e).__name__})")
         try:
             offer.maybe_offer(config, state, project.profile, stdin or sys.stdin, out, clock())
         except Exception as e:  # never the start's end, and never the exception's text
-            say(f"guard review offer: failed to run ({type(e).__name__})")
+            rep.bad("Also", f"guard review offer: failed to run ({type(e).__name__})")
 
     # 6. the workspace
-    code = _workspace(state, project, run, bw, env, say, orca.canvas(config))
+    code = _workspace(state, project, run, bw, env, rep, orca.canvas(config), decision)
+    rep.end("Lead")
 
     # 7. the seats, in the background (after the lead opens; no seat key is read here)
-    _seats(config, state, verify, bw, say, env)
+    _seats(config, state, verify, bw, rep, env)
 
     # 8. pointers and checks
-    say("cockpit: run bw cockpit")
+    rep.line("Also", "cockpit: run `bw cockpit` to see all of this in a browser")
     orca_lines = checks.lines("orca", orca_checks(state, run)) if orca.in_use(config) else []
     for line in orca_lines + checks.lines("cc-switch", ccswitch.check_settings()):
-        say(line.strip())
+        text = line.strip()
+        rep.line("Also", text) if text.endswith(": ok") else rep.bad("Also", text)
+    registry_line[0]("Also", registry_line[1])
     for w in config.get("warnings", []):
-        say(f"config warning: {w}")
+        rep.line("Also", f"config warning: {w}")
     return code
 
 
-def _guard_evals(config, runtimes, state, verify, run, say, profile=None):
+def _guard_evals(config, runtimes, state, verify, run, rep, profile=None):
     """The guard eval for each runtime with a guarded lead; it runs only when its key changed. With no
     judge model, or a profile pinned shadow, nothing can promote: no eval runs and no line prints."""
     if not (config.get("guard") or {}).get("model") or (profile and gate.pin(config, profile) == "shadow"):
@@ -303,103 +388,115 @@ def _guard_evals(config, runtimes, state, verify, run, say, profile=None):
         if not any(kind == "guard" for kind, _ in verifymod.items_for_runtime(config, rt)):
             continue
         try:
-            _, line = evaluate.ensure(config, state, rt, allow_run=verify, run=run)
+            status, line = evaluate.ensure(config, state, rt, allow_run=verify, run=run)
         except Exception as e:  # one runtime's failure is its line, never the start's end, and never the text
-            line = f"guard eval {rt}: failed to run ({type(e).__name__})"
-        say(line)
+            status, line = "fail", f"guard eval {rt}: failed to run ({type(e).__name__})"
+        mark = {"pass": OK, "fail": BAD}.get(status, INFO)
+        rep.line("Checks", line, mark)
 
 
-def _seats(config, state, verify, bw, say, env):
+def _seats(config, state, verify, bw, rep, env):
     if not verify:
-        say("seats: not checked (--no-verify)")
+        rep.line("Also", "seats: not checked (--no-verify)")
         return
     try:  # the child gets start()'s own config and state, as absolute paths (as the lead does)
         started = seat_verify.spawn_verify(config, state, bw=bw, env=dict(_passed(env)))
     except Exception as e:  # never the start's end, and never the exception's text
-        say(f"seats: could not start the check ({type(e).__name__})")
+        rep.bad("Also", f"seats: could not start the check ({type(e).__name__})")
         return
     log = os.path.join(state, "seats", "verify-log.txt")
-    say(f"checking seats in the background (log: {log})" if started else "seats: a verify is already running")
+    rep.line("Also", f"seats: checking in the background. Log: {log}" if started else "seats: a verify is already running")
 
 
-def _quota_and_lead(config, state, project, profile, plans, now, say):
+def _quota_and_lead(config, state, project, profile, plans, now, rep):
+    """Print the plans' quota; return the lead decision (printed by `_announce`, once the lead is certain)."""
     snaps = quota.read_quota(state, config, now)
     rot = config.get("rotation") or {}
+    rows = []
     for p in plans:
-        n = quota.notice(snaps.get(p), config["plans"].get(p) or {}, now, rot.get("probe_every_min", 15))
-        say(f"quota {p}: {quota.summary(snaps.get(p))}" + (f" — {n}" if n else ""))
+        pcfg = config["plans"].get(p) or {}
+        n = quota.notice(snaps.get(p), pcfg, now, rot.get("probe_every_min", 15))
+        rows.append((p, quota.describe(snaps.get(p), pcfg) + (f" — {quota.plain_notice(n)}" if n else "")))
+    rep.rows("Quota", rows, "quota")
     caps = quota.read_caps(state, now, rot.get("cap_expiry_hours", 5), include_expired=True)
     pinned = runner.read_pin(state, project.worktree_key)
-    d = decide(profile, config["leads"], rot, None, pinned, snaps, caps, now, "start")
+    return decide(profile, config["leads"], rot, None, pinned, snaps, caps, now, "start")
+
+
+def _announce(rep, d):
+    """The lead decision's lines (the Lead section opens here)."""
     if d.notice:
-        say(d.notice)
-    say(f"lead: {d.lead} ({d.reason})" if d.lead else f"no lead would start — {d.notice or 'no lead available'}")
+        rep.line("Lead", d.notice)
+    if d.lead:
+        rep.ok("Lead", f"{d.lead} ({LEAD_REASONS.get(d.reason, d.reason)})", label="lead")
+    else:
+        rep.bad("Lead", f"no lead would start — {d.notice or 'no lead available'}")
 
 
-def _workspace(state, project, run, bw, env, say, canvas):
+def _workspace(state, project, run, bw, env, rep, canvas, decision):
     lock = runner.Lock(state, project.worktree_key)
     try:
         if not lock.acquire():
-            say(f"{runner.holder_line(project.worktree, lock.path)}; not opening another")
+            rep.line("Lead", f"{runner.holder_line(project.worktree, lock.path)}; not opening another")
             return 0
     finally:
         os.close(lock.fd)  # closing releases the flock taken just to test it
+    _announce(rep, decision)
     cmd = _lead_command(bw, env)
     if canvas == "orca":
         up, why = orca.running(run)
         if up:
             r = run(_orca_argv(project, cmd), ORCA_CREATE_TIMEOUT_S)
             if r.rc == 0 and not r.timed_out:
-                say(f"opened an Orca pane for {project.worktree}")
+                rep.ok("Lead", f"opened an Orca pane for {project.worktree}")
                 return 0
-            say(f"orca terminal create failed ({'timed out' if r.timed_out else _detail(r)}); opening a Terminal tab instead")
+            rep.bad("Lead", f"orca terminal create failed ({'timed out' if r.timed_out else _detail(r)}); opening a Terminal tab instead")
         else:
-            say(f"orca: {why}; opening a Terminal tab")
+            rep.line("Lead", f"orca: {why}; opening a Terminal tab")
     path, content = _command_file(state, project, bw, env)
     _write_command_file(path, content)
     if canvas == "ghostty":
         r = run(_ghostty_argv(path, project.worktree), GHOSTTY_TIMEOUT_S)
         if r.rc == 0 and not r.timed_out:
-            say(f"opened a Ghostty tab for {project.worktree}")
+            rep.ok("Lead", f"opened a Ghostty tab for {project.worktree}")
             return 0
-        say(f"ghostty: could not open a tab ({_ghostty_detail(r)}); opening a Terminal tab instead")
+        rep.bad("Lead", f"ghostty: could not open a tab ({_ghostty_detail(r)}); opening a Terminal tab instead")
     r = run(["open", "-a", "Terminal", path], OPEN_TIMEOUT_S)
     if r.rc == 0 and not r.timed_out:
-        say(f"opened a Terminal tab for {project.worktree}")
+        rep.ok("Lead", f"opened a Terminal tab for {project.worktree}")
         return 0
-    say(f"could not open a Terminal tab ({'timed out' if r.timed_out else _detail(r)}); "
-        f"run it yourself: cd {shlex.quote(project.worktree)} && {cmd}")
+    rep.bad("Lead", f"could not open a Terminal tab ({'timed out' if r.timed_out else _detail(r)}); "
+                    f"run it yourself: cd {shlex.quote(project.worktree)} && {cmd}")
     return 1
 
 
-def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify, bw, env, say):
-    say(f"dry run for {project.worktree} (profile {project.profile}); nothing is run or written")
+def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify, bw, env, rep):
+    rep.header(project.worktree, dry_profile=project.profile)
     for name, tcfg in tools.items():
-        say(_tool_plan_line(name, tcfg or {}, update))
+        rep.line("Updates", _tool_plan_line(name, tcfg or {}, update))
     if update:
-        for rt in runtimes:
-            if rt not in rt_tool:
-                say(f"no update lock for runtime {rt}")
+        _no_lock_line(rep, config, runtimes, rt_tool, tools)
     for rt in runtimes:
-        kinds = [k for k, _ in verifymod.items_for_runtime(config, rt)]
-        say(f"would check keys for {rt}: {', '.join(kinds) if kinds else 'nothing to check'}"
-            + (" (--no-verify: a changed key stays pending)" if kinds and not verify else ""))
+        kinds = [KIND_WORDS.get(k, k) for k, _ in verifymod.items_for_runtime(config, rt)]
+        rep.line("Checks", f"would check {rt}: {', '.join(kinds) if kinds else 'nothing to check'}"
+                 + (" (--no-verify: a changed key stays pending)" if kinds and not verify else ""))
     for p in plans:
-        say(f"would read quota for plan {p}")
-    say("would check seats in the background" if verify else "seats: would not check (--no-verify)")
-    _quota_and_lead(config, state, project, profile, plans, now, say)
+        rep.line("Quota", f"would read quota for plan {p}")
+    decision = _quota_and_lead(config, state, project, profile, plans, now, rep)
+    _announce(rep, decision)
     cmd = _lead_command(bw, env)
     up, why = orca.running(run) if orca.canvas(config) == "orca" else (False, None)
     if up:
-        say(f"would run: {shlex.join(_orca_argv(project, cmd))}")
+        rep.line("Lead", f"would run: {shlex.join(_orca_argv(project, cmd))}")
     else:
         path, content = _command_file(state, project, bw, env)
-        say(f"orca: {why}; would write {path}:" if why else f"would write {path}:")
+        rep.line("Lead", f"orca: {why}; would write {path}:" if why else f"would write {path}:")
         for line in content.splitlines():
-            say(f"  {line}")
+            rep.detail("Lead", line)
         if orca.canvas(config) == "ghostty":
-            say(f"would open a Ghostty tab: osascript <new-tab script> "
-                f"{shlex.join([_ghostty_command(path), project.worktree])}")
+            rep.line("Lead", f"would open a Ghostty tab: osascript <new-tab script> "
+                             f"{shlex.join([_ghostty_command(path), project.worktree])}")
         else:
-            say(f"would run: {shlex.join(['open', '-a', 'Terminal', path])}")
+            rep.line("Lead", f"would run: {shlex.join(['open', '-a', 'Terminal', path])}")
+    rep.line("Also", "would check seats in the background" if verify else "seats: would not check (--no-verify)")
     return 0

@@ -52,6 +52,30 @@ def cfg(tools, interval=0):
     return {"tools": tools, "updates": {"min_interval_hours": interval}}
 
 
+class WillUpdate(unittest.TestCase):
+    """will_update says which tools update_all would run an update command for (the start notice)."""
+
+    def test_it_agrees_with_what_update_all_does(self):
+        tools = {"a": {"update": ["a-up"], "runtime": "pi"}, "b": {"update": ["b-up"], "runtime": "kimi"},
+                 "self": {"update": ["s-up"], "self_updating": True}, "none": {"version": ["n", "-v"]},
+                 "nolock": {"update": ["x-up"]}}
+        config = cfg(tools, interval=1)
+        previous = {"b": {"last_update_at": NOW - 60}}
+        with tempfile.TemporaryDirectory() as state:
+            real = FakeRun(updates={("a-up",): (0, 0, False), ("b-up",): (0, 0, False), ("s-up",): (0, 0, False),
+                                    ("x-up",): (0, 0, False)})
+            updates.update_all(config, state, NOW, run=real, previous=previous)
+            for name in tools:
+                actual = bool(real.ran(tools[name].get("update", ["-"])))
+                self.assertEqual(updates.will_update(name, tools[name], previous, NOW, updates.interval_seconds(config)),
+                                 actual, name)
+
+    def test_names_in_order(self):
+        config = cfg({"a": {"update": ["a-up"], "runtime": "pi"}, "z": {"update": ["z-up"], "runtime": "kimi"},
+                      "m": {}})
+        self.assertEqual(updates.will_update_names(config, {}, NOW), ["a", "z"])
+
+
 class Updates(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

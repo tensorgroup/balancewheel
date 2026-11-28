@@ -135,3 +135,14 @@ def record_pass(state_dir, runtime, key, evidence_dir, store="containment.json")
 def is_verified(state_dir, runtime, key, store="containment.json"):
     entry = (read_json(_path(state_dir, store), {}) or {}).get(runtime)
     return bool(entry) and entry.get("key") == key
+
+
+def change_reason(state_dir, runtime, key, store="containment.json"):
+    """Why `key` has no pass: "never tested" (no record for the runtime), "version changed" (the
+    recorded key names another runtime version), else "settings changed" (bw's sandbox or adapter code,
+    the backend, the guard hooks, or the denied ports differ)."""
+    entry = (read_json(_path(state_dir, store), {}) or {}).get(runtime)
+    recorded = entry.get("key") if isinstance(entry, dict) else None
+    if not isinstance(recorded, dict):
+        return "never tested"
+    return "version changed" if recorded.get("runtime_version") != key.get("runtime_version") else "settings changed"

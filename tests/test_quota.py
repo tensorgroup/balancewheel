@@ -535,3 +535,67 @@ class CliSource(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Describe(unittest.TestCase):
+    """quota.describe: the plain-words quota line `bw start` prints on a terminal."""
+
+    def snap(self, windows, source="statusline", age_s=0, **kw):
+        return dict({"windows": windows, "source": source, "age_s": age_s, "observed_at": NOW}, **kw)
+
+    def w(self, name, used):
+        return {"name": name, "used_pct": used, "resets_at": NOW + 100}
+
+    def test_windows_say_what_is_left_and_in_which_window(self):
+        d = quota.describe(self.snap([self.w("five_hour", 22), self.w("seven_day", 37)]))
+        self.assertEqual(d, "78% left in the 5-hour window · 63% left this week · read just now from Claude's status line")
+
+    def test_the_budget_window_counts_what_is_used_not_what_is_left(self):
+        d = quota.describe(self.snap([self.w("budget", 19.4)], source="probe"), {"probe": "openrouter"})
+        self.assertEqual(d, "19% of the monthly budget used · read just now from OpenRouter")
+
+    def test_age_in_words(self):
+        for age, want in ((0, "just now"), (59, "just now"), (60, "1 min ago"), (720, "12 min ago"), (3600, "1 h ago"),
+                          (7300, "2 h ago")):
+            self.assertIn(f"read {want}", quota.describe(self.snap([self.w("seven_day", 10)], age_s=age)), age)
+
+    def test_sources_and_unknown_window_names(self):
+        self.assertIn("from Orca", quota.describe(self.snap([self.w("seven_day", 10)], source="orca")))
+        self.assertIn("from the last Codex run", quota.describe(self.snap([self.w("seven_day", 10)], source="cli")))
+        self.assertIn("from bw's own check", quota.describe(self.snap([self.w("seven_day", 10)], source="probe")))
+        self.assertTrue(quota.describe(self.snap([self.w("fableWeekly", 40)])).startswith("60% left in fableWeekly"))
+
+    def test_notes_follow_after_a_dash(self):
+        d = quota.describe(self.snap([self.w("seven_day", 10)], note="monthly spend unknown"))
+        self.assertTrue(d.endswith(" — monthly spend unknown"), d)
+
+    def test_unknown_in_plain_words(self):
+        cases = [
+            (None, {"quota": "none"}, "unknown (bw has no reader for this plan yet)"),
+            ({"unknown": True, "reason": "quota: none"}, {}, "unknown (bw has no reader for this plan yet)"),
+            ({"unknown": True, "reason": "no probe for this plan", "source": "probe"}, {},
+             "unknown (bw has no reader for this plan yet)"),
+            ({"unknown": True, "reason": "agy /usage: awaiting Task G (shape not yet observed)"}, {},
+             "unknown (agy's usage reader is not built yet)"),
+            ({"unknown": True, "reason": "key env OPENROUTER_API_KEY unset"}, {},
+             "unknown (the OPENROUTER_API_KEY environment variable is not set)"),
+            ({"unknown": True, "reason": "statusline: no reading"}, {}, "unknown (Claude's status line has not reported yet)"),
+            ({"unknown": True, "reason": "probe: key env OPENROUTER_API_KEY unset; orca: no reading"}, {},
+             "unknown (the OPENROUTER_API_KEY environment variable is not set; orca: no reading)"),
+            ({"unknown": True, "reason": "probe: no probe for this plan; orca: no probe for this plan"}, {},
+             "unknown (bw has no reader for this plan yet)"),
+            (None, {}, "unknown (no reading yet)"),
+        ]
+        for snap, cfg, want in cases:
+            self.assertEqual(quota.describe(snap, cfg), want, snap)
+
+    def test_the_no_reading_notice_in_plain_words(self):
+        n = quota.notice({"unknown": True, "reason": "x"}, {"quota": "probe"}, NOW, 5)
+        self.assertIn("observed caps", n)
+        self.assertEqual(quota.plain_notice(n), "no quota reading yet; rotation is using only the limits it has already seen")
+
+    def test_no_internal_words_reach_the_user(self):
+        for snap in ({"unknown": True, "reason": "probe failed (OSError)"}, {"unknown": True, "reason": "awaiting Task G"}):
+            text = quota.describe(snap)
+            for word in ("probe", "Task G", "observed caps"):
+                self.assertNotIn(word, text)

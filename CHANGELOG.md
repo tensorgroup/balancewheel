@@ -15,6 +15,17 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **`bw start` prints sections with marks on a terminal** (`lead/startout.py`, `lead/start.py`, `lead/quota.py`,
+  `lead/verify.py`, `lead/updates.py`). A header, then Updates, Checks, Quota, Lead, and Also; `✓` pass, `✗`
+  failure, `·` information, `…` wait; home paths as `~`. A `…` line says what is slow before it starts: the tool
+  updates, and each runtime's sandbox or guard attack test (what is tested, "about a minute", "a little model
+  quota", why, "Please wait."). The quota lines are in plain words (`63% left this week`, `19% of the monthly
+  budget used`, the source, the age); before, `5h 63%` meant 63% left and the budget line did the reverse. The four
+  "no update lock for runtime X" lines became one Updates line. When stdout is not a terminal, the lines keep the
+  `bw start: ` prefix and carry the same facts, with no header, sections, or marks; **their wording changed**
+  (for example `verify pi containment: passed` is now `pi sandbox: passed`, and `checking seats in the background
+  (log: …)` is now `seats: checking in the background. Log: …`). `lead.verify.reverify` takes an optional
+  `on_attack` callback, and `start.start` takes `tty` and `width`.
 - **A Claude Code lead gets the lead protocol as a system prompt** (`lead/runtimes.py`, `lead/handoff.py`,
   `lead/runner.py`). `bw lead` passes the protocol text (checkpoint, ask, inbox, and panel rules) with
   `--append-system-prompt` instead of as the first prompt. The first prompt is only the handoff from a previous
