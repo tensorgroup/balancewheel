@@ -269,6 +269,37 @@ class Live(unittest.TestCase):
         self.assertEqual(self.build()["usage"],
                          [{"seat": "my-seat", "t": NOW - 3, "dir": self.wt, "ok": False, "source": "bw"}])
 
+    def test_usage_rows_inside_the_worktree_count(self):
+        """A local wrapper's `usage` row may give the folder it ran in: the worktree root or a path inside it
+        (real paths), never one outside it, a relative one, or one inside a nested repo or worktree."""
+        sibling = self.wt + "-x"  # shares the string prefix of the root
+        os.makedirs(sibling)
+        os.makedirs(self.other)
+        os.symlink(self.other, os.path.join(self.wt, "out"))  # inside by name, outside by real path
+        os.symlink(os.path.join(self.wt, "sub"), os.path.join(self.tmp, "into"))  # outside by name, inside by real path
+        nested = os.path.join(self.wt, ".worktrees", "x")
+        os.makedirs(os.path.join(nested, "sub"))
+        Path(nested, ".git").write_text("gitdir: /nowhere\n")
+        dirs = {
+            self.wt + "/": True, os.path.join(self.wt, "sub"): True, os.path.join(self.wt, "sub", "gone", "deep"): True,
+            os.path.join(self.tmp, "into"): True, os.path.join(self.wt, ".worktrees"): True,
+            sibling: False, os.path.join(sibling, "sub"): False, self.other: False, os.path.join(self.wt, "out"): False,
+            os.path.join(self.wt, "sub", ".."): True, os.path.join(self.wt, ".."): False,
+            nested: False, os.path.join(nested, "sub"): False,
+            "sub": False, "~/wt": False, "": False, self.wt + "/sub\x00": False,
+        }
+        for i, d in enumerate(dirs):
+            store.append(self.log, {"type": "usage", "seat": "my-seat", "dir": d, "ok": True, "t": NOW - 100 + i})
+        store.append(self.log, {"type": "usage", "seat": "my-seat", "dir": ["x"], "ok": True, "t": NOW - 1})
+        got = {u["dir"] for u in self.build()["usage"]}
+        self.assertEqual(got, {d for d, inside in dirs.items() if inside})
+
+    def test_run_rows_need_the_worktree_root(self):  # the (run_id, dir) join stays exact
+        s = self.start("my-seat", dir=os.path.join(self.wt, "sub"))
+        self.end(s)
+        d = self.build()
+        self.assertEqual((d["open"], d["recent"]), ([], []))
+
     def test_extra_log_rows_are_local(self):
         extra = os.path.join(self.tmp, "extra.jsonl")
         store.append(extra, {"type": "usage", "seat": "my-seat", "dir": self.wt, "ok": True, "t": NOW - 3})

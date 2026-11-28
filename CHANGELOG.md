@@ -43,8 +43,11 @@ not against the prose.
   cancelled when the session ends or the pane closes, `v` must be 1). It hooks no tool call. It observes the
   stored rows (`session.append`): a Bash `tool_use` whose first 4 KB holds a `local.seats[].match` opens a
   lane at once, and its `tool_result` closes a foreground lane; `bw live` documents pair, drop, or expire
-  background lanes. After `/clear` or a resume the timer goes on and the session's state starts over. The
-  plugin option `bwPath` (default `bw`) names the command. `lead.version.VERSION` is `0.2.0-dev.3`; the
+  background lanes. A lane is dropped when a `source: local` `run` start of its seat (the `--seat` of a
+  `bw run` that the command shows, else the lane's seat) begins at or after the lane's start less 2 s, with
+  no upper limit while the lane is open (a call may wait at a permission prompt); one run drops one lane.
+  Every drawn text loses terminal escape sequences and other C0 and C1 control characters. After `/clear` or a resume the timer goes on and the session's state starts over. The
+  plugin option `bwPath` (default `bw`) names the command. `lead.version.VERSION` is `0.2.0-dev.4`; the
   plugin's `plugin.json` and the `live-pane` entry of the new repo-root `.claude-plugin/marketplace.json`
   (marketplace `balancewheel`) carry the same version (tested). Bump the prerelease number in the same
   commit as any change under `claude/live-pane/`, or installed panes do not update. Tested on Claude Code
@@ -118,7 +121,9 @@ not against the prose.
   runs, `recent` runs, `usage` rows with no `run_id`, `local` (the local seats, each extra log with `ok` and
   `error`, `families`, and the resolved `run_max_s`), and the worktree's open `panels`. It is read-only. It reads
   the main log and every extra log back to `min(since, now - max(run_max_s, panel deep cap))`, the pending run
-  request files without taking them, and the panel files. Only rows whose `dir` is the worktree count. A start
+  request files without taking them, and the panel files. Only rows whose `dir` is the worktree count; a `usage`
+  row with no `run_id` (a local wrapper's) also counts when its `dir` is an absolute path inside the worktree by
+  real path and not inside a nested repo or worktree (the row shape is in `docs/leads.md`). A start
   with no end is open, with `state` `live`, `unknown` (its `pid` on this host is gone), or `stale` (no pid rule,
   and more than `run_max_s` after its newest start or beat row). A run whose start is out of reach is found by
   its newest beat (`start`, `model`, and `label` null). A panel seat that is done closes its run. A running panel

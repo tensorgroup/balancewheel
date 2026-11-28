@@ -5,7 +5,8 @@ stays a short entry point. The README's Quick start is the short path; this page
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
 Corrected the same day after review: the panel's summary line, the `bw start` prefix of the seat-check
 line, and a stale "not in v0" note on acting. Updated 2026-11-27: the pane's speed rule, the seat re-verify step, the plugin version rule, the `local` config section and `claude_pane`, `bw run`, run request files, `bw live`, and
-`bw setup claude-pane` with the live pane check at a Claude Code launch.*
+`bw setup claude-pane` with the live pane check at a Claude Code launch; after the final review, the
+`usage` row of a local wrapper.*
 
 The **lead** is the agent you work in for a project; it is also the moderator of every
 panel it convenes. One plan usually runs out first, so a project's **profile** (config
@@ -362,6 +363,17 @@ once for each bw-contained lead runtime.
   `improve.panel_logs` as one list, with one entry per real path. A path that is the main log is left
   out. The top-level `claude_pane` (default true) turns the automatic Claude Code pane install off
   when it is false.
+- **The `usage` row of a local wrapper (since 2026-11-27).** A wrapper that does not run under `bw run`
+  tells the live pane that a background call ended with one row per run, appended to a log in
+  `local.logs` (or to the metrics log):
+  `{"type": "usage", "seat": "<metric>", "ok": true, "t": <epoch seconds>, "dir": "<absolute path>"}`.
+  `seat` is the seat's `metric` (default: its `name`). `t` may be a float; instead of `t` a row may give
+  `ts` in exactly `YYYY-MM-DDTHH:MM:SSZ` (UTC). A row with neither has no time and does not count. `dir`
+  is the worktree root (`git rev-parse --show-toplevel`) or an absolute path inside it; `bw live`
+  compares real paths. A relative or `~` path, a path outside the worktree, and a path inside a nested
+  repo or worktree (a folder below the root that holds `.git`) do not count. `ok` true or false gives
+  `ok` or `failed`; without it the lane ends as `end unknown`. Leave out `run_id`: a row with one belongs
+  to a `bw seat` run, and only its exact worktree root counts.
 - **Track a local command (`bw run`, since 2026-11-27).** `bw run --seat NAME [--model M] [--label L]
   [--dir D] -- COMMAND...` runs a local wrapper or tool as a tracked run. It writes a start row
   (`source: "local"`, its own `pid` and `host`), runs the command with stdin, stdout, and stderr
@@ -397,7 +409,7 @@ once for each bw-contained lead runtime.
   ago), newest first, at most `--limit` (default 50, at most 500), with tokens and cost. An end whose start
   is not in the read window still shows, with no start time. A long `bw run` that `open` found by its beats
   moves to `recent` when it ends. `bw run` marks each end row `source: "local"`, so such a run keeps its local
-  mark. An end with no seat or no worktree (`bw run end` found no start) is not listed. `usage` lists `usage` rows that name no run. `local` lists the
+  mark. An end with no seat or no worktree (`bw run end` found no start) is not listed. `usage` lists `usage` rows that name no run, also when their `dir` is a folder inside the worktree (see the `usage` row of a local wrapper above). `local` lists the
   local seats, each extra log (a missing or unreadable one has `ok: false` and an `error`), `families`, and
   `run_max_s`. `panels` lists the worktree's open panels with each seat's status and the asks. `bw live`
   writes nothing. On a config error it prints a document with empty lists, `complete: false`, and an

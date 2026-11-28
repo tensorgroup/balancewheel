@@ -1,7 +1,8 @@
 # Live pane, run events, and the local layer — design
 
 Date: 2026-11-27 (synced with the plan panel the same day: direct append first, the `beat`
-phase, `run_max_s` in `bw live`'s `local`). Status: approved direction (approach 1 below), revised after a design
+phase, `run_max_s` in `bw live`'s `local`; after the final review: the wrap rule in §5 has no
+2 s upper limit, and a `usage` row's `dir` may be inside the worktree). Status: approved direction (approach 1 below), revised after a design
 panel (astra, opus, kimi, flash) and a builder check. Clean-room: this design and the code
 built from it are written from public requirements only (see Constraints).
 
@@ -249,8 +250,16 @@ A Claude Code plugin (`.claude-plugin/plugin.json` with `version` equal to bw's 
   lane pairs with the oldest unpaired `usage` row for the same `metric` and worktree whose
   time is at or after the lane's start, less 1 s (the log's precision). If two lanes could
   take the same row, the older lane takes it. A lane that pairs with nothing is closed as
-  `end unknown` after `run_max_s`. A lane is dropped when a `run` start for the same seat
-  appears within 2 s of it (the wrapper is also wrapped by `bw run`). The hook always calls
+  `end unknown` after `run_max_s`. A lane is dropped when `bw run` also wraps the call: a
+  `source: local` `run` start (open or ended) whose seat is the `--seat` of a `bw run` that the
+  command's first 4 KB shows, else the lane's seat, and whose start is at or after the lane's start
+  less 2 s. There is no upper limit while the lane is open, because the call can wait at a
+  permission prompt for as long as the person takes; a closed lane takes only a start before its
+  close. One run drops one lane, ever (its run id is kept): a lane whose command shows the
+  `bw run` first, then the oldest, because the calls of one seat start in order. Known limit: a
+  `bw run` of the same seat that starts in this worktree outside the session drops an open lane
+  that it does not belong to. A local wrapper's `usage` row counts when its `dir` is the worktree
+  root or an absolute path inside it (real paths; not inside a nested repo or worktree). The hook always calls
   `next(e)` once and returns the stored row unchanged; its own errors are caught.
 - **`/clear` and resume.** `session.end` with reason `clear` or `resume` is followed by no
   `session.start`: the timer and the polls go on, and the session's state (lanes, history,

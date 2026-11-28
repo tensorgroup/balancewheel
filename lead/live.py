@@ -6,7 +6,9 @@ It reads the end of the metrics log and of every extra log (`config.extra_logs`)
 `min(since, now - max(run_max_s, deep cap))`, the pending run request files of the worktree's checkpoint
 dir (never taken), and the worktree's panel files (never through the service or `ensure_dir`). Only rows
 whose `dir` is the worktree count, so an end or beat joins its start by (run_id, dir), never by run_id
-alone. Pending rows are joined with logged rows first; open, recent, and usage are derived after that.
+alone. A `usage` row with no `run_id` (a local wrapper's) also counts when its `dir` is an absolute path
+inside the worktree by real path, and not inside a nested repo or worktree (`_inside`). Pending rows are
+joined with logged rows first; open, recent, and usage are derived after that.
 
 - open: each start with no end, and each run found only by its newest beat (PD-13: its start is out of
   reach; `start`, `model`, and `label` are null), with its state (`run_state`). A panel seat that is done
@@ -129,16 +131,41 @@ class _Run:
         self.start = self.src = self.beat = self.beat_t = self.end = self.end_src = None
 
 
+def _inside(d, root: str, cache: dict) -> bool:
+    """True when `d` is an absolute path whose real path is `root` (a real path) or inside it, with no folder
+    between them that holds a `.git` entry (a nested repo or worktree, such as `<root>/.worktrees/x`, is not
+    this worktree). Never raises; one answer per `d` in `cache`."""
+    if not isinstance(d, str) or not os.path.isabs(d):
+        return False
+    if d not in cache:
+        ok = False
+        try:
+            real = os.path.realpath(d)
+            if real == root or os.path.commonpath([real, root]) == root:
+                ok, p = True, real
+                while p != root:
+                    if os.path.lexists(os.path.join(p, ".git")):
+                        ok = False
+                        break
+                    p = os.path.dirname(p)
+        except (OSError, ValueError):  # a NUL byte, or a path realpath cannot read
+            ok = False
+        cache[d] = ok
+    return cache[d]
+
+
 def _index(rows, pending, wt):
     """{run_id: _Run} of `wt`'s run rows, logged then pending (a pending row that ingest would refuse is
-    left out), and the worktree's usage rows as [(row, source)]."""
+    left out), and the worktree's usage rows as [(row, source)]: `dir` is `wt`, or, with no `run_id`,
+    a path inside it (`_inside`)."""
     by_id, usage = {}, []
+    root, cache = os.path.realpath(wt), {}
     for row, src in rows:
-        if row.get("dir") != wt:
-            continue
-        if row.get("type") == "usage":
-            usage.append((row, src))
-        elif row.get("type") == "run":
+        typ, d = row.get("type"), row.get("dir")
+        if typ == "usage":
+            if d == wt or (row.get("run_id") is None and _inside(d, root, cache)):
+                usage.append((row, src))
+        elif typ == "run" and d == wt:
             _add(by_id, row, src, pending=False)
     for row in sorted(pending, key=lambda r: runs.PHASES.index(r["phase"])):
         _add(by_id, row, "local", pending=True)

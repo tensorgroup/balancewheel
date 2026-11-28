@@ -53,8 +53,27 @@ model column.
   holds a `local.seats[].match` (a plain substring, never a pattern), a lane opens at once. The call's
   result row closes a foreground lane (`failed` when the result is an error). A `run_in_background` lane
   closes when `bw live` lists a `usage` row of the seat's `metric` at or after the lane's start (less
-  1 s), or as `end unknown` after `local.run_max_s`. A lane is dropped when a `run` start of the same
-  seat is within 2 s of it (`bw run` also wraps that call).
+  1 s), or as `end unknown` after `local.run_max_s`. A lane is dropped when `bw run` also wraps the
+  call: a `bw run` start of the same seat (the `--seat` that the command shows, else the lane's seat) at
+  or after the lane's start, less 2 s. The call may wait at a permission prompt for any time first.
+  One run drops one lane. A `bw run` of that seat that starts in the same worktree outside the session
+  can drop a lane that is not its own.
+- **The `usage` row of a local wrapper.** A wrapper that does not run under `bw run` closes its
+  background lane with one row per run, appended to a log in `local.logs` (or to the metrics log):
+
+  ```json
+  {"type": "usage", "seat": "my-seat", "ok": true, "t": 1800000000.5, "dir": "/abs/path/to/worktree"}
+  ```
+
+  `seat` is the seat's `metric` (default: its `name`). `t` is epoch seconds (a float is fine); or give
+  `ts` in exactly `YYYY-MM-DDTHH:MM:SSZ` (UTC). A row with neither has no time and does not count. `dir`
+  is the worktree root (`git rev-parse --show-toplevel`) or an absolute path inside it; bw compares real
+  paths. A relative or `~` path, a path outside the worktree, and a path inside a nested repo or worktree
+  do not count. `ok` gives `ok` or `failed`; a missing `ok` gives `end unknown`. Leave out `run_id`: a row
+  with one belongs to a `bw seat` run.
+- **Text.** Every text that the pane draws loses terminal control characters first: escape sequences
+  (CSI, OSC such as links and window titles, and the other string sequences) go whole, and other C0 and C1
+  characters become spaces.
 - **Known limit:** a foreground call that the person moves to the background closes its lane at the
   move, because its result row comes then and does not say that the call goes on. Wrap the seat with
   `bw run` to track such a call.

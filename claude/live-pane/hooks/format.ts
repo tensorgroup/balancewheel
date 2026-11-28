@@ -52,9 +52,25 @@ export function rateLimits(list: readonly { kind: string; percentUsed: number }[
   return list.map(r => `${LIMIT_NAMES[r.kind] ?? r.kind} ${percent(r.percentUsed)}`).join(' ')
 }
 
-/** Cuts to `n` columns with an ellipsis. Counts code points, which is right for the text the pane cuts. */
+// Terminal control text that a model or a log can put in a drawn string. A string sequence (OSC, DCS, SOS,
+// PM, APC; ESC or C1 form) goes whole, with its payload, up to BEL, ST, or the next ESC; one with no end
+// loses only its introducer. Then CSI sequences, then two-character escapes, then any C0, DEL, or C1 left.
+const STRING_SEQ = /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d\u009e\u009f])[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c|(?=\u001b))/g
+const CSI = /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]?/g
+const ESCAPE = /\u001b[ -/]*[0-~]?/g
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g
+
+/** The printable text of `text`: terminal sequences removed, other control characters made spaces. */
+export function clean(text: string): string {
+  return text.replace(STRING_SEQ, '').replace(CSI, '').replace(ESCAPE, '').replace(CONTROL, ' ')
+}
+
+/**
+ * Cleans (`clean`) and cuts to `n` columns with an ellipsis. Counts code points, which is right for the text
+ * the pane cuts. Every drawn text that a model or a log can set goes through here or through `pad`.
+ */
 export function cut(text: string, n: number): string {
-  const chars = [...text.replace(/\s+/g, ' ').trim()]
+  const chars = [...clean(text).replace(/\s+/g, ' ').trim()]
   if (n <= 0) return ''
   return chars.length <= n ? chars.join('') : `${chars.slice(0, Math.max(0, n - 1)).join('')}…`
 }

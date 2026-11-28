@@ -8,7 +8,7 @@ import { atom, read, update } from 'claude-code'
 import type { AgentInfo, EngineInterface, Register, SessionUsage, Timer } from 'claude-code'
 
 import type { AgentRow, Finished, Sample, Snap } from '../types'
-import { applyDoc, bashUses, closeLane, expire, matches, openLane, prune, toolResults } from './fallback'
+import { applyDoc, bashUses, closeLane, expire, matches, openLane, prune, toolResults, wrapSeat } from './fallback'
 import type { BashUse } from './fallback'
 import { familyColor, pushSample, seatColor } from './layout'
 import { argvFor, CANCELLED, cancelPoll, isPollDue, pollOnce } from './poll'
@@ -28,7 +28,7 @@ const AGENT_COLOR = '#64748b'
 // Each tag names the idea of the value it keeps: change the tag when the value's fields change.
 const snapAtom = atom({ plugin: 'live-pane', key: 'snap' } as const, null, { shape: 'snap-1' })
 const seatsAtom = atom({ plugin: 'live-pane', key: 'seats' } as const, { doc: null, okAt: null, error: null }, { shape: 'seats-1' })
-const lanesAtom = atom({ plugin: 'live-pane', key: 'lanes' } as const, { lanes: [], taken: [] }, { shape: 'lanes-1' })
+const lanesAtom = atom({ plugin: 'live-pane', key: 'lanes' } as const, { lanes: [], taken: [] }, { shape: 'lanes-2' })
 const historyAtom = atom({ plugin: 'live-pane', key: 'history' } as const, [], { shape: 'history-1' })
 const chartAtom = atom({ plugin: 'live-pane', key: 'chart' } as const, { periodMs: SAMPLE_MS, samples: [], names: {} }, { shape: 'chart-1' })
 const closedAtom = atom({ plugin: 'live-pane', key: 'isClosedByPerson' } as const, false)
@@ -160,7 +160,7 @@ async function observeRow($: EngineInterface, uses: readonly BashUse[], results:
     if (opened.length > 0) {
       const now = await $.clock.now()
       const ids = new Set(opened.map(o => o.u.id))
-      const added = opened.map(o => openLane(o.seat, o.u.id, now, o.u.description, o.u.isBackground))
+      const added = opened.map(o => openLane(o.seat, o.u.id, now, o.u.description, o.u.isBackground, wrapSeat(o.u.command)))
       await update($, lanesAtom, s => ({ ...s, lanes: prune([...s.lanes.filter(l => !ids.has(l.id)), ...added]) }))
     }
   }

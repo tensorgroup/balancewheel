@@ -2,13 +2,13 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import type { Lane, OpenRun, RecentRun, UsageRow } from '../types'
-import { bashUses, dropWrapped, expire, matches, pair, reconcile, toolResults } from './fallback'
+import { bashUses, dropWrapped, expire, matches, pair, toolResults, wrapSeat } from './fallback'
 import { append, boot, doc, drawn, paneProps, resultRow, SEAT, T0, useRow } from './fixture'
 
 function lane(over: Partial<Lane>): Lane {
   return {
     id: 'l1', seat: SEAT.name, metric: 'my-seat-m', model: null, icon: null, color: null, words: null,
-    startMs: T0, background: true, endMs: null, end: null, ...over,
+    wrapSeat: null, startMs: T0, background: true, endMs: null, end: null, ...over,
   }
 }
 
@@ -16,19 +16,24 @@ function row(t: number, over: Partial<UsageRow> = {}): UsageRow {
   return { seat: 'my-seat-m', t, dir: '/work/app', ok: true, source: 'local', ...over }
 }
 
-function openRun(seat: string, start: number | null): OpenRun {
+function openRun(seat: string, start: number | null, over: Partial<OpenRun> = {}): OpenRun {
   return {
     run_id: 'r000000000001', seat, model: null, label: null, dir: '/work/app', start, source: 'local',
-    panel: null, ask: null, state: 'live', icon: null, color: null, ctx: null, window: null, cost_usd: null,
+    panel: null, ask: null, state: 'live', icon: null, color: null, ctx: null, window: null, cost_usd: null, ...over,
   }
 }
 
-function recentRun(seat: string, start: number | null): RecentRun {
+function recentRun(seat: string, start: number | null, over: Partial<RecentRun> = {}): RecentRun {
   return {
     run_id: 'r000000000002', seat, model: null, label: null, start, end: start === null ? 0 : start + 5, ok: true,
     reason: null, source: 'local', stand_in_for: null, tokens_in: null, tokens_out: null, cost_usd: null,
-    ctx_peak: null,
+    ctx_peak: null, ...over,
   }
+}
+
+/** The lanes left after a document lists these runs, with a fresh `taken`. */
+function left(lanes: readonly Lane[], runs: readonly (OpenRun | RecentRun)[]): Lane[] {
+  return dropWrapped(lanes, runs, new Set())
 }
 
 // ---- pure ------------------------------------------------------------------------------------------
@@ -63,19 +68,54 @@ test('pair takes the oldest row at or after the start, less 1 s, of the same met
   expect(got.get('l1')).toBe(`my-seat-m|/work/app|${Math.floor(T0 / 1000)}|0`)
 })
 
-test('a lane is dropped when a run start for its seat is within 2 s', () => {
-  const l = lane({ startMs: T0 })
-  expect(dropWrapped([l], [openRun('my-seat', T0 / 1000 + 1.5)])).toEqual([])
-  expect(dropWrapped([l], [openRun('my-seat', T0 / 1000 - 1.9)])).toEqual([])
-  expect(dropWrapped([l], [openRun('my-seat', T0 / 1000 + 2.5)])).toEqual([l])
-  expect(dropWrapped([l], [openRun('another', T0 / 1000)])).toEqual([l])
-  expect(dropWrapped([l], [openRun('my-seat', null)])).toEqual([l])
+test('wrapSeat reads the --seat of a bw run in the first 4 KB of the command', () => {
+  expect(wrapSeat('bw run --seat my-seat -- ./my-seat.sh go')).toBe('my-seat')
+  expect(wrapSeat('/opt/tools/bw run --label "a b" --seat other -- ./my-seat.sh')).toBe('other')
+  expect(wrapSeat("cd sub && bw run --seat 'my-seat' -- ./my-seat.sh")).toBe('my-seat')
+  expect(wrapSeat('id=$(bw run start --seat my-seat) && ./my-seat.sh')).toBe('my-seat')
+  expect(wrapSeat('./my-seat.sh --seat foo')).toBeNull() // no bw run
+  expect(wrapSeat('bw run -- ./my-seat.sh --seat foo')).toBeNull() // past the --
+  expect(wrapSeat('mybw run --seat foo')).toBeNull()
+  expect(wrapSeat('bw runner --seat foo')).toBeNull()
+  expect(wrapSeat(`${'x'.repeat(4096)} bw run --seat my-seat -- ./my-seat.sh`)).toBeNull()
 })
 
-test('a lane is dropped when a recent run for its seat started within 2 s (it ended between two polls)', () => {
+test('a run of the seat that starts after the lane drops it, however long the call waited to start', () => {
   const l = lane({ startMs: T0 })
-  expect(reconcile([l], [recentRun('my-seat', T0 / 1000 + 0.4)])).toEqual([])
-  expect(reconcile([l], [recentRun('my-seat', T0 / 1000 + 30)])).toEqual([l])
+  for (const after of [0.2, 1.5, 2.5, 10, 600]) expect(left([l], [openRun('my-seat', T0 / 1000 + after)])).toEqual([])
+  expect(left([l], [openRun('my-seat', T0 / 1000 - 1.9)])).toEqual([]) // the old 2 s case
+  expect(left([l], [recentRun('my-seat', T0 / 1000 + 10)])).toEqual([]) // it ended between two polls
+  expect(left([l], [openRun('my-seat', T0 / 1000 - 2.5)])).toEqual([l]) // it began before the call
+  expect(left([l], [openRun('another', T0 / 1000 + 1)])).toEqual([l])
+  expect(left([l], [openRun('my-seat', null)])).toEqual([l])
+  expect(left([l], [openRun('my-seat', T0 / 1000 + 1, { source: 'bw' })])).toEqual([l]) // bw seat runs no Bash call
+  expect(left([l], [openRun('my-seat', T0 / 1000 + 1, { run_id: null })])).toEqual([l])
+})
+
+test('a closed lane is dropped only by a run that started before it closed', () => {
+  const l = lane({ startMs: T0, endMs: T0 + 5000, end: 'ok', background: false })
+  expect(left([l], [recentRun('my-seat', T0 / 1000 + 3)])).toEqual([])
+  expect(left([l], [recentRun('my-seat', T0 / 1000 + 30)])).toEqual([l])
+})
+
+test('one run drops one lane, also at later polls', () => {
+  const first = lane({ id: 'l1', startMs: T0 })
+  const second = lane({ id: 'l2', startMs: T0 })
+  const runs = [openRun('my-seat', T0 / 1000 + 10)]
+  const taken = new Set<string>()
+  const once = dropWrapped([first, second], runs, taken)
+  expect(once).toEqual([second]) // the calls start in order: the first lane is the run's
+  expect(dropWrapped(once, runs, taken)).toEqual([second])
+  expect(dropWrapped(once, [...runs, recentRun('my-seat', T0 / 1000 + 12)], taken)).toEqual([])
+})
+
+test('a lane whose command shows the bw run is taken first, by the seat that bw run names', () => {
+  const plain = lane({ id: 'plain', startMs: T0 })
+  const wrapped = lane({ id: 'wrapped', startMs: T0 + 1000, wrapSeat: 'my-seat' })
+  expect(left([plain, wrapped], [openRun('my-seat', T0 / 1000 + 5)])).toEqual([plain])
+  const other = lane({ id: 'other', startMs: T0, wrapSeat: 'other' })
+  expect(left([other], [openRun('other', T0 / 1000 + 5)])).toEqual([])
+  expect(left([other], [openRun('my-seat', T0 / 1000 + 5)])).toEqual([other])
 })
 
 test('expire closes an unpaired lane as end unknown after run_max_s', () => {
@@ -173,6 +213,50 @@ test('with local.run_max_s 60 an unpaired lane closes as end unknown after 60 s,
   const ui = await $.ui.mount({ ...paneProps(90, 40), surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /end unknown/ })).toBeDefined()
   await ui.unmount()
+})
+
+for (const bg of [false, true]) {
+  for (const waitS of [1.5, 10]) {
+    test(`a ${bg ? 'background' : 'foreground'} bw run whose Bash call waits ${waitS} s to start shows one lane, and its end row closes it`, async ($, on) => {
+      let open: OpenRun[] = []
+      let recent: RecentRun[] = []
+      const b = await boot($, on, { out: () => JSON.stringify(doc({ open, recent })) })
+      await b.clock.advance(5000)
+      const count = async () => (await laneTexts($)).filter(t => t.includes('my-seat')).length
+      const t1 = b.clock.now()
+      await append($, useRow('toolu_1', 'bw run --seat my-seat -- ./my-seat.sh review', { isBackground: bg }))
+      await b.clock.settle()
+      expect(await count()).toBe(1) // the call waits (a permission prompt): the fallback lane
+      await b.clock.advance(waitS * 1000)
+      const start = t1 / 1000 + waitS
+      open = [openRun('my-seat', start, { run_id: 'r00000000000a' })]
+      if (bg) await append($, resultRow('toolu_1')) // "running in the background"
+      await b.clock.advance(5000)
+      expect(await count()).toBe(1) // the run's own lane
+      open = []
+      recent = [recentRun('my-seat', start, { run_id: 'r00000000000a', end: start + 20 })]
+      if (!bg) await append($, resultRow('toolu_1'))
+      await b.clock.advance(20_000)
+      expect(await count()).toBe(0)
+      const texts = await drawn($)
+      expect(texts.filter(t => /local seat ·/.test(t)).length).toBe(1)
+      await b.clock.advance(3_000_000) // past run_max_s: nothing left to expire
+      expect(await count()).toBe(0)
+      expect((await drawn($)).filter(t => /local seat ·/.test(t)).length).toBe(1)
+    })
+  }
+}
+
+test('terminal control text in a Bash description is not drawn', async ($, on) => {
+  const b = await boot($, on, { out: JSON.stringify(doc()) })
+  await b.clock.advance(5000)
+  await append($, useRow('toolu_1', './my-seat.sh review',
+    { description: '\u001b]0;a title\u0007review \u001b[31mthe diff\u001b[0m\u009b2J' }))
+  await append($, resultRow('toolu_1'))
+  await b.clock.settle()
+  const texts = await drawn($)
+  expect(texts.find(t => /local seat · ok/.test(t))).toMatch(/local seat · ok review the diff$/)
+  expect(texts.some(t => /[\u0000-\u001f\u007f-\u009f]/.test(t))).toBe(false)
 })
 
 test('the row hook keeps the row unchanged, also when its own code throws', async ($, on) => {

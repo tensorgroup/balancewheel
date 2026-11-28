@@ -104,6 +104,8 @@ export type Lane = {
   color: string | null
   /** A few words of what the call did (the Bash description), or null. */
   words: string | null
+  /** The `--seat` of a `bw run` that the command shows (fallback.ts `wrapSeat`), or null. */
+  wrapSeat: string | null
   startMs: number
   background: boolean
   endMs: number | null
@@ -112,7 +114,7 @@ export type Lane = {
 
 export type LaneState = {
   lanes: Lane[]
-  /** Keys of `usage` rows a lane has paired with (fallback.ts `withKeys`). */
+  /** Keys of `usage` rows a lane has paired with (fallback.ts `withKeys`), and of runs that dropped a lane (`runKey`). */
   taken: string[]
 }
 
