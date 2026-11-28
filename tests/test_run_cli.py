@@ -222,6 +222,18 @@ class RunCli(unittest.TestCase):
         self.assertEqual((body["phase"], body["ok"]), ("end", True))
         self.assertNotIn("seat", body); self.assertNotIn("dir", body)
 
+    def test_end_finds_a_pending_start(self):  # contained: start and end both as request files
+        cp = os.path.join(self.tmp, "handoffs", "k"); os.makedirs(cp)
+        env = {"BW_CHECKPOINT": os.path.join(cp, "checkpoint.md"), "BALANCEWHEEL_METRICS_LOG": "/dev/null/x.jsonl"}
+        rc, _ = self.main_env(env, ["start", "--seat", "s", "--dir", self.tmp])
+        rid = self.last_out.strip()
+        self.assertEqual(rc, 0)
+        rc, _ = self.main_env(env, ["end", rid, "--ok"])
+        self.assertEqual(rc, 0)
+        end = json.loads(Path(cp, "runs", f"{rid}.end.json").read_text())
+        self.assertEqual((end["seat"], end["dir"], end["ok"]), ("s", self.tmp, True))
+        self.assertIsInstance(end["duration_s"], float)
+
     def test_end_refuses_a_bw_seat_run(self):
         store.append(self.log, runs.start_row("astra", "model-a", "/w", "x", "bw"))
         rc, err = self.main_env({}, ["end", self.runs()[0]["run_id"], "--ok"])

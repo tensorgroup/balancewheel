@@ -220,6 +220,21 @@ def _start(argv, out, err, environ, now):
     return 0
 
 
+def _pending_start(dir_path, run_id, now):
+    """The start of `run_id` from a request file not yet appended (a contained lead), checked as the panel
+    service checks it, with `dir` kept as written when it is one safe line; None when there is none or it
+    is refused. (The service forces `dir` to the worktree when it appends either row.)"""
+    items, _ = runs.read_requests(dir_path, unlink=False)
+    for _, obj in items:
+        if isinstance(obj, dict) and obj["phase"] == "start" and obj["run_id"] == run_id:
+            wt = obj.get("dir")
+            try:
+                return runs.validate_request(obj, wt if isinstance(wt, str) and safe(wt) == wt else None, now)
+            except ValueError:
+                return None
+    return None
+
+
 def _end(argv, out, err, environ, now):
     if not argv or not runs.RUN_ID.fullmatch(argv[0]):
         raise Usage("RUN_ID must be r and 12 hex digits")
@@ -233,10 +248,11 @@ def _end(argv, out, err, environ, now):
     t = now()
     start = None
     if sink.config is not None:
-        # Task 6 adds the pending request files (runs.read_requests(..., unlink=False)) to this lookup.
         tail = store.read_tail(sink.log, t - runs.END_LOOKBACK_S)
         start = next((e for e in reversed(tail.events) if e.get("type") == "run" and e.get("phase") == "start"
                       and e.get("run_id") == run_id), None)
+    if start is None and sink._request_dir():
+        start = _pending_start(sink._request_dir(), run_id, t)
     if start is not None and start.get("source") == "bw":
         print(f"bw run end: {run_id} is a bw seat run; bw seat closes it", file=err)
         return 2

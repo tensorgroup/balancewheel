@@ -4,23 +4,39 @@
 after it. `bw run` (lead/run_cli.py) writes the same rows for a local command, with beat rows while it runs.
 The rows go through `store.append`, the only appender. Row shapes are in metrics/store.py. When a contained
 lead cannot append, `bw run` writes each row as a request file in `<checkpoint dir>/runs/` instead
-(`write_request`); the panel service appends those.
+(`write_request`); the panel service checks each one (`validate_request`) and appends it (`ingest`, from
+`panel/service.py` `drain`). `bw run end` and `bw live` read pending files without taking them (`read_requests`).
 """
 import json
+import math
 import os
 import re
 import secrets
+import stat
 import time
+from typing import Optional
 
+from lead import handoff, inbox
 from lead.guard.redact import redact
 from lead.guard.review import safe
-from metrics import store  # noqa: F401  (the appender the callers use; tests patch it here)
+from metrics import store  # the appender the callers use; tests patch it here
+from metrics.config import SEAT_NAME
 
 RUN_ID = re.compile(r"r[0-9a-f]{12}")
 LEAD_SESSION = re.compile(r"[0-9a-f]{12}")  # a lead Session.id (lead/runner.py)
 LABEL_CHARS = 80
 END_LOOKBACK_S = 7 * 86400
 REQUEST_DIR = "runs"
+REQUEST_LIMIT = 4096
+MAX_RUN_REQUESTS = 50
+MODEL_CHARS = 120
+REASON_CHARS = 200
+HOST_CHARS = 255
+T_SKEW_S = 86400
+REQUEST_NAME = re.compile(r"(r[0-9a-f]{12})\.(start|beat|end)\.json")
+PHASES = ("start", "beat", "end")
+PID_MAX = 2 ** 31 - 1
+NAME_CHARS = 80  # a lead-chosen file name, as shown in a problem line
 
 
 def new_run_id() -> str:
@@ -88,3 +104,190 @@ def write_request(dir_path: str, row: dict) -> str:
             pass
         raise
     return path
+
+
+# --- request files from contained leads (the panel service appends them) ---
+
+def _number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _count(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _text(obj, key, limit):
+    """An optional string field: None when absent or null; one line within `limit`, then `safe()` and cut
+    to `limit` (safe() may lengthen an escape); else ValueError."""
+    v = obj.get(key)
+    if v is None:
+        return None
+    if not isinstance(v, str) or v.splitlines() not in ([], [v]) or len(v) > limit:
+        raise ValueError(f"{key} must be one line of at most {limit} characters")
+    return safe(v)[:limit]
+
+
+def validate_request(obj, worktree: str, now: float) -> dict:
+    """The row to append for one request body (run_id and phase already set from its file name), or
+    ValueError. `source` is forced to "local" and `dir` to `worktree`; unknown keys are dropped (so are
+    `panel`, `session_id`, and `stand_in_for`, which only `bw seat` writes)."""
+    if not isinstance(obj, dict):
+        raise ValueError("a run request must be a JSON object")
+    phase, run_id = obj.get("phase"), obj.get("run_id")
+    if phase not in PHASES:
+        raise ValueError("phase must be start, beat, or end")
+    if not isinstance(run_id, str) or not RUN_ID.fullmatch(run_id):
+        raise ValueError("run_id must be r and 12 hex digits")
+    t = obj.get("t")
+    if not _number(t) or abs(t - now) > T_SKEW_S:
+        raise ValueError(f"t must be a finite epoch within {T_SKEW_S} s of now")
+    seat = obj.get("seat")
+    if not (seat is None and phase != "start") and not (isinstance(seat, str) and SEAT_NAME.fullmatch(seat)):
+        raise ValueError(f"seat must match {SEAT_NAME.pattern}")
+    row = {"type": "run", "phase": phase, "run_id": run_id, "t": t, "seat": seat}
+    if phase == "start":
+        pid = obj.get("pid")
+        if pid is not None and not (isinstance(pid, int) and not isinstance(pid, bool) and 1 <= pid <= PID_MAX):
+            raise ValueError(f"pid must be an integer from 1 to {PID_MAX}")
+        row.update(model=_text(obj, "model", MODEL_CHARS), dir=worktree, label=_text(obj, "label", LABEL_CHARS),
+                   source="local")
+        for k, v in (("pid", pid), ("host", _text(obj, "host", HOST_CHARS))):
+            if v is not None:
+                row[k] = v
+        return row
+    row["dir"] = worktree
+    if phase == "beat":
+        return row
+    if not isinstance(obj.get("ok"), bool):
+        raise ValueError("ok must be true or false")
+    for k, good in (("duration_s", lambda v: _number(v) and v >= 0), ("tokens_in", _count), ("tokens_out", _count),
+                    ("cost_usd", lambda v: _number(v) and v >= 0), ("ctx_peak", _count)):
+        if obj.get(k) is not None and not good(obj[k]):
+            raise ValueError(f"{k} must be a non-negative number")
+    return end_row(run_id, seat, worktree, obj["ok"], _text(obj, "reason", REASON_CHARS), obj.get("duration_s"),
+                  tokens_in=obj.get("tokens_in"), tokens_out=obj.get("tokens_out"), cost_usd=obj.get("cost_usd"),
+                  ctx_peak=obj.get("ctx_peak"), t=t)
+
+
+def _open_requests(dir_path):
+    """The request dir as a descriptor, opened with no link followed at either of its last two levels
+    (as panel/channel.py does). None when it or its parent does not exist; OSError for anything else."""
+    parent, leaf = os.path.split(os.path.normpath(dir_path))
+    try:
+        cp = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    try:
+        return os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=cp)
+    except FileNotFoundError:
+        return None
+    finally:
+        os.close(cp)
+
+
+def _parse(m, data):
+    """The request body with `type`, `run_id`, and `phase` from its name (F1), or ValueError."""
+    if data is None:
+        return ValueError("not a regular file, or hard-linked")
+    if len(data) >= REQUEST_LIMIT:
+        return ValueError(f"a run request must be under {REQUEST_LIMIT} bytes")
+    try:
+        obj = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return ValueError("a run request must be JSON")
+    if not isinstance(obj, dict):
+        return ValueError("a run request must be a JSON object")
+    run_id, phase = m.group(1), m.group(2)
+    if obj.get("run_id", run_id) != run_id or obj.get("phase", phase) != phase:
+        return ValueError("the body's run_id or phase differs from the file name")
+    return {**obj, "type": "run", "run_id": run_id, "phase": phase}
+
+
+def read_requests(dir_path: str, limit: int = MAX_RUN_REQUESTS, unlink: bool = True) -> tuple:
+    """([(file name, body dict or ValueError)], problems): at most `limit` request files, starts first, then
+    beats, then ends (by name within each). Only `REQUEST_NAME` files are read; a link, a FIFO, or a second
+    hard link is a ValueError, never followed. With `unlink`, every file taken is unlinked (a refused one
+    too); without it nothing on disk changes. A missing dir is ([], []). Never raises."""
+    out, problems = [], []
+    try:
+        dfd = _open_requests(dir_path)
+    except (OSError, ValueError) as e:
+        return [], [f"the run request dir cannot be read ({type(e).__name__}); local runs from the lead are not tracked"]
+    if dfd is None:
+        return [], []
+    try:
+        try:
+            found = [(REQUEST_NAME.fullmatch(n), n) for n in os.listdir(dfd)]
+        except OSError as e:
+            return [], [f"the run request dir cannot be listed ({type(e).__name__})"]
+        found = sorted(((m, n) for m, n in found if m), key=lambda mn: (PHASES.index(mn[0].group(2)), mn[1]))
+        for m, name in found[:limit]:
+            try:
+                st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+                if stat.S_ISDIR(st.st_mode):
+                    problems.append(f"a directory named like a run request was left in place: {safe(name)[:NAME_CHARS]}")
+                    continue
+                data = None
+                if stat.S_ISREG(st.st_mode) and st.st_nlink == 1:
+                    try:
+                        data = inbox.read_at(dfd, name, REQUEST_LIMIT, single_link=True)
+                    except OSError:
+                        data = None  # swapped for a link or a FIFO after the stat
+                if unlink:
+                    os.unlink(name, dir_fd=dfd)
+                out.append((name, _parse(m, data)))
+            except OSError as e:
+                problems.append(f"a run request was not read: {safe(name)[:NAME_CHARS]} ({type(e).__name__})")
+    finally:
+        os.close(dfd)
+    return out, problems
+
+
+def _capped(problems) -> list:
+    """At most `inbox.NAMES_SHOWN` problem lines, then one line that counts the rest."""
+    more = len(problems) - inbox.NAMES_SHOWN
+    return problems if more <= 0 else problems[:inbox.NAMES_SHOWN] + [f"and {more} more"]
+
+
+def ingest(config: dict, state: str, project, now: Optional[float] = None) -> list:
+    """Append the pending run requests of `project`'s checkpoint dir; returns problem lines (capped).
+    Starts first, then beats, then ends. A beat or end without `seat` takes it from its start (the log
+    first, then this batch); with none found it stays null. A request for a run whose logged start says
+    `source: "bw"` is refused (`bw seat` closes it). Every file taken is unlinked before its row is
+    appended, so a failed append loses that row and says so."""
+    now = time.time() if now is None else now
+    items, problems = read_requests(requests_dir(handoff.checkpoint_dir(state, project.worktree_key)))
+    if not items:
+        return _capped(problems)
+    rows = []
+    for name, obj in items:
+        shown = safe(name)[:NAME_CHARS]
+        if not isinstance(obj, ValueError):
+            try:
+                rows.append((shown, validate_request(obj, project.worktree, now)))
+                continue
+            except ValueError as e:
+                obj = e
+        problems.append(f"a run request was refused: {shown} ({safe(str(obj))})")
+    log = store.log_path(config)
+    logged = {}
+    if rows:
+        for e in store.read_tail(log, now - END_LOOKBACK_S).events:
+            if e.get("type") == "run" and e.get("phase") == "start" and isinstance(e.get("run_id"), str):
+                logged[e["run_id"]] = e
+    batch = {}
+    for shown, row in sorted(rows, key=lambda r: PHASES.index(r[1]["phase"])):
+        start = logged.get(row["run_id"]) or batch.get(row["run_id"])
+        if start is not None and start.get("source") == "bw":
+            problems.append(f"a run request was refused: {shown} (a bw seat run; bw seat closes it)")
+            continue
+        if row["seat"] is None and start is not None:
+            row["seat"] = start.get("seat")
+        try:
+            store.append(log, row)
+        except OSError as e:
+            problems.append(f"a run request was not logged: {shown} ({type(e).__name__})")
+            continue
+        if row["phase"] == "start":
+            batch[row["run_id"]] = row
+    return _capped(problems)

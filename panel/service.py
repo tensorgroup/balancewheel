@@ -1,6 +1,7 @@
 """service.py — the panel service: requests, the scheduler, the watchdog, `log`, and `amend`.
 
-`bw lead` calls `drain` at each task boundary. `drain` answers the lead's requests (Task 6's files),
+`bw lead` calls `drain` at each task boundary. `drain` appends the lead's run request files
+(`lead/runs.py` `ingest`), answers the lead's requests (Task 6's files),
 then calls `schedule`, which runs one job per worktree at a time (Design decision 3): a round 1 or
 one `ask`, each as a `python3 -m panel.run` worker in its own session. `log` and `amend` run in the
 drain itself (Design decision 4). Nothing here prints: a problem goes to `notice("panel", …, key=…)`.
@@ -21,7 +22,7 @@ import sys
 import time
 from typing import Optional
 
-from lead import paths, proc, quota
+from lead import paths, proc, quota, runs
 from lead.guard.review import safe
 from panel import channel, record, render, roster, run
 from panel import state as pstate
@@ -718,12 +719,19 @@ def _answer_all(config, state, project, lead, session_id, notice) -> None:
 
 
 def drain(config, state, project, jobs, lead=None, session_id=None, notice=None) -> None:
-    """Answer the lead's requests, then schedule. Never raises; prints nothing. One drain per worktree
-    runs at a time, so a reused request id is never taken twice before its response is written."""
+    """Append the lead's run request files (lead/runs.py), answer its panel requests, then schedule.
+    Never raises; prints nothing. One drain per worktree runs at a time, so a reused request id is never
+    taken twice before its response is written."""
     notice = _notifier(notice)
     try:
         key = pstate.check_key(project.worktree_key)
         with paths.locked_dir(pstate.ensure_dir(state, os.path.join(state, "panels", key, "drain"))):
+            try:
+                problems = runs.ingest(config, state, project)
+                if problems:
+                    notice("panel", "; ".join(problems), key="runs")
+            except Exception as e:
+                notice("panel", f"bw could not read run requests ({type(e).__name__})", key="runs")
             try:
                 _answer_all(config, state, project, lead, session_id, notice)
             except Exception as e:

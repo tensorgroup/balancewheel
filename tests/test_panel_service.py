@@ -15,6 +15,7 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
+from lead import handoff, runs  # noqa: E402
 from lead.paths import load_config  # noqa: E402
 from lead.projects import Project  # noqa: E402
 from panel import channel, roster, run, service, state  # noqa: E402
@@ -415,6 +416,29 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(len(list(Path(state.request_dir(self.S, K)).glob("*.request"))), 3)
         self.drain(FakeJobs())
         self.assertEqual(len(list(self.responses().glob("*.json"))), service.MAX_REQUESTS + 3)
+
+    # --- run request files (lead/runs.py) ---
+
+    def test_drain_ingests_run_requests(self):
+        d = runs.requests_dir(handoff.checkpoint_dir(self.S, K))
+        os.makedirs(d)
+        Path(d, "r0123456789ab.start.json").write_text(json.dumps({"seat": "s", "t": time.time()}))
+        self.drain(FakeJobs())
+        rows = store.load(self.LOG)["runs"]
+        self.assertEqual([(r["run_id"], r["phase"], r["source"], r["dir"]) for r in rows],
+                         [("r0123456789ab", "start", "local", str(self.wt))])
+        self.assertEqual(os.listdir(d), [])
+        self.assertEqual([n for n in self.notices if n[2] == "runs"], [])
+
+    def test_drain_survives_a_broken_runs_dir(self):
+        cp = handoff.checkpoint_dir(self.S, K)
+        os.makedirs(cp)
+        os.symlink(str(self.OUT), runs.requests_dir(cp))
+        self.drain(FakeJobs())
+        self.assertEqual(len([n for n in self.notices if n[2] == "runs"]), 1)
+        with mock.patch.object(runs, "ingest", side_effect=RuntimeError("boom")):
+            self.drain(FakeJobs())
+        self.assertEqual([n[1] for n in self.notices if n[2] == "runs"][-1], "bw could not read run requests (RuntimeError)")
 
     # --- asks ---
 

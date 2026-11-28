@@ -4,7 +4,7 @@
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
 Corrected the same day after review: the panel's summary line, the `bw start` prefix of the seat-check
-line, and a stale "not in v0" note on acting. Updated 2026-11-27: the `local` config section and `claude_pane`, and `bw run`.*
+line, and a stale "not in v0" note on acting. Updated 2026-11-27: the `local` config section and `claude_pane`, `bw run`, and run request files.*
 
 The **lead** is the agent you work in for a project; it is also the moderator of every
 panel it convenes. One plan usually runs out first, so a project's **profile** (config
@@ -338,6 +338,10 @@ once for each bw-contained lead runtime.
   run that `bw seat` started. Rows go to the metrics log first. Inside a contained lead, whose
   sandbox does not let it write bw's state, the append fails. Then, when `BW_CHECKPOINT` is set,
   each row goes to a request file in `<checkpoint dir>/runs/` (`<run id>.<phase>.json`, mode 0600).
+  The panel service takes these files at each drain (at most 50 at a time), checks each one, and
+  appends it with `source: "local"` and `dir` set to the worktree. It refuses a file whose body names
+  another run id or phase than its file name, a link, and a file of 4 KiB or more, and says so in one
+  notice. `bw run end` also finds a start that is still a request file.
   When both fail, `bw run` prints one `bw run: not tracked (...)` line and still runs the command.
   `start` and `end` exit 0 when tracking fails. `bw run` does not stop on a config error.
 
