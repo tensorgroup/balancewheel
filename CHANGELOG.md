@@ -26,7 +26,7 @@ not against the prose.
   `lead/verify.py`, `lead/updates.py`). A header, then Updates, Checks, Quota, Lead, and Also; `✓` pass, `✗`
   failure, `·` information, `…` wait; home paths as `~`. A `…` line says what is slow before it starts: the tool
   updates, and each runtime's sandbox or guard attack test (what is tested, "about a minute", "a little model
-  quota", why, "Please wait."). The quota lines are in plain words (`63% left this week`, `19% of the monthly
+  quota", why, "Please wait."). The quota lines are in plain words (`63% left in the 7-day window`, `19% of the monthly
   budget used`, the source, the age); before, `7d 63%` meant 63% left with no word to say so, and `budget 75%` meant 75% of the budget left. The four
   "no update lock for runtime X" lines became one Updates line. When stdout is not a terminal, the lines keep the
   `bw start: ` prefix and carry the same facts, with no header, sections, or marks; **their wording changed**

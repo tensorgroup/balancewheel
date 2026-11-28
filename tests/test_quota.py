@@ -548,11 +548,22 @@ class Describe(unittest.TestCase):
 
     def test_windows_say_what_is_left_and_in_which_window(self):
         d = quota.describe(self.snap([self.w("five_hour", 22), self.w("seven_day", 37)]))
-        self.assertEqual(d, "78% left in the 5-hour window · 63% left this week · read just now from Claude's status line")
+        self.assertEqual(d, "78% left in the 5-hour window · 63% left in the 7-day window · read just now from Claude's status line")
 
     def test_the_budget_window_counts_what_is_used_not_what_is_left(self):
         d = quota.describe(self.snap([self.w("budget", 19.4)], source="probe"), {"probe": "openrouter"})
         self.assertEqual(d, "19% of the monthly budget used · read just now from OpenRouter")
+
+    def test_budget_overage_shows_the_real_percent(self):
+        snap = self.snap([self.w("budget", 100.0)], source="probe", spend_usd=15.0, budget_usd_month=10.0)
+        self.assertEqual(quota.describe(snap, {"probe": "openrouter"}),
+                         "150% of the monthly budget used · read just now from OpenRouter")
+        within = self.snap([self.w("budget", 19.4)], source="probe", spend_usd=1.94, budget_usd_month=10.0)
+        self.assertIn("19% of the monthly budget used", quota.describe(within, {"probe": "openrouter"}))
+
+    def test_a_window_name_with_braces_does_not_raise(self):
+        text = quota.describe(self.snap([self.w("weird{left}{0}", 40)]))
+        self.assertTrue(text.startswith("60% left in weird{left}{0}"), text)
 
     def test_age_in_words(self):
         for age, want in ((0, "just now"), (59, "just now"), (60, "1 min ago"), (720, "12 min ago"), (3600, "1 h ago"),

@@ -352,7 +352,7 @@ def summary(snapshot):
 
 NOTE_LIMIT = 120
 
-WINDOW_WORDS = {"five_hour": "{left} left in the 5-hour window", "seven_day": "{left} left this week",
+WINDOW_WORDS = {"five_hour": "{left} left in the 5-hour window", "seven_day": "{left} left in the 7-day window",
                 "budget": "{used} of the monthly budget used"}
 SOURCE_WORDS = {"statusline": "Claude's status line", "orca": "Orca", "cli": "the last Codex run"}
 PROBE_WORDS = {"openrouter": "OpenRouter"}
@@ -413,8 +413,13 @@ def describe(snapshot, plan_cfg=None):
         return f"unknown ({_unknown_words(snapshot.get('reason'))})"
     parts = []
     for w in snapshot["windows"]:
-        words = WINDOW_WORDS.get(w["name"], "{left} left in " + str(w["name"]))
-        parts.append(words.format(left=f"{100 - w['used_pct']:.0f}%", used=f"{w['used_pct']:.0f}%"))
+        left, used = f"{100 - w['used_pct']:.0f}%", f"{w['used_pct']:.0f}%"
+        if w["name"] == "budget":  # the window stops at 100; the snapshot's spend says how far over
+            spend, budget = snapshot.get("spend_usd"), snapshot.get("budget_usd_month")
+            if _finite(spend) and _finite(budget) and budget > 0:
+                used = f"{spend / budget * 100:.0f}%"
+        words = WINDOW_WORDS.get(w["name"]) or "{left} left in " + str(w["name"]).replace("{", "\0")
+        parts.append(words.replace("{left}", left).replace("{used}", used).replace("\0", "{"))
     if _num(snapshot.get("age_s")):
         src = snapshot.get("source")
         where = SOURCE_WORDS.get(src) or (PROBE_WORDS.get(plan_cfg.get("probe"), "bw's own check") if src == "probe" else None)

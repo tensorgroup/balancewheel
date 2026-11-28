@@ -214,7 +214,7 @@ once for each bw-contained lead runtime.
   sandbox or guard attack test, it names the test, says it takes about a minute and uses a
   little model quota, gives the reason (the test never ran, the tool's version changed, or its
   settings changed), and asks you to wait. When nothing slow runs, it prints no wait line.
-  Quota lines are in plain words: `63% left this week` for a window of seven days,
+  Quota lines are in plain words: `63% left in the 7-day window`,
   `78% left in the 5-hour window`, `19% of the monthly budget used` for an OpenRouter budget,
   the source of the reading, and its age (`read just now`, `read 12 min ago`). When stdout is
   not a terminal (a pipe or a file), it prints the same facts as plain lines that start with
