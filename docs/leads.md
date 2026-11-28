@@ -325,7 +325,9 @@ once for each bw-contained lead runtime.
 - **Track a local command (`bw run`, since 2026-11-27).** `bw run --seat NAME [--model M] [--label L]
   [--dir D] -- COMMAND...` runs a local wrapper or tool as a tracked run. It writes a start row
   (`source: "local"`, its own `pid` and `host`), runs the command with stdin, stdout, and stderr
-  passed through, and forwards SIGINT and SIGTERM to it. While the command runs, it writes a beat
+  passed through, and forwards SIGTERM to it. It forwards SIGINT only when `bw run` is not its
+  terminal's foreground process group, because a Ctrl-C at the terminal already reaches the
+  command. So the command gets one SIGINT, not two. While the command runs, it writes a beat
   row every `local.run_max_s / 2` seconds. At the end it writes an end row: `reason` is null on exit
   0, else `exit <n>` or `signal <n>`. It exits with the command's status, `128 + n` after signal n,
   127 when the command is not found, and 126 when it is not executable. `NAME` must match

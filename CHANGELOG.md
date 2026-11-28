@@ -53,7 +53,8 @@ not against the prose.
 - **`bw run` (`lead/run_cli.py`).** `bw run --seat NAME [--model M] [--label L] [--dir D] -- COMMAND...`
   tracks a local command as a run: a start row (`source: "local"`, `pid`, `host`), a `beat` row every
   `local.run_max_s / 2` while it runs, and an end row (`reason` null, `exit <n>`, or `signal <n>`). It passes
-  stdio through, forwards SIGINT and SIGTERM, and exits with the command's status (`128 + n` after a signal, 127
+  stdio through, forwards SIGTERM and SIGINT (SIGINT only when `bw run` is not the terminal's foreground group,
+  so a Ctrl-C reaches the command once), and exits with the command's status (`128 + n` after a signal, 127
   not found, 126 not executable). `bw run start` prints only the run id and records no `pid`; `bw run end RUN_ID
   (--ok | --fail [--reason R])` copies `seat` and `dir` from the start and refuses a `bw seat` run. Rows go to the
   log; when that fails and `BW_CHECKPOINT` is set, to request files `<checkpoint dir>/runs/<run id>.<phase>.json`

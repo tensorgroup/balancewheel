@@ -4,7 +4,8 @@
     bw run start --seat NAME [--model M] [--label TEXT] [--dir D]     stdout: the run id only
     bw run end RUN_ID (--ok | --fail [--reason R])
 
-The wrap form runs COMMAND with stdio passed through, forwards SIGINT and SIGTERM to it, writes a beat row
+The wrap form runs COMMAND with stdio passed through, forwards SIGTERM and SIGINT to it (SIGINT only when
+`bw run` is not its terminal's foreground group, which already signalled the child), writes a beat row
 every `local.run_max_s / 2` while it runs (PD-13), and exits with its status (128 + n after signal n; 127 or
 126 when it cannot start). The sink is chosen once, on the first row (PD-14): the log through `store.append`;
 when that fails and `BW_CHECKPOINT` is set, request files in `<checkpoint dir>/runs/`; else one
@@ -111,6 +112,19 @@ class Sink:
         print(f"bw run: not tracked ({safe(self.why)})", file=self.err)
 
 
+def in_foreground() -> bool:
+    """True when `bw run` is its terminal's foreground process group. Then a Ctrl-C at that terminal
+    signals the whole group, the child included, so `bw run` must not send it a second SIGINT.
+    No terminal, or an error, means False (forward)."""
+    for fd in (0, 1, 2):
+        try:
+            if os.isatty(fd):
+                return os.tcgetpgrp(fd) == os.getpgrp()
+        except OSError:
+            return False
+    return False
+
+
 def _where(d, config):
     """The worktree root of `d`, else its real path."""
     try:
@@ -149,14 +163,17 @@ def _wrap(argv, out, err, environ, now):
 
     child, pending = None, []
 
-    def forward(signum, frame):
-        if child is None:
-            pending.append(signum)
-            return
+    def send(signum):
         try:
             child.send_signal(signum)
         except (ProcessLookupError, OSError):
             pass
+
+    def forward(signum, frame):
+        if child is None:
+            pending.append(signum)  # the child never saw it: sent once it starts
+        elif signum != signal.SIGINT or not in_foreground():  # a terminal's Ctrl-C reached the child already
+            send(signum)
 
     old = {}
     try:
@@ -177,7 +194,7 @@ def _wrap(argv, out, err, environ, now):
             print(f"bw run: {safe(command[0])}: {what}", file=err)
         else:
             for s in pending:
-                forward(s, None)
+                send(s)
             while True:
                 try:
                     rc = child.wait(timeout=interval)

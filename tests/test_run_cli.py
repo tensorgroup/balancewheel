@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -116,6 +117,43 @@ class RunCli(unittest.TestCase):
         self.assertTrue(os.path.exists(self.flag + ".term"))
         self.assertEqual(p.returncode, 0)  # the child caught it and exited 0
         self.assertEqual([r["phase"] for r in self.runs()], ["start", "end"])
+
+    def sigint_to_bw_run(self, foreground):
+        """SIGINT to this process (bw run) only, while a child that counts SIGINTs runs; returns the count."""
+        count = os.path.join(self.tmp, "ints")
+        child = ("import signal, sys, time\n"
+                 "signal.signal(signal.SIGINT, lambda n, f: open(sys.argv[1], 'a').write('i\\n'))\n"
+                 "open(sys.argv[2], 'w').close()\n"
+                 "end = time.time() + 2\n"
+                 "while time.time() < end: time.sleep(0.05)\n")
+        if os.path.exists(self.flag):
+            os.unlink(self.flag)
+
+        def send():
+            if wait_for(lambda: os.path.exists(self.flag)):
+                os.kill(os.getpid(), signal.SIGINT)
+        th = threading.Thread(target=send); th.start()
+        with mock.patch.object(run_cli, "in_foreground", return_value=foreground):
+            rc = self.main(["--seat", "s", "--", sys.executable, "-c", child, count, self.flag])
+        th.join()
+        self.assertEqual(rc, 0)
+        return len(Path(count).read_text().splitlines()) if os.path.exists(count) else 0
+
+    def test_sigint_from_the_terminal_is_not_sent_twice(self):  # the terminal already signalled the child
+        self.assertEqual(self.sigint_to_bw_run(foreground=True), 0)
+
+    def test_sigint_from_kill_is_forwarded_once(self):
+        self.assertEqual(self.sigint_to_bw_run(foreground=False), 1)
+
+    def test_in_foreground_is_false_without_a_terminal(self):
+        with mock.patch.object(run_cli.os, "isatty", return_value=False):
+            self.assertFalse(run_cli.in_foreground())
+        with mock.patch.object(run_cli.os, "isatty", return_value=True), \
+                mock.patch.object(run_cli.os, "tcgetpgrp", side_effect=OSError(25, "not a tty")):
+            self.assertFalse(run_cli.in_foreground())
+        with mock.patch.object(run_cli.os, "isatty", return_value=True), \
+                mock.patch.object(run_cli.os, "tcgetpgrp", return_value=os.getpgrp()):
+            self.assertTrue(run_cli.in_foreground())
 
     def test_heartbeat_while_the_child_runs(self):  # PD-13
         self.write_config(local={"run_max_s": 2})          # a beat every 1 s
