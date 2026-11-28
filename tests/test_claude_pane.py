@@ -236,6 +236,14 @@ class RefusalWithGit(unittest.TestCase):
         plain = os.path.join(self.tmp, "plain"); os.makedirs(plain)
         self.assertIsNone(self.refusal([app, plain, os.path.join(self.tmp, "gone")], project=self.target(app)))
 
+    def test_a_plain_folder_key_passes_under_another_locale(self):
+        # git translates "not a git repository"; the check runs git with LC_ALL=C, so a plain folder (a key
+        # that gives a profile to every repo below it) is still read as no repository
+        plain = os.path.join(self.tmp, "clients"); os.makedirs(plain)
+        with mock.patch.dict(os.environ, {"LANGUAGE": "de", "LANG": "de_DE.UTF-8", "LC_MESSAGES": "de_DE.UTF-8"}):
+            self.assertIsNone(self.refusal([plain]))
+            self.assertIsNone(cp.refusal({}, root=plain, run=proc.run))
+
     def test_a_corrupted_head_refuses(self):  # a contained lead may write the common git dir
         app = self.repo("app")
         Path(app, ".git", "HEAD").write_text("garbage\n")

@@ -132,8 +132,9 @@ class _Refused(Exception):
 
 def _git(run, path, args, what):
     """`git -C path args` output, bounded by CHECK_TIMEOUT_S; None when `path` is not a git repository
-    (git says so and `path` holds no `.git`). Any other failure raises _Refused: it fails closed."""
-    r = run(["git", "-C", path, *args], CHECK_TIMEOUT_S)
+    (git says so and `path` holds no `.git`). Any other failure raises _Refused: it fails closed. git runs
+    with LC_ALL=C: it translates its messages, and the check reads the English one."""
+    r = run(["git", "-C", path, *args], CHECK_TIMEOUT_S, env={**os.environ, "LC_ALL": "C"})
     if r.timed_out:
         raise _Refused(f"refusing: {what} of {path} could not be read in time")
     if r.rc == 0:
