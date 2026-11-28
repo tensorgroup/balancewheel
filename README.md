@@ -173,7 +173,7 @@ bw seat list
 ```
 
 ```text
-astra  codex  gpt-6-astra  plan=chatgpt-plan  fallback=gem  tier=default  verified=no (never verified)  capped=no
+astra  codex  gpt-6.2-astra  plan=chatgpt-plan  fallback=gem  tier=default  verified=no (never verified)  capped=no
 opus  claude-code  claude-opus-5-5  plan=claude-plan  fallback=-  tier=default  verified=no (never verified)  capped=no
 …
 ```

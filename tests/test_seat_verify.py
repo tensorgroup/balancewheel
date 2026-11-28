@@ -72,7 +72,7 @@ class SeatVerify(unittest.TestCase):
         self.assertEqual(k["runtime_version"], "codex-cli 9.9"); self.assertNotIn("adapter_sha", k)
         for f in ("seat_adapter_sha", "codepaths_sha", "sandbox_sha", "hook_files", "denied_ports", "effort", "args"):
             self.assertIn(f, k)
-        self.assertEqual((k["seat"], k["runtime"], k["model"], k["effort"]), ("astra", "codex", "gpt-6-astra", "xhigh"))
+        self.assertEqual((k["seat"], k["runtime"], k["model"], k["effort"]), ("astra", "codex", "gpt-6.2-astra", "xhigh"))
         home = verify.seat_home(self.state, "astra")
         self.assertEqual(sorted(k["hook_files"]), sorted(os.path.join(home, n) for n in ("config.toml", "AGENTS.md", "AGENTS.override.md",
                          "prompts", "hooks.json", "skills", "rules")))
@@ -186,7 +186,7 @@ class SeatVerify(unittest.TestCase):
         self.config["seats"]["astra"]["model"] = "other-model"
         key2 = verify.seat_key(self.config, self.state, "astra", run=FAKE)
         verify.record_failure(self.state, "astra", key2, "blind-write:target", 300.0)
-        self.config["seats"]["astra"]["model"] = "gpt-6-astra"
+        self.config["seats"]["astra"]["model"] = "gpt-6.2-astra"
         self.assertEqual(verify.seat_key(self.config, self.state, "astra", run=FAKE), key)
         self.assertFalse(verify.is_verified(self.config, self.state, "astra", run=FAKE))
         self.assertEqual(verify.write_seats_json(self.config, self.state, run=FAKE)["astra"]["failed_probe"], "key changed")

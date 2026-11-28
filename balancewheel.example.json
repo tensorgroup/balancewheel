@@ -80,7 +80,7 @@
   "seats": {
     "astra": {
       "runtime": "codex",
-      "model": "gpt-6-astra",
+      "model": "gpt-6.2-astra",
       "effort": "xhigh",
       "roles": [
         "plan",

@@ -35,14 +35,15 @@ first live panel: the kimi seat runs `-p` with no `--auto` (Kimi Code 2.3.2 refu
 Codex `cli` quota reading is not applicable on `codex-cli 0.164.0` (see the note under the runtime table); updated
 2026-11-24: one more known limit of the lead guard rules (`eval`, `trap`, and `alias` text); updated
 2026-11-27 when the metered pi seat moved from GLM 5.3 Flash (seat "ox") to DeepSeek V4.1 Flash
-(seat "flash"; see the pi section).*
+(seat "flash"; see the pi section); updated 2026-11-27 again when the astra seat moved to
+`gpt-6.2-astra` and GPT-6.2 Sol became a budget driver, not a seat (see the Codex section and Driver mode).*
 
 ## The cast
 
 | Role | Software | Model | Billing |
 |---|---|---|---|
 | Moderator / primary | Claude Code (CLI) with the [superpowers](https://github.com/obra/superpowers) plugin (6.x) as the workflow skeleton | `claude-opus-5-5` at effort `medium` (raised per task); Fable only on an escalation (since 2026-11-11) | Anthropic subscription |
-| Planning + review seat ("astra") | Codex CLI ≥0.153 | `gpt-6-astra`, xhigh reasoning (was `gpt-5.6-sol`, seat "sol", until 2026-09-11) | OpenAI Pro subscription (CLI OAuth) |
+| Planning + review seat ("astra") | Codex CLI ≥0.153 | `gpt-6.2-astra`, xhigh reasoning (since 2026-11-27; `gpt-6-astra` from 2026-09-11; `gpt-5.6-sol`, seat "sol", before) | OpenAI Pro subscription (CLI OAuth) |
 | Metered seat ("flash") | pi 0.85.x (0.74.x until 2026-09-16; was OpenCode ≥1.18 until 2026-09-03) | `deepseek/deepseek-v4.1-flash` via OpenRouter, thinking `medium` (since 2026-11-27; seat "ox" on `z-ai/glm-5.3-flash` before, `stealth/ox-alpha` until 2026-09-02) | OpenRouter API key (prepaid credits) |
 | Same-vendor blind seat ("opus") | Claude Code headless (`claude -p`), fresh session, write tools disallowed plus a pre-tool guard hook | `claude-opus-5-5`, effort `medium` (since 2026-11-11; the on-demand seat from 2026-09-22, `claude-opus-4-8` before) | Claude subscription (flat); a fresh scoreboard |
 | Reserved same-vendor seat ("fable") | same mechanism | `claude-fable-5-2` (`claude-fable-5-1` from 2026-09-02 until 2026-11-11, when it was the default blind seat) | Claude subscription (flat), twice Opus 5.5 per token; deep panels and stuck debugging only, each run with its reason |
@@ -53,13 +54,13 @@ storage, and subscription billing — no proxy, no prompt translation. Roles wer
 assigned from logged dispute outcomes (see architecture.md); the seat model is a
 config detail, not an interface commitment — which paid off within a week (below).
 
-## Seat: Codex CLI (`gpt-6-astra`)
+## Seat: Codex CLI (`gpt-6.2-astra`)
 
 Profile file — **`~/.codex/review.config.toml`** (Codex ≥0.149 uses per-profile
 *files*; a `[profiles.review]` table inside `config.toml` is rejected as legacy):
 
 ```toml
-model = "gpt-6-astra"
+model = "gpt-6.2-astra"
 model_reasoning_effort = "xhigh"   # this model also offers max and ultra; ultra delegates tasks — unverified read-only
 approval_policy = "never"       # headless: no interactive prompts
 sandbox_mode = "read-only"      # the load-bearing line
@@ -89,6 +90,11 @@ Invocation and traps:
   lists what the account can actually use; check it before pinning a new model in a
   profile. As of 2026-09-25 a Pro account on Codex 0.154 did not yet have `gpt-6-sol`
   or `gpt-6-luna`, and pi 0.85.1's `openai-codex` provider did not list them either.
+- On 2026-11-27 the account's model cache listed the 6.2 generation. OpenAI calls
+  `gpt-6.2-astra` its most capable model and `gpt-6-astra` the previous generation. It
+  calls `gpt-6.2-sol` its fast everyday model and `gpt-6-sol` legacy. Both 6.2 models
+  answered a probe under a ChatGPT Pro sign-in, and the astra seat ran on `gpt-6.2-astra`.
+  The seat moved to it that day and kept the id `astra`.
 - Set `TMPDIR` to a private scratch dir: the Rust binary extracts multi-MB temp
   `.dylib`s into `$TMPDIR` — *not* cwd, as first assumed. Some agent sandboxes point
   `TMPDIR` at the project checkout, which litters it with `.<hash>-00000000.dylib`
@@ -569,11 +575,17 @@ the credential, and the containment.
 
 | Driver seat | Harness | Model | Billing |
 |---|---|---|---|
-| astra | Codex CLI | `gpt-6-astra` (`gpt-6-sol`, which Codex now recommends as its everyday default, is the cheaper candidate for spec'd work once the rollout reaches the account) | OpenAI Pro, flat (CLI OAuth) |
-| astra via pi | pi ≥0.85, built-in `openai-codex` provider | `gpt-6-astra` | Same subscription, flat — OpenAI endorses third-party use ("Codex for OSS") |
+| astra | Codex CLI | `gpt-6-astra` | OpenAI Pro, flat (CLI OAuth) |
+| *(budget driver, no seat id; not "sol", which is retired)* | Codex CLI | `gpt-6.2-sol` (since 2026-11-27) | OpenAI Pro, flat (CLI OAuth) |
+| astra via pi | pi ≥0.85, built-in `openai-codex` provider | `gpt-6-astra` (pi lists no 6.2 model yet, 2026-11-27) | Same subscription, flat — OpenAI endorses third-party use ("Codex for OSS") |
 | flash | pi | `deepseek/deepseek-v4.1-flash` via OpenRouter | metered at OpenRouter's list price; a few cents per session |
 | fable / opus / sonnet | Claude Code | the Claude tier named | Claude plan, flat |
 | *(not a seat)* Claude via pi | pi's Claude Pro/Max login | any Claude model | **per-token "extra usage"** — Anthropic bills third-party harnesses at API rates since 2026-04-04; only the vendor's own surfaces stay flat |
+
+**Sol is a driver, not a seat** (2026-11-27). Use `gpt-6.2-sol` to drive spec'd, mechanical
+work when the budget is low. Do not add it to a panel. It comes from the same vendor and
+family as Astra, so its blind read would correlate with Astra's. A panel gains from vendor
+diversity, not from a second OpenAI read.
 
 Which harness runs a model is therefore a billing decision first. One harness for all
 non-primary drivers works for the OpenAI models; for the Claude models it is the API
@@ -582,8 +594,8 @@ the primary harness at a cheaper tier — the first thing to reach for when the 
 budget is low, before leaving the vendor at all.
 
 **pi as a second harness for the OpenAI seat.** The subscription route only lists
-models the installed pi knows: 0.74 stopped at the previous generation, 0.85 carries the
-current one — check the installed catalog, not the docs. pi keeps its own OAuth tokens in
+models the installed pi knows: 0.74 stopped at the previous generation, 0.85 carries
+`gpt-6-astra` but, as of 2026-11-27, no 6.2 model — check the installed catalog, not the docs. pi keeps its own OAuth tokens in
 its agent directory; never copy another CLI's token file across (refresh-token rotation
 breaks whichever tool refreshes second). The login is interactive (`/login` in the TUI),
 done once, into the *driver's* agent directory — never the guarded review seat's.
