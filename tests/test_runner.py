@@ -1276,6 +1276,57 @@ class SystemProtocol(RunnerCase):
         self.assertNotIn("You are the lead", argv[2])
 
 
+class RealClaudeAdapter(RunnerCase):
+    """The real claude-code adapter through Session._launch, with Popen stopped before it starts anything."""
+
+    def config(self, root):
+        c = super().config(root)
+        c["leads"]["la"] = {"runtime": "claude-code", "model": "opus", "plan": "pa",
+                            "args": ["--append-system-prompt", "my own rule"]}
+        return c
+
+    def launched_argv(self, handoff):
+        import io
+        from lead.paths import load_config
+        from lead.projects import resolve_project
+        config = load_config(str(self.cfg))
+        project = resolve_project(str(self.repo), config)
+        ctx = runner.Context(config, str(self.state), project, runner.Lock(str(self.state), project.worktree_key),
+                             {"claude-code": runner.ADAPTERS["claude-code"]}, "sandbox-exec", io.StringIO())
+        got = {}
+
+        class Stop(Exception):
+            pass
+
+        real = subprocess.Popen
+
+        def popen(argv, *a, **kw):
+            if argv[0] != "claude":  # git, and anything else bw runs, is real
+                return real(argv, *a, **kw)
+            got["argv"] = argv
+            raise Stop
+
+        with mock.patch.object(runner.subprocess, "Popen", popen), self.assertRaises(Stop):
+            runner.Session(ctx, "la", handoff)
+        os.close(ctx.lock.fd)
+        return got["argv"]
+
+    def test_the_protocol_rides_in_one_append_system_prompt_with_the_users_text_after_it(self):
+        argv = self.launched_argv("@next handoff\nbranch: x")
+        self.assertEqual(argv.count("--append-system-prompt"), 1, argv)
+        system = argv[argv.index("--append-system-prompt") + 1]
+        self.assertTrue(system.startswith("You are the lead for this worktree"), system[:80])
+        self.assertTrue(system.endswith("\n\nmy own rule"))
+        self.assertEqual(argv[-2:], ["--", "@next handoff\nbranch: x"])  # the handoff alone is the first prompt
+        self.assertIn("--add-dir", argv)
+
+    def test_a_fresh_lead_has_no_first_prompt_at_all(self):
+        argv = self.launched_argv(None)
+        self.assertNotIn("--", argv)
+        self.assertEqual(argv[argv.index("--append-system-prompt") + 2:], [])  # nothing after the flag's value
+        self.assertTrue(argv[-1].endswith("my own rule"))
+
+
 class PinnedPlanRefresh(RunnerCase):
     def config(self, root):
         cfg = super().config(root)

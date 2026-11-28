@@ -1146,6 +1146,34 @@ class StartCase(unittest.TestCase):
         self.assertIn("would run: open -a Terminal", out)
         self.assertNotIn("would start the lead here", out)
 
+    def test_a_failed_exec_prints_the_fallback_once_without_a_second_lead_heading(self):
+        out = Tty()
+
+        def boom(prog, argv, e):
+            raise OSError(2, "gone")
+        code = start.start(self.config, self.state, None, run=FakeRun(), out=out, bw_path=self.bw, env=self.env, now=NOW,
+                           verify=False, update=False, stdin=Tty(), cwd=str(self.repo), width=88, chdir=lambda d: None,
+                           execve=boom)
+        self.assertEqual(code, 1)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines.count("Lead"), 1, lines)
+        (fail,) = [i for i, ln in enumerate(lines) if "could not start the lead here" in ln]
+        self.assertGreater(fail, lines.index("Also"))
+        self.assertTrue(lines[fail].startswith("  ✗ could not start the lead here (FileNotFoundError); run it yourself: cd "))
+
+    def test_in_plain_text_with_updates_on_the_wait_line_is_written_before_the_first_attack(self):
+        buf, at_attack = io.StringIO(), []
+
+        class Watching(FakeRun):
+            def answer(inner, argv):
+                if argv[0].endswith(".sh"):
+                    at_attack.append(buf.getvalue())
+                return super().answer(argv)
+        start.start(self.config, self.state, str(self.repo), run=Watching(), out=buf, bw_path=self.bw, env=self.env, now=NOW)
+        self.assertTrue(at_attack)
+        self.assertIn("Please wait.", at_attack[0])
+        self.assertIn("updating pi, kimi, codex. This can take a minute.", at_attack[0])
+
     def test_a_path_inside_the_same_worktree_counts(self):
         sub = self.repo / "pkg"
         sub.mkdir()

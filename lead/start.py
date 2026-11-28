@@ -500,7 +500,7 @@ def _start_here(project, bw, env, rep, chdir, execve):
             chdir(project.worktree)
             execve(bw, [bw, "lead"], lead_env)
         except OSError as e:
-            rep.bad("Lead", f"could not start the lead here ({type(e).__name__}); run it yourself: {by_hand}", raw=True)
+            rep.bad("Also", f"could not start the lead here ({type(e).__name__}); run it yourself: {by_hand}", raw=True)
             return 1
         return 0
     return launch
