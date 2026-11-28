@@ -326,6 +326,15 @@ class Ensure(ClaudePaneCase):
                                           ["plugin", "update", cp.PLUGIN_ID]])
         self.assertIn(f"from 0.0.1 to {version.VERSION}", self.said[0])
 
+    def test_a_stale_plugin_without_a_marketplace_gets_one_first(self):
+        rec = self.rec(plugins=[entry("0.0.1")], markets=[])
+        self.ensure(rec)
+        self.assertEqual(rec.changing(), [["plugin", "marketplace", "add", cp.ROOT],
+                                          ["plugin", "marketplace", "update", "balancewheel"],
+                                          ["plugin", "update", cp.PLUGIN_ID]])
+        self.assertEqual(len(self.said), 1, self.said)
+        self.assertIn(f"updated the live pane plugin from 0.0.1 to {version.VERSION}", self.said[0])
+
     def test_claude_pane_false_calls_nothing(self):
         rec = self.rec()
         self.ensure(rec, config={**self.config, "claude_pane": False})

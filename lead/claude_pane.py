@@ -268,12 +268,12 @@ def ensure(config: dict, run=proc.run, say=print, refused: Optional[str] = None)
         if entry is not None and (entry.get("enabled") is False or entry.get("version") == VERSION):
             return
         failed = []
+        ok = source is not None or _step(run, ["plugin", "marketplace", "add", ROOT], failed.append)
         if entry is None:
-            ok = ((source is not None or _step(run, ["plugin", "marketplace", "add", ROOT], failed.append))
-                  and _step(run, ["plugin", "install", PLUGIN_ID], failed.append))
+            ok = ok and _step(run, ["plugin", "install", PLUGIN_ID], failed.append)
             done = f"installed the live pane plugin ({PLUGIN_ID} {VERSION})"
         else:
-            ok = (_step(run, ["plugin", "marketplace", "update", MARKETPLACE], failed.append)
+            ok = (ok and _step(run, ["plugin", "marketplace", "update", MARKETPLACE], failed.append)
                   and _step(run, ["plugin", "update", PLUGIN_ID], failed.append))
             done = f"updated the live pane plugin from {entry.get('version')} to {VERSION}"
         say(f"bw: {done}" if ok else
