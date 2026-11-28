@@ -87,6 +87,10 @@ class ViewsCase(unittest.TestCase):
              "reason": "exit"},
         ])
 
+    def test_layout_passes_origin_through(self):
+        out = views.layout({"seats": [{"id": "seat:a", "name": "a", "origin": "local"}, {"id": "seat:b", "name": "b"}]})
+        self.assertEqual({n["id"]: n["origin"] for n in out["nodes"]}, {"seat:a": "local", "seat:b": "bw"})
+
     def test_every_view_serialises_on_an_empty_state(self):
         out = self.all_json(self.built())
         self.assertEqual(out["models"]["leads"], [])

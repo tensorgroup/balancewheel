@@ -40,6 +40,7 @@
   svg.graph { display: block; max-width: 100%; height: auto; }
   svg.graph rect { stroke-width: 1.5; fill: var(--head); }
   svg.graph text { fill: var(--fg); font-size: 11px; }
+  svg.graph text.local-mark { font-size: 8px; opacity: 0.7; }
   svg.graph line { stroke: var(--line); stroke-width: 1; }
   .h-verified { stroke: var(--ok); } .h-pending { stroke: var(--pend); }
   .h-capped { stroke: var(--bad); } .h-unknown { stroke: var(--muted); stroke-dasharray: 3 2; }
@@ -377,9 +378,11 @@ function renderGraph(d, root) {
     const h = HEALTH_NAMES.indexOf(n.health) >= 0 ? n.health : "unknown";
     const label = missing(n.label) ? n.id : String(n.label);
     const box = svg("g");
-    box.appendChild(svg("title", {}, (n.kind || "node") + " " + label + ": " + h));
+    const local = n.origin === "local";
+    box.appendChild(svg("title", {}, (n.kind || "node") + " " + label + (local ? " (local)" : "") + ": " + h));
     box.appendChild(svg("rect", {x: p.x, y: p.y, width: W, height: H, rx: 3, class: "h-" + h}));
     box.appendChild(svg("text", {x: p.x + 6, y: p.y + 16}, label.length > 22 ? label.slice(0, 21) + "…" : label));
+    if (local) box.appendChild(svg("text", {x: p.x + W - 6, y: p.y + 8, "text-anchor": "end", class: "local-mark"}, "local"));
     g.appendChild(box);
   }
   const wrap = el("div", {class: "wrap"});

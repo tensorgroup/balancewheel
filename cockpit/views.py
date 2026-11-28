@@ -78,7 +78,8 @@ def layout(reg) -> dict:
                 health = n.get("health") if n.get("health") in HEALTHS else "unknown"
                 label = str(n.get("name") if n.get("name") is not None else n["id"])
                 layers.setdefault(layer, {})[n["id"]] = {"id": n["id"], "label": label, "kind": kind,
-                                                         "layer": layer, "health": health}
+                                                         "layer": layer, "health": health,
+                                                         "origin": "local" if n.get("origin") == "local" else "bw"}
     nodes = []
     for layer in sorted(layers):
         for i, n in enumerate(sorted(layers[layer].values(), key=lambda n: (n["label"], n["id"]))):

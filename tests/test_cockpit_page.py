@@ -121,6 +121,9 @@ class HostileThroughServer(unittest.TestCase):
         r, page = self.get("/", cookie)
         self.assertNotIn(HOSTILE.encode(), page)  # it reaches the DOM only through the JSON and textContent
 
+    def test_graph_marks_local_nodes(self):
+        self.assertIn('n.origin === "local"', PAGE)
+
 
 if __name__ == "__main__":
     unittest.main()

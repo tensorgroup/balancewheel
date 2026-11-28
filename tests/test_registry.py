@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lead import ccswitch, registry, runner, sandbox  # noqa: E402
 from lead.projects import worktree_key  # noqa: E402
 from lead.proc import Result  # noqa: E402
+from metrics import store  # noqa: E402
 from seats import caps as seat_caps  # noqa: E402
 
 NOW = 1_800_000_000.0
@@ -26,6 +27,7 @@ class RegistryCase(unittest.TestCase):
         self.root = os.path.realpath(self.tmp.name)
         self.state = os.path.join(self.root, "state")
         self.proj = os.path.join(self.root, "app")
+        self.log = os.path.join(self.root, "metrics.jsonl")
         os.makedirs(self.proj)
         self.config = {
             "plans": {"pc": {"billing": "plan", "quota": "statusline"},
@@ -223,7 +225,32 @@ class RegistryCase(unittest.TestCase):
         stale = self.by(self.build(), "projects", self.proj)  # a leftover file with nobody holding it
         self.assertIsNone(stale["current_lead"])
 
+    def with_local(self, seats):
+        return dict(self.config, local={"seats": seats, "logs": []}, metrics_log=self.log)
+
+    def test_local_seats_join_seats_with_origin_and_last_seen(self):
+        store.append(self.log, {"type": "usage", "seat": "my-metric", "t": NOW - 60})
+        store.append(self.log, {"type": "run", "phase": "start", "seat": "my-metric", "t": NOW - 10})  # name differs: not counted
+        store.append(self.log, {"type": "usage", "seat": "my-metric", "t": NOW - 40 * 86400})  # older than 30 days
+        reg = registry.build(self.with_local([{"name": "my-seat", "match": "x", "metric": "my-metric"}]), self.state, NOW, run=fake_run)
+        n = next(s for s in reg["seats"] if s["name"] == "my-seat")
+        self.assertEqual((n["origin"], n["health"], n["last_seen"]), ("local", "unknown", NOW - 60))
+        self.assertEqual((n["id"], n["enforcement"], n["plan"], n["fallback"], n["verified"]),
+                         ("seat:my-seat", "local", None, None, "unknown"))
+        self.assertTrue(all(s["origin"] == "bw" for s in reg["seats"] if s["name"] != "my-seat"))
+        self.assertFalse([e for e in reg["edges"] if "seat:my-seat" in (e["from"], e["to"])])
+
+    def test_local_seat_last_seen_reads_run_rows_and_extra_logs(self):
+        extra = os.path.join(self.root, "extra.jsonl")
+        store.append(extra, {"type": "run", "phase": "end", "seat": "a", "t": NOW - 5})
+        store.append(self.log, {"type": "run", "phase": "start", "seat": "a", "t": NOW - 500})
+        cfg = self.with_local([{"name": "a", "match": "x", "metric": "a"}, {"name": "b", "match": "y", "metric": "b"}])
+        cfg["local"]["logs"] = [extra, os.path.join(self.root, "missing.jsonl")]
+        seats = {s["name"]: s for s in registry.build(cfg, self.state, NOW, run=fake_run)["seats"]}
+        self.assertEqual((seats["a"]["last_seen"], seats["b"]["last_seen"]), (NOW - 5, None))
+
     def test_health_values_are_in_the_set(self):
+        self.config = self.with_local([{"name": "loc", "match": "x", "metric": "loc"}])
         reg = self.build()
         for k in ("tools", "plans", "models", "seats", "leads", "profiles", "projects"):
             for n in reg[k]:

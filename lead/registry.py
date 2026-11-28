@@ -5,7 +5,10 @@ nothing. Nodes: tools, plans, models, seats, leads, profiles, projects; `edges` 
 (`project→profile`, `profile→lead`, `profile→seat`, `lead→tool`, `seat→tool`, `tool→plan`,
 `plan→model`), each once per pair and only between nodes that exist. Every node has an `id`
 (`<kind>:<name>`) and a `health` in {verified, pending, capped, unknown}:
-  seat      — capped when its seat cap or its plan's is; else its verification state; bw enforces it;
+  seat      — capped when its seat cap or its plan's is; else its verification state; bw enforces it
+              (`origin: "bw"`). A seat from config `local.seats` joins the same collection with
+              `origin: "local"`, `enforcement: "local"`, health unknown, no edges, and `last_seen`
+              (the newest run or usage row for it in the last 30 days, else None);
   lead      — capped when its plan is; else its verification state (a runtime bw does not contain
               and does not guard needs none: unknown);
   plan      — capped when a cap is recorded; verified when a quota reading is known; else unknown;
@@ -27,6 +30,7 @@ from .locks import DEFAULT_TOOL_RUNTIME, RuntimeLock, runtime_tools, tool_runtim
 from .paths import guarded as _guarded, read_json, write_json_atomic
 from .projects import worktree_key
 from .runtimes import ADAPTERS
+from metrics import config as metrics_config, store
 from seats import caps as seat_caps
 from .updates import UNREADABLE, VERSION_TIMEOUT_S, installer_of, read_version
 
@@ -136,6 +140,36 @@ def _prices(state):
     return out if isinstance(out, dict) else {}
 
 
+LAST_SEEN_DAYS = 30
+
+
+def _last_seen(config, now) -> dict:
+    """name -> newest row time of a `run` row for the local seat or a `usage` row for its metric, over the
+    main log and the extra logs, within LAST_SEEN_DAYS. A seat never seen is absent; an unreadable log counts as empty."""
+    local = [s for s in (_dict(config.get("local")).get("seats") or []) if isinstance(s, dict) and s.get("name")]
+    if not local:
+        return {}
+    since = now - LAST_SEEN_DAYS * 86400
+    main = store.log_path(config)
+    rows = []
+    for path in [main] + metrics_config.extra_logs(config, exclude=main):
+        try:
+            if os.path.exists(path) and not os.path.isfile(path):  # a FIFO would block the read
+                continue
+            rows += store.read_tail(path, since).events
+        except Exception:
+            continue
+    seen = {}
+    for s in local:
+        name, metric = s["name"], s.get("metric") or s["name"]
+        times = [t for e in rows
+                 if (e.get("type") == "run" and e.get("seat") == name) or (e.get("type") == "usage" and e.get("seat") == metric)
+                 for t in [store.row_time(e)] if t is not None and since <= t <= now + 86400]
+        if times:
+            seen[name] = max(times)
+    return seen
+
+
 def build(config, state, now, run=proc.run) -> dict:
     plans_cfg = _dict(config.get("plans"))
     leads_cfg = _dict(config.get("leads"))
@@ -187,7 +221,15 @@ def build(config, state, now, run=proc.run) -> dict:
         health = "capped" if seat_caps.capped(config, state, name, now) is not None else v
         seats.append({"id": f"seat:{name}", "name": name, "runtime": s.get("runtime"), "model": s.get("model"),
                       "plan": s.get("plan"), "fallback": s.get("fallback"), "verified": v,
-                      "enforcement": "bw", "health": health})
+                      "enforcement": "bw", "origin": "bw", "health": health})
+    seen = _last_seen(config, now)
+    taken = {n["name"] for n in seats}
+    for s in _dict(config.get("local")).get("seats") or []:
+        if not isinstance(s, dict) or not isinstance(s.get("name"), str) or s["name"] in taken:
+            continue
+        seats.append({"id": f"seat:{s['name']}", "name": s["name"], "runtime": s.get("runtime"), "model": s.get("model"),
+                      "plan": None, "fallback": None, "verified": "unknown", "enforcement": "local",
+                      "origin": "local", "last_seen": seen.get(s["name"]), "health": "unknown"})
 
     lead_by = {n["name"]: n for n in leads}
     seat_by = {n["name"]: n for n in seats}

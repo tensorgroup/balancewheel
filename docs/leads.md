@@ -305,6 +305,10 @@ once for each bw-contained lead runtime.
   (`registry.json` in the state dir: tools, plans, models, seats, leads, profiles, projects,
   edges, each node with a health). A runtime a lead or seat uses without a `tools` entry still
   gets a tool node, marked `configured: false`. Delete the file and nothing is lost.
+  Each seat node carries `origin`: `"bw"` for a configured seat, `"local"` for a seat in config
+  `local.seats` (a seat bw does not run). A local seat has `enforcement: "local"`, health `unknown`,
+  no plan, no fallback, no edges, and `last_seen`, the newest `run` or `usage` row for it in the last 30
+  days (else null). The Graph tab marks a local node with a small "local" text and "(local)" in its title.
 - **Usage data: cc-switch (optional).** The Usage tab reads [cc-switch](stack.md)'s
   session-log table from a sealed copy in the state dir; bw never opens or writes the original,
   and an unreadable row is counted in `skipped_rows`, not guessed. Tokens or costs a row does

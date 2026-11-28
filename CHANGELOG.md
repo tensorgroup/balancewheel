@@ -15,6 +15,11 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **Local seats in the registry and the cockpit graph (`lead/registry.py`, `cockpit/`).** Every seat node now has
+  `origin` (`"bw"`). A seat in `local.seats` joins `seats` with `origin: "local"`, `enforcement: "local"`, health
+  `unknown`, no edges, and `last_seen` (the newest `run` row with that seat name or `usage` row with its `metric`,
+  over the main and extra logs, within 30 days; else null). `cockpit/views.layout` passes `origin` through
+  (default `"bw"`); the Graph shows a small "local" mark and "(local)" in the node title.
 - **The `run` row and `store.read_tail` (`metrics/store.py`).** A new log row type, `run`, records one seat or
   local run: `{"type": "run", "phase": "start" | "beat" | "end", "run_id": "r<12 hex>", "t": <float epoch>, "seat",
   "dir", ...}`. A start row adds `model`, `label`, `source` (`bw` | `local`), `panel`, `session_id`, `pid`, `host`, and
