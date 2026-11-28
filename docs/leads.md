@@ -127,14 +127,17 @@ once for each bw-contained lead runtime.
   unknown source, and does nothing when `claude_pane` is false, when you disabled the plugin,
   or when a check fails. Before it changes anything it prints one `bw: setting up the live
   pane: ...` line, and one more only when a step fails or you press Ctrl-C. Ctrl-C stops the
-  step; the lead starts either way. `bw start --dry-run` only says "would ensure the live
-  pane plugin". Every `claude` call runs from bw's checkout, not from the lead's worktree
+  step; the lead starts either way. `bw start --dry-run` only names the check: "would ensure
+  the live pane plugin" for a Claude Code lead, and "would check the live pane's source" for
+  any other lead or with `claude_pane` false. Every `claude` call runs from bw's checkout, not from the lead's worktree
   (whose project `.claude/` settings a lead can edit), and the install is `--scope user`. A
   repair uninstalls the old plugin before it adds the marketplace, so a failed step is tried
   again at the next run. **One checkout per machine:** the pane's source is the checkout that
   runs `bw`, so running `bw lead` or `bw setup claude-pane` from a second checkout (a worktree
   of bw in development, say) treats the first checkout's pane as foreign: it uninstalls that
-  plugin and leaves the first checkout's marketplace in place.
+  plugin and leaves the first checkout's marketplace in place. A lead whose target is bw's own
+  repository (a linked worktree of it) uninstalls the pane, and the next Claude Code lead
+  elsewhere installs it again; the pane is missing from new sessions while that lead runs.
 - **After this upgrade, verify the seats once.** The live pane work changed `seats/run.py` (a seat now writes
   `run` start and end rows), and that file is part of each seat's verification key. Every seat shows
   `pending` until you run `bw seat verify --changed`. It attack-tests each seat and spends model quota.
