@@ -233,6 +233,30 @@ class SeatLive(unittest.TestCase):
         self.write("sessions/2026/11/27/rollout-new.jsonl", meta, NEW - 10)
         self.assertEqual(live.live_usage("codex", self.home, None, "/w", start)["ctx"], 1000)
 
+    def test_the_first_timestamp_in_the_head_says_when_a_session_began(self):
+        # the real claude-code shape: the first line has no timestamp, a later one has
+        start = NEW - 50
+        lead = [{"type": "summary", "summary": "x"}] + _claude_lines(start - 3600, 1000)
+        seat = [{"type": "summary", "summary": "x"}] + _claude_lines(start + 10, 2000)
+        self.write(".claude/projects/-w/lead.jsonl", lead, NEW)
+        self.write(".claude/projects/-w/seat.jsonl", seat, NEW - 20)
+        self.assertEqual(live.live_usage("claude-code", self.home, None, "/w", start)["ctx"], 2000)
+        os.unlink(os.path.join(self.home, ".claude/projects/-w/seat.jsonl"))
+        with mock.patch.object(live, "_birth", lambda st: NEW):  # a birth time after start does not win
+            self.assertEqual(live.live_usage("claude-code", self.home, None, "/w", start), live.EMPTY)
+
+    def test_no_timestamp_and_no_birth_time_is_not_new(self):
+        start = NEW - 50
+        lines = [{"type": "summary"}, {"type": "assistant", "message": {"usage": {
+            "input_tokens": 7, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 1}}}]
+        self.write(".claude/projects/-w/s.jsonl", lines, NEW)
+        with mock.patch.object(live, "_birth", lambda st: None):  # Linux: no st_birthtime
+            self.assertEqual(live.live_usage("claude-code", self.home, None, "/w", start), live.EMPTY)
+            # a session id still names its file
+            self.assertEqual(live.live_usage("claude-code", self.home, "s", "/w", start)["ctx"], 7)
+        with mock.patch.object(live, "_birth", lambda st: NEW):
+            self.assertEqual(live.live_usage("claude-code", self.home, None, "/w", start)["ctx"], 7)
+
     def test_old_files_are_never_opened(self):
         start = time.time() - 60
         day = time.strftime("%Y/%m/%d", time.gmtime(start))

@@ -19,7 +19,8 @@ Event shapes, per runtime (key names only):
 - agy: no known session file; always `EMPTY`.
 
 With no `session_id` (or none that names a file), a session counts only when its file was written at or
-after `start - 1` and it also began then (its first record's `timestamp`, else the file's birth time).
+after `start - 1` and it also began then: the first record with a `timestamp` in the file's first 64 KiB,
+else the file's birth time; with neither, the session does not count.
 So the lead's own session in the same folder, begun before the run, is never read.
 
 This module is not hashed into the seat key (seats/verify.py), so a format fix here resets no seat.
@@ -81,7 +82,9 @@ def _read(path, tail):
             return None
         if not tail:
             data = os.read(fd, HEAD_BYTES)
-            return data.split(b"\n", 1)[0] if b"\n" in data else (data if len(data) < HEAD_BYTES else None)
+            if len(data) < HEAD_BYTES:  # the whole file
+                return data
+            return data[:data.rindex(b"\n") + 1] if b"\n" in data else None  # whole lines only
         start = max(0, st.st_size - TAIL_BYTES)
         os.lseek(fd, start, os.SEEK_SET)
         chunks, left = [], st.st_size - start
@@ -116,10 +119,13 @@ def _rows(data):
                 yield obj
 
 
-def _first_row(path):
-    raw = _read(path, tail=False)
-    obj = _json(raw) if raw else None
-    return obj if isinstance(obj, dict) else {}
+def _head(path):
+    """(first row, the rows as they parse) of the whole lines in the first HEAD_BYTES; ({}, []) when none."""
+    data = _read(path, tail=False)
+    if not data:
+        return {}, []
+    first = _json(data.split(b"\n", 1)[0])
+    return (first if isinstance(first, dict) else {}), _rows(data)
 
 
 def _int(x):
@@ -248,14 +254,22 @@ def _ran_in(runtime, first, dir):
     return True  # claude-code: the slug names dir; kimi: the index's workDir did
 
 
-def _began(first, st):
-    """When the session began: its first record's timestamp, else the file's birth time (else mtime)."""
-    t = _time(first.get("timestamp"))
-    if t is None:
-        t = _time(_get(first, "payload", "timestamp"))
-    if t is None:
-        t = getattr(st, "st_birthtime", None) or st.st_mtime
-    return t
+def _birth(st):
+    return getattr(st, "st_birthtime", None)
+
+
+def _began(rows, st):
+    """When the session began: the first head record with a `timestamp` (codex: also `payload.timestamp`),
+    else the file's birth time. With neither (Linux has no birth time), -inf: the session never counts as
+    new, because the mtime of a file being written says nothing about when its session began."""
+    for r in rows:
+        t = _time(r.get("timestamp"))
+        if t is None:
+            t = _time(_get(r, "payload", "timestamp"))
+        if t is not None:
+            return t
+    b = _num(_birth(st))
+    return b if b else -math.inf
 
 
 def _lstat_reg(path):
@@ -275,7 +289,7 @@ def _pick(runtime, root, dir, session_id, start):
     if by_id:
         for path, name, _ in files:
             if _names_session(runtime, name, session_id) and _lstat_reg(path) and \
-                    _ran_in(runtime, _first_row(path), dir):
+                    _ran_in(runtime, _head(path)[0], dir):
                 return path
         floor = _floor_day(start)
         files = [f for f in files if f[2] is None or floor is None or f[2] >= floor]
@@ -286,8 +300,8 @@ def _pick(runtime, root, dir, session_id, start):
             recent.append((st.st_mtime, path, st))
     recent.sort(key=lambda x: x[0], reverse=True)
     for _, path, st in recent[:MAX_CANDIDATES]:
-        first = _first_row(path)
-        if _ran_in(runtime, first, dir) and _began(first, st) >= start - 1:
+        first, rows = _head(path)
+        if _ran_in(runtime, first, dir) and _began(rows, st) >= start - 1:
             return path
     return None
 

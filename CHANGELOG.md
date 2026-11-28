@@ -35,7 +35,8 @@ not against the prose.
   cost; the window from the seat's `provider.contextWindow`), and kimi (`token_counting.measured`, found through
   `session_index.jsonl`); agy gives nulls. It picks only a session whose working directory is the worktree: the
   file whose name ends in `session_id`, else the newest file written at or after `start - 1` whose session also
-  began then (its first record's timestamp), so an older session in the same folder, such as the lead's own, never
+  began then (the first `timestamp` in its first 64 KiB, else the file's birth time; with neither, it
+  does not count), so an older session in the same folder, such as the lead's own, never
   counts; older files are never opened, and older codex date folders are not listed. It reads at most the
   last 1 MiB of a file, follows no link, makes no dir, and never raises (a changed format gives nulls). `home=None`
   reads the CLI's folder under the real home (local seats). The module is not in the seat key.
