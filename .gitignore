@@ -7,3 +7,6 @@ __pycache__/
 node-compile-cache/
 .tmp??????
 .worktrees/
+
+# the types Claude Code writes into a plugin folder it loads (PD-11)
+claude/live-pane/.claude-plugin/types/

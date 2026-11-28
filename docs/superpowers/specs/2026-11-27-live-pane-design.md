@@ -72,8 +72,10 @@ without any one person's setup in the repo.
   [Unreleased]`, `docs/usage-map/data.generated.js` and `infra.js`, `docs/stack.md`, and the
   `docs/start/` guide wherever its shown output changes. `setup/paths.txt` gains nothing.
 - Tests: `tests/test_<area>.py`, synthetic fixtures only. The plugin ships `*.test.tsx` for
-  `claude plugin test`; a Python test runs them when a `claude` binary is on PATH and skips
-  with a clear message when not.
+  `claude plugin test`; a Python test runs them (and `claude plugin validate`) when
+  `BW_PLUGIN_TESTS=1` is set and a `claude` binary is on PATH, and skips with a clear message
+  otherwise. The default suite stays hermetic: the real binary reads the user's Claude config
+  and writes `.claude-plugin/types/` into the tree.
 
 ## Approaches considered
 

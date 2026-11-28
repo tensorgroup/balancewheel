@@ -1,0 +1,18 @@
+{
+  "name": "live-pane",
+  "version": "0.2.0-dev.1",
+  "description": "A pane beside the chat: the agents and balancewheel seats that run now, the session's figures, and the runs that ended in this worktree",
+  "author": {
+    "name": "balancewheel"
+  },
+  "license": "Apache-2.0",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "bwPath": {
+      "type": "string",
+      "title": "Path to bw",
+      "description": "The bw command the pane runs for seat data (bw live --json)",
+      "default": "bw"
+    }
+  }
+}
