@@ -3,8 +3,8 @@
 
   bw                                              in a worktree: lead it here (same as bw lead; lead flags
                                                   work too, e.g. bw --use <lead>); elsewhere: bw status
-  bw start [path] [--dry-run] [--no-update] [--no-verify] [--tab]
-                                                  update tools, re-verify, pick the lead, then start it:
+  bw start [path] [--dry-run] [--no-update] [--no-self-update] [--no-verify] [--tab]
+                                                  update bw and the tools, re-verify, pick the lead, then start it:
                                                   in this terminal when you run it there with no path (or a
                                                   path in this worktree); otherwise in a Terminal tab (a
                                                   Ghostty tab with canvas: ghostty, an Orca pane with
@@ -140,8 +140,19 @@ def cmd_lead(a, config, state):
 
 
 def cmd_start(a, config, state):
+    bw = os.path.realpath(__file__)
+
+    def restart(env):  # the same command again, on the code the pull just brought
+        sys.stdout.flush()
+        try:
+            os.execve(sys.executable, [sys.executable, bw, *sys.argv[1:]], env)
+        except OSError as e:
+            print(f"bw start: could not start again on the new version ({type(e).__name__}: {e}); "
+                  "run bw start again", file=sys.stderr)
+            sys.exit(1)
+
     return start.start(config, state, a.path, dry_run=a.dry_run, verify=not a.no_verify, update=not a.no_update,
-                       bw_path=os.path.realpath(__file__), tab=a.tab)
+                       bw_path=bw, tab=a.tab, self_update=not a.no_self_update, restart=restart)
 
 
 def cmd_status(a, config, state):
@@ -485,7 +496,7 @@ def main(argv=None):
     sub.add_parser("registry").add_argument("--print", action="store_true")
     sub.add_parser("probe").add_argument("plans", nargs="*")
     sa = sub.add_parser("start"); sa.add_argument("path", nargs="?", default=None)
-    for flag in ("--dry-run", "--no-update", "--no-verify", "--tab"):
+    for flag in ("--dry-run", "--no-update", "--no-self-update", "--no-verify", "--tab"):
         sa.add_argument(flag, action="store_true")
     ib = sub.add_parser("inbox"); ib.add_argument("--project", action="store_true"); ib.add_argument("--all", action="store_true")
     an = sub.add_parser("answer"); an.add_argument("id"); an.add_argument("text")

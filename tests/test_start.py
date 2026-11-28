@@ -459,6 +459,91 @@ class StartCase(unittest.TestCase):
             self.assertEqual({a[0] for a in run.argvs()}, {"git"})  # no tool update or version read ran from it
         self.assertFalse(os.path.exists(os.path.join(self.state, "start.json")))
 
+    # --- bw's own update --------------------------------------------------------------------
+
+    def install(self):
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_selfupdate import commit, git, make_install
+        writer, install = make_install(self._fresh("bw-install"))
+        return writer, install, commit, git
+
+    def _fresh(self, name):
+        d = self.root / name
+        d.mkdir()
+        return d
+
+    def test_a_pushed_bw_commit_is_pulled_and_bw_start_starts_again_once(self):
+        writer, install, commit, git = self.install()
+        commit(writer, "b")
+        git(writer, "push", "-q", "origin", "main")
+        envs = []
+        code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), self_update=True,
+                               restart=envs.append)
+        self.assertEqual(code, 0, out)
+        self.assertTrue((install / "b").exists())
+        self.assertEqual(len(envs), 1)
+        before, after = envs[0]["BW_SELF_UPDATED"].split()
+        self.assertIn(f"bw: updated {before} → {after}; starting again on the new version", out)
+        self.assertNotIn("lead:", out)  # nothing else ran on the old code
+
+    def test_after_the_restart_it_says_what_changed_and_does_not_pull_again(self):
+        writer, install, commit, git = self.install()
+        run = FakeRun()
+        code, out = self.start(run, bw_path=str(install / "bin" / "bw"), self_update=True,
+                               restart=lambda env: self.fail("restarted twice"),
+                               env={**self.env, "BW_SELF_UPDATED": "abc1234 def5678"})
+        self.assertEqual(code, 0, out)
+        self.assertIn("bw: updated abc1234 → def5678", out)
+        self.assertFalse([a for a in run.argvs() if "pull" in a])
+        self.assertNotIn("BW_SELF_UPDATED", os.environ)
+
+    def test_a_current_bw_says_so_and_goes_on(self):
+        writer, install, commit, git = self.install()
+        head = git(install, "rev-parse", "--short", "HEAD")
+        code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), self_update=True,
+                               restart=lambda env: self.fail("restarted"))
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"bw: {head}, current", out)
+
+    def test_no_update_and_the_default_never_pull_bw(self):
+        writer, install, commit, git = self.install()
+        commit(writer, "b")
+        git(writer, "push", "-q", "origin", "main")
+        for kw in ({"update": False, "self_update": True}, {}):
+            code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), restart=self.fail, **kw)
+            self.assertEqual(code, 0, out)
+            self.assertFalse((install / "b").exists(), kw)
+            self.assertNotIn("bw: ", out.replace("bw start: ", ""), kw)
+
+    def test_config_turns_the_bw_update_off(self):
+        writer, install, commit, git = self.install()
+        commit(writer, "b")
+        git(writer, "push", "-q", "origin", "main")
+        self.config["updates"]["self_update"] = False
+        for dry in (False, True):
+            code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), self_update=True,
+                                   restart=self.fail, dry_run=dry)
+            self.assertEqual(code, 0, out)
+            self.assertNotIn("update bw", out)
+            self.assertNotIn("bw: checking", out)
+        self.assertFalse((install / "b").exists())
+
+    def test_a_restarted_start_on_a_terminal_prints_no_second_header(self):
+        writer, install, commit, git = self.install()
+        code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), self_update=True, tty=True, width=100,
+                               restart=self.fail, env={**self.env, "BW_SELF_UPDATED": "abc1234 def5678"})
+        self.assertNotIn("bw start · ", out)
+        self.assertIn("✓ bw: updated abc1234 → def5678", out)
+
+    def test_dry_run_names_the_pull_and_runs_it_not(self):
+        writer, install, commit, git = self.install()
+        commit(writer, "b")
+        git(writer, "push", "-q", "origin", "main")
+        code, out = self.start(FakeRun(), bw_path=str(install / "bin" / "bw"), self_update=True, dry_run=True)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"would update bw: git -C {install} pull --ff-only --quiet", out)
+        self.assertFalse((install / "b").exists())
+
     def test_unresolvable_path_exits_2(self):
         plain = self.root / "plain"; plain.mkdir()
         run = FakeRun()

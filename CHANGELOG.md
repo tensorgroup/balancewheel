@@ -15,6 +15,13 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **`bw start` updates bw itself, and `updates.self_update`** (`lead/selfupdate.py`, `lead/start.py`, `bin/bw`,
+  `metrics/config.py`). The first step of `bw start` is `git pull --ff-only` on the clone `bin/bw` runs from, without
+  the shell's `GIT_*` variables and with no password prompt. It skips a clone with local changes to tracked files,
+  a detached HEAD, or no upstream, and says why; a diverged history fails and changes nothing. When HEAD moved,
+  `bw start` starts again once on the new code (`BW_SELF_UPDATED`, never passed to a lead). New config key
+  `updates.self_update` (boolean, default `true`); new flag `--no-self-update`; `--no-update` skips it too.
+
 - **`bw start` starts the lead in this terminal** (`lead/start.py`). When stdin and stdout are terminals and the
   target is the worktree of the current directory (no path, or a path inside it), `bw start` does all its
   steps, prints `starting here` on the lead line, then `chdir`s into the worktree and `exec`s `bw lead` with the

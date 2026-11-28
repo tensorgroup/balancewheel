@@ -221,6 +221,8 @@ bw start · ~/code/my-project
   dry run (profile product): nothing is run or written
 
 Updates
+  · would update bw: git -C ~/.local/share/balancewheel pull --ff-only --quiet (only
+    when its checkout has no local changes)
   · would update claude: claude update · lock runtime-claude-code · installer claude
 
 Quota
@@ -245,7 +247,8 @@ On a terminal, `bw start` prints sections. A `✓` is a pass, a `✗` is a failu
 information, and a `…` is a wait. While a slow step runs, a `… still waiting on: <part> (<time>)` line
 repeats every 15 s. Piped to a file, it prints plain lines that start with `bw start: `.
 
-Then run it for real. `bw start` updates your tools, re-checks containment, reads quota, and
+Then run it for real. `bw start` updates bw itself (a `git pull --ff-only` of its install clone; it
+starts again once when a new version arrives), updates your tools, re-checks containment, reads quota, and
 opens the lead. When you run it in a terminal, from inside the project and with no path, it
 starts the lead in that same terminal. With a path to another project, it opens the lead in a
 new macOS Terminal tab (set `"canvas": "ghostty"` for a Ghostty tab; `--tab` forces the tab inside the project too). On Linux, run `bw` inside

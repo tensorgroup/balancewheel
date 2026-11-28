@@ -499,7 +499,14 @@ def load_config(path=None):
             "rotation.cli_fresh_min: needs schema_version 3")
     rotation = _validate_defaults(obj, "rotation", ROTATION_DEFAULTS)
     _expect(rotation["cli_fresh_min"] >= 1, "rotation.cli_fresh_min: must be at least 1")
-    updates = _validate_defaults(obj, "updates", UPDATES_DEFAULTS)
+    given_updates = obj.get("updates", {})
+    self_update = True  # bw start pulls bw's own install clone (lead/selfupdate.py); false turns that off
+    if isinstance(given_updates, dict) and "self_update" in given_updates:
+        _expect(isinstance(given_updates["self_update"], bool), "updates.self_update: must be true or false")
+        self_update = given_updates["self_update"]
+        given_updates = {k: v for k, v in given_updates.items() if k != "self_update"}
+    updates = _validate_defaults({"updates": given_updates}, "updates", UPDATES_DEFAULTS)
+    updates["self_update"] = self_update
     panel = _validate_defaults(obj, "panel", PANEL_DEFAULTS, minimum=1)
     cockpit = _validate_cockpit(obj, warnings)
     for k in ("state_dir", "metrics_log", "commands_dir", "bin_dir"):

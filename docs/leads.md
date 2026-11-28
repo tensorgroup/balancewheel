@@ -4,7 +4,8 @@
 lead protocol as a system prompt and `--add-dir` for the checkpoint dir; `bw start` prints sections with marks on
 a terminal, says what it is waiting for before a slow step and every 15 s while it runs, says when a check waits
 for a runtime lock, lists the repositories to start when the folder is not one, and starts the lead in this
-terminal when you run it there with no path. `bw lead` prints nothing into a running lead's terminal; a new
+terminal when you run it there with no path; it also pulls its own install clone and starts again on a new
+version. `bw lead` prints nothing into a running lead's terminal; a new
 question sends a desktop notification instead.
 Written 2026-11-24: moved here, unchanged, from the README's "Leads and rotation" section, so the README
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
@@ -168,12 +169,24 @@ once for each bw-contained lead runtime.
     Another agent runtime started by the lead (a second `claude`, `codex`, or `pi`) is
     outside the guard: it is gray, so it asks, and what it does inside is not judged.
     When the guard is acting, a false block is worked around by hand, outside the lead.
-- **`bw start [path] [--dry-run] [--no-update] [--no-verify] [--tab]` (since 2026-10-25).** One command
+- **`bw start [path] [--dry-run] [--no-update] [--no-self-update] [--no-verify] [--tab]` (since 2026-10-25).** One command
   to begin a session in a project (the path defaults to the current directory; a new repository needs
   only `git init`, no commit). When the folder is not in a git repository, it says so and lists the
   repositories directly under it as `bw start <path>` commands, most recently used first. It refuses
   when `bw` itself lives inside the target worktree or its git directory (a lead could edit
   the next `bw lead`), then:
+  0. **updates bw itself**: `git pull --ff-only` on the clone `bin/bw` runs from, so only commits
+     already pushed to its branch's upstream arrive. It skips, and says why, when that clone has
+     local changes to tracked files, a detached HEAD, or no upstream; a history that diverged fails
+     and changes nothing. Git runs without your shell's `GIT_*` variables and never asks for a
+     password. When a new version arrives, `bw start` starts again once on it, so every later step,
+     the containment checks too, runs the new code. `--no-self-update` skips only this step,
+     `--no-update` skips it with the tool updates, and `updates.self_update: false` in the config
+     turns it off for good; `--dry-run` prints the command. This runs the newest commit on the
+     branch you track, unreviewed by you: track a branch you trust, or turn it off. A lead that is
+     already running in another tab keeps the code it started with. Do not point `bw` at a
+     checkout you edit: a lead could edit the next `bw lead`, and bw refuses to start a lead in the
+     repository it runs from.
   1. **updates every tool you configured** under `tools` (`update`, `version`, `app`,
      `runtime`, `self_updating`, `timeout_s`; an unknown key under a tool warns), in parallel
      across installers and one after another within one (two Homebrew casks, two npm

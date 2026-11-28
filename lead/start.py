@@ -39,6 +39,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from . import selfupdate
 from . import ccswitch, checks, orca, probes, proc, quota, registry, rotation, runner, updates, verify as verifymod
 from .status import orca_checks
 from .locks import NON_RUNTIME_TOOLS, runtime_tools, tool_runtime
@@ -310,7 +311,8 @@ def _in_this_worktree(config, project, run, cwd):
 
 def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=False, verify=True, update=True,
           bw_path=None, env=os.environ, fetch=probes._fetch, clock=None, stdin=None, tty=None, width=None,
-          cwd=None, chdir=os.chdir, execve=os.execve, foreground=_foreground, tab=False) -> int:
+          cwd=None, chdir=os.chdir, execve=os.execve, foreground=_foreground, tab=False, self_update=False,
+          restart=None) -> int:
     """`clock` (default time.time; a fixed `now` freezes it) is read at the start, again before
     quota (step 4, after updates and attacks that can take minutes), and again before the registry.
     `tty` (default: `out` is a terminal) picks the sectioned layout; `width` its line width.
@@ -346,10 +348,18 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     plans = rotation.plans_touched(config, profile, runner.read_pin(state, project.worktree_key))
     stdin = stdin or sys.stdin
     here = (not tab and _terminal(out) and _terminal(stdin) and foreground(stdin) and _in_this_worktree(config, project, run, cwd))
+    restarted = env.get(selfupdate.RESTARTED_ENV)
+    env = {k: v for k, v in env.items() if k != selfupdate.RESTARTED_ENV}  # never passed on to a lead
+    os.environ.pop(selfupdate.RESTARTED_ENV, None)  # a lead's environment is built from os.environ too
+    bw_root = os.path.dirname(os.path.dirname(bw))
     if dry_run:
         return _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify,
-                        bw, env, rep, here)
-    rep.header(project.worktree)
+                        bw, env, rep, here, bw_root if self_update else None)
+    if not restarted:  # a restarted bw start goes on under the header its first run printed
+        rep.header(project.worktree)
+    if update and self_update and (config.get("updates") or {}).get("self_update", True):
+        if _self_update(rep, bw_root, run, env, restarted, restart):
+            return 0  # only when the restart hook returns (a test); a real restart does not come back
 
     # 2 and 3. updates, and the re-verify pool fed as each tool finishes
     items_by_rt, updated_rts = {}, set()
@@ -607,9 +617,37 @@ def _open_tab(state, project, run, bw, env, rep, canvas):
     return 1
 
 
+def _self_update(rep, root, run, env, restarted, restart):
+    """Pull bw's own checkout; True when bw start restarts on the new code (once: not after a restart)."""
+    if restarted:
+        before, _, after = restarted.partition(" ")
+        rep.ok("Updates", f"bw: updated {before} → {after}")
+        return False
+    rep.wait("Updates", f"bw: checking {root} for a new version (git pull --ff-only)")
+    with Progress(lambda text: rep.wait("Updates", text)) as progress:
+        progress.begin("pull", "the bw update (git pull)")
+        res = selfupdate.update(root, run, environ=env)
+    if res.state == "updated":
+        rep.ok("Updates", f"bw: updated {res.before} → {res.after}; starting again on the new version")
+        if restart is not None:
+            restart({**env, selfupdate.RESTARTED_ENV: f"{res.before} {res.after}"})
+            return True
+        rep.line("Updates", "bw: the new version runs from the next command")
+    elif res.state == "current":
+        rep.ok("Updates", f"bw: {res.after}, current")
+    elif res.state == "skipped":
+        rep.line("Updates", f"bw: not updated: {res.detail}")
+    else:
+        rep.bad("Updates", f"bw: update failed ({res.detail})")
+    return False
+
+
 def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify, bw, env, rep,
-             here=False):
+             here=False, bw_root=None):
     rep.header(project.worktree, dry_profile=project.profile)
+    if update and bw_root and (config.get("updates") or {}).get("self_update", True):
+        rep.line("Updates", f"would update bw: {shlex.join(selfupdate.pull_argv(bw_root))} (only when its checkout "
+                            f"has no local changes)")
     for name, tcfg in tools.items():
         rep.line("Updates", _tool_plan_line(name, tcfg or {}, update))
     if update:
