@@ -266,6 +266,21 @@ class Reverify(unittest.TestCase):
         self.assertEqual(containment.change_reason(self.state, "kimi", dict(recorded, runtime_version="tool 3")), "version changed")
         self.assertEqual(containment.change_reason(self.state, "nobody", recorded), "never tested")
 
+    def test_a_cap_that_appears_during_the_first_attack_stops_the_second(self):
+        cap = self.cap
+
+        class Capping(FakeRun):
+            def __call__(inner, argv, timeout, *a, **kw):
+                res = super().__call__(argv, timeout, *a, **kw)
+                if argv[0].endswith(".sh") and len(self.attacks(inner)) == 1:
+                    cap("p", NOW + 3600)  # the guard lead's plan runs out while the containment attack runs
+                return res
+        run = Capping("PASS — evidence in /e")
+        items = verify.reverify(REVERIFY_CONFIG, self.state, "pi", NOW, run=run)
+        self.assertEqual([(i.kind, i.state) for i in items], [("containment", "passed"), ("guard", "pending")])
+        self.assertIn("plan p capped until", items[1].reason)
+        self.assertEqual(len(self.attacks(run)), 1)
+
     def test_on_attack_is_not_called_for_verified_or_pending_items(self):
         seen = []
         self.record_current("containment", "kimi")

@@ -202,7 +202,12 @@ def _reverify(config, state, runtime, now, run, allow_run, version_ok, on_attack
     items = []
     for kind, lead_name, item, attack, _ in plan:
         if item is None:
-            ok, msg = attack(config, state, runtime, lead_name=lead_name, run=run)
-            item = Item(runtime, kind, "passed" if ok else "failed", msg)
+            # A cap can appear while an earlier attack runs (minutes): look again right before this one.
+            why = _pending_reason(config, state, runtime, kind, lead_name, now, allow_run, version_ok)
+            if why:
+                item = Item(runtime, kind, "pending", why)
+            else:
+                ok, msg = attack(config, state, runtime, lead_name=lead_name, run=run)
+                item = Item(runtime, kind, "passed" if ok else "failed", msg)
         items.append(item)
     return items
