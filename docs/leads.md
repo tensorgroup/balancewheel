@@ -2,7 +2,8 @@
 
 *Updated 2026-11-27: `canvas: "ghostty"` (a Ghostty tab instead of a Terminal tab); a Claude Code lead gets the
 lead protocol as a system prompt and `--add-dir` for the checkpoint dir; `bw start` prints sections with marks on
-a terminal, and says what it is waiting for before a slow step.
+a terminal, says what it is waiting for before a slow step, and starts the lead in this terminal when you run it
+there with no path.
 Written 2026-11-24: moved here, unchanged, from the README's "Leads and rotation" section, so the README
 stays a short entry point. The README's Quick start is the short path; this page is the full reference for
 `bw`. Interactive walk-through: [docs/start/](https://tensorgroup.github.io/balancewheel/start/).
@@ -186,7 +187,14 @@ once for each bw-contained lead runtime.
   3. **reads and shows the quota** of every plan the profile touches (OpenRouter's key
      endpoint and, for a plan that maps it, Orca's cache; see "Quota sources") and the lead it
      would start.
-  4. **opens the worktree.** By default it opens a Terminal tab, through a small `.command`
+  4. **opens the worktree.** When stdin and stdout are terminals and the target is the worktree
+     of your current directory (you gave no path, or a path inside it), it starts the lead **in
+     this terminal**: it does every other step first, prints `starting here` on the lead line,
+     then changes into the worktree and replaces itself with `bw lead`, with the same
+     `BALANCEWHEEL_CONFIG` and `BW_STATE_DIR` the `.command` file exports. Its `--dry-run` says
+     `would start the lead here: <command>`. A worktree that already has a lead is not started
+     again. For any other path, or without a terminal (a pipe, a script), it opens the lead on the
+     canvas: by default a Terminal tab, through a small `.command`
      file under the state dir's `start/` that `open -a Terminal` runs. With `canvas: "ghostty"`,
      it opens a Ghostty tab that runs the same file through your login shell, by Ghostty's
      AppleScript (checked on Ghostty 1.4; the first run asks for macOS Automation access to

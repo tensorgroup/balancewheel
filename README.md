@@ -241,14 +241,17 @@ On a terminal, `bw start` prints sections. A `✓` is a pass, a `✗` is a failu
 information, and a `…` is a wait. Piped to a file, it prints plain lines that start with `bw start: `.
 
 Then run it for real. `bw start` updates your tools, re-checks containment, reads quota, and
-opens the lead in a new macOS Terminal tab (set `"canvas": "ghostty"` for a Ghostty tab). On Linux,
-run `bw` inside the repository instead.
+opens the lead. When you run it in a terminal, from inside the project and with no path, it
+starts the lead in that same terminal. With a path to another project, it opens the lead in a
+new macOS Terminal tab (set `"canvas": "ghostty"` for a Ghostty tab). On Linux, run `bw` inside
+the repository instead.
 
 ```sh
-bw start ~/code/my-project
+bw start ~/code/my-project   # from anywhere else: a new tab
+cd ~/code/my-project && bw start   # inside the project: this terminal
 ```
 
-Inside a project, plain `bw` starts the lead in the terminal you are in. It does not update
+Inside a project, plain `bw` also starts the lead in the terminal you are in. It does not update
 tools or run checks.
 
 **6. Work as usual.** The lead keeps a checkpoint and convenes panels. When its plan is
@@ -294,7 +297,7 @@ setup by your own agent, use the paste-in prompts in [Getting started](#getting-
 | I want to… | Run | You see |
 |---|---|---|
 | Work on a project | `bw` (inside the project) | the lead starts in this terminal (no updates, no checks) |
-| Open a project in a new tab | `bw start [path]` | sections for updates, checks, quota, and the lead, then `opened a Terminal tab for …` |
+| Update, check, then start a project | `bw start [path]` | sections for updates, checks, quota, and the lead; then the lead starts in this terminal (no path), or `opened a Terminal tab for …` |
 | See plans, leads, and asks | `bw status` | plans, worktrees, leads, inbox, guard |
 | Answer a lead's question | `bw inbox`, then `bw answer <id> "<text>"` | the open asks; then `… tell it to look`: tell the lead to read its inbox |
 | Use a different lead here | `bw lead --use <lead>` (undo: `bw lead --auto`) | that lead starts here; a change from the profile order is logged |

@@ -58,19 +58,20 @@ class Report:
             for item in held:
                 self._route(*item)
 
-    def line(self, section, text, mark=INFO, label=None):
-        """One line. `label` prefixes the plain-text line only (a terminal shows it as the section)."""
+    def line(self, section, text, mark=INFO, label=None, raw=False):
+        """One line. `label` prefixes the plain-text line only (a terminal shows it as the section).
+        `raw`: a command the user may paste, so no `~` (a shell does not expand one inside quotes)."""
         with self._lock:
             if self.tty:
-                self._route(section, text, mark)
+                self._route(section, text, mark, raw=raw)
             else:
                 print(f"{PREFIX}{label + ': ' if label else ''}{text}", file=self.out, flush=True)
 
-    def ok(self, section, text, label=None):
-        self.line(section, text, OK, label)
+    def ok(self, section, text, label=None, raw=False):
+        self.line(section, text, OK, label, raw)
 
-    def bad(self, section, text, label=None):
-        self.line(section, text, BAD, label)
+    def bad(self, section, text, label=None, raw=False):
+        self.line(section, text, BAD, label, raw)
 
     def wait(self, section, text):
         """A progress line. It is never held: when an earlier section is still open, it prints under
@@ -122,18 +123,18 @@ class Report:
         rank = SECTIONS.index(section)
         return any(SECTIONS.index(o) < rank for o in self._open)
 
-    def _route(self, section, text, mark, indent=None):
-        item = (section, text, mark, indent)
+    def _route(self, section, text, mark, indent=None, raw=False):
+        item = (section, text, mark, indent, raw)
         if self._blocked(section) or (self._held and section in {h[0] for h in self._held}):
             self._held.append(item)
             return
         self._write(*item)
 
-    def _write(self, section, text, mark, indent=None):
+    def _write(self, section, text, mark, indent=None, raw=False):
         if section != self._current:
             print(f"\n{section}", file=self.out)
             self._current = section
-        text = self.tilde(text)
+        text = text if raw else self.tilde(text)
         if mark is None:  # a detail line: kept as written, not wrapped
             print(f"      {text}", file=self.out, flush=True)
             return

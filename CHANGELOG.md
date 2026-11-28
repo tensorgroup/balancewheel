@@ -15,12 +15,19 @@ not against the prose.
 
 ### Added (schema 3)
 
+- **`bw start` starts the lead in this terminal** (`lead/start.py`). When stdin and stdout are terminals and the
+  target is the worktree of the current directory (no path, or a path inside it), `bw start` does all its
+  steps, prints `starting here` on the lead line, then `chdir`s into the worktree and `exec`s `bw lead` with the
+  same `BALANCEWHEEL_CONFIG` and `BW_STATE_DIR` as the `.command` file, as its last act. A worktree that has a
+  lead is not started again. `--dry-run` prints `would start the lead here: <cmd>`. Another path, or no
+  terminal, keeps the canvas (Terminal tab, Ghostty tab, Orca pane). `start.start` takes `cwd`, `chdir`, and
+  `execve` for tests.
 - **`bw start` prints sections with marks on a terminal** (`lead/startout.py`, `lead/start.py`, `lead/quota.py`,
   `lead/verify.py`, `lead/updates.py`). A header, then Updates, Checks, Quota, Lead, and Also; `✓` pass, `✗`
   failure, `·` information, `…` wait; home paths as `~`. A `…` line says what is slow before it starts: the tool
   updates, and each runtime's sandbox or guard attack test (what is tested, "about a minute", "a little model
   quota", why, "Please wait."). The quota lines are in plain words (`63% left this week`, `19% of the monthly
-  budget used`, the source, the age); before, `5h 63%` meant 63% left and the budget line did the reverse. The four
+  budget used`, the source, the age); before, `7d 63%` meant 63% left with no word to say so, and `budget 75%` meant 75% of the budget left. The four
   "no update lock for runtime X" lines became one Updates line. When stdout is not a terminal, the lines keep the
   `bw start: ` prefix and carry the same facts, with no header, sections, or marks; **their wording changed**
   (for example `verify pi containment: passed` is now `pi sandbox: passed`, and `checking seats in the background
@@ -31,7 +38,8 @@ not against the prose.
   `--append-system-prompt` instead of as the first prompt. The first prompt is only the handoff from a previous
   lead, and there is none for a fresh lead. The protocol line about a handoff now says "If the first message
   starts with `@next handoff`" in that case. Every other runtime is unchanged. The `Adapter` tuple has a new
-  field, `system_protocol`. This changes the lead containment key for Claude Code, so a runtime re-verifies once.
+  field, `system_protocol`. As with any change to `lead/runtimes.py`, the pi and Kimi containment keys and the
+  guard keys change, so those runtimes re-run their attack tests once.
 - **`canvas: "ghostty"`.** `bw start` opens the lead in a new Ghostty tab (a new window when Ghostty has none) through
   Ghostty's AppleScript (checked on Ghostty 1.4). The tab runs the same `.command` file as the Terminal tab, through
   the user's login shell (`<shell> -l -i -c 'exec <file>'`), so the lead gets the same PATH and environment as in a
@@ -160,8 +168,9 @@ not against the prose.
 - **A Claude Code lead can write its checkpoint** (`lead/runtimes.py`). The claude-code adapter now passes
   `--add-dir <dir>` for each writable dir (the checkpoint dir), as the codex adapter does. Before, the Write tool
   failed on the checkpoint file ("Couldn't write file") and the lead fell back to the shell. `--add-dir` takes a
-  list, so the first prompt follows a `--`. This changes the lead containment key for Claude Code, so a runtime
-  re-verifies once.
+  list, so the first prompt follows a `--`. Claude Code has no containment key of its own, but the pi and Kimi
+  containment keys and the guard keys include a hash of `lead/runtimes.py`, so those runtimes re-run their attack
+  tests once.
 
 - **`bw pack export` reads more real packs and refuses more broken ones** (`packs/export.py`, `bin/bw`).
   A policy with `<` and `>` passes (`x<y and z>w`, `List<String>`); only a whole token such as

@@ -587,7 +587,7 @@ class StartCase(unittest.TestCase):
     def test_start_offers_before_the_workspace_opens(self):
         order = []
         with mock.patch.object(start.offer, "maybe_offer", side_effect=lambda *a, **k: order.append("offer")) as mo, \
-                mock.patch.object(start, "_workspace", side_effect=lambda *a, **k: order.append("workspace") or 0):
+                mock.patch.object(start, "_workspace", side_effect=lambda *a, **k: order.append("workspace") or (0, None)):
             code, out = self.start(FakeRun(), update=False)
         self.assertEqual(order, ["offer", "workspace"])
         self.assertEqual(mo.call_args.args[2], "p")
@@ -686,7 +686,7 @@ class StartCase(unittest.TestCase):
         order = []
         with mock.patch.object(seat_verify, "changed_seats", side_effect=lambda *a, **k: order.append("changed")), \
                 mock.patch.object(seat_verify, "seat_key", side_effect=lambda *a, **k: order.append("key")), \
-                mock.patch.object(start, "_workspace", side_effect=lambda *a, **k: order.append("workspace") or 0), \
+                mock.patch.object(start, "_workspace", side_effect=lambda *a, **k: order.append("workspace") or (0, None)), \
                 mock.patch.object(seat_verify, "spawn_verify",
                                   side_effect=lambda *a, **k: order.append("spawn") or True):
             code, out = self.start(run, update=False, **kw)
@@ -943,6 +943,23 @@ class StartCase(unittest.TestCase):
             self.assertNotIn("\nUpdates", "\n" + out)
             self.assertIn(str(self.repo), out)
 
+    def test_only_a_warning_is_a_failure_in_the_also_section(self):
+        from lead.checks import Check
+        cases = [("unknown", "  · cc-switch: unknown — not installed (Usage view off)"),
+                 ("warn", "  ✗ cc-switch: warn — off"), ("ok", "  · cc-switch: ok")]
+        for state, want in cases:
+            with mock.patch.object(start.ccswitch, "check_settings", return_value=[Check("cc-switch", state, "not installed (Usage view off)" if state == "unknown" else "off")]):
+                code, out = self.tty_start(FakeRun(), verify=False, update=False)
+            self.assertIn(want, out.splitlines(), state)
+
+    def test_commands_the_user_may_paste_keep_their_absolute_paths(self):
+        code, out = self.tty_start(FakeRun(), dry_run=True)
+        flat = " ".join(out.split())
+        self.assertIn(f"would run: open -a Terminal {self.state}/start/", flat)  # not ~/state (HOME is the temp root)
+        run = FakeRun(open_rc=1)
+        code, out = self.tty_start(run, verify=False, update=False)
+        self.assertIn(f"run it yourself: cd {shlex.quote(str(self.repo))} && ", " ".join(out.split()))
+
     def test_dry_run_on_a_terminal_uses_the_layout(self):
         code, out = self.tty_start(FakeRun(), dry_run=True)
         lines = out.splitlines()
@@ -963,6 +980,135 @@ class StartCase(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("not opening another", out)
         self.assertNotIn("first in the profile", out)
+
+    # --- start the lead in this terminal -------------------------------------------------------
+
+    def here_start(self, run=None, dry_run=False, cwd=None, path=None, stdin_tty=True, out_tty=True, **kw):
+        """`bw start` as a person at a terminal: stdin and stdout are terminals, cwd is `cwd`."""
+        calls = {"chdir": [], "execve": []}
+        out, stdin = Tty(tty=out_tty), Tty(tty=stdin_tty)
+        kw.setdefault("verify", False)
+        kw.setdefault("update", False)
+        code = start.start(self.config, self.state, path, run=run or FakeRun(), out=out, bw_path=self.bw, env=self.env,
+                           now=NOW, dry_run=dry_run, stdin=stdin, cwd=str(cwd or self.repo), width=88,
+                           chdir=lambda d: calls["chdir"].append(d),
+                           execve=lambda prog, argv, env: calls["execve"].append((prog, argv, env)), **kw)
+        return code, out.getvalue(), calls
+
+    def test_no_path_in_the_current_worktree_starts_the_lead_in_this_terminal(self):
+        run = FakeRun()
+        code, out, calls = self.here_start(run)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(calls["chdir"], [str(self.repo)])
+        (prog, argv, env), = calls["execve"]
+        self.assertEqual((prog, argv), (self.bw, [self.bw, "lead"]))
+        self.assertEqual((env["BALANCEWHEEL_CONFIG"], env["BW_STATE_DIR"]), ("/cfg dir/c.json", self.state))
+        self.assertEqual(self.ran(run, ["open"]), [])  # no new tab
+        self.assertIn("  ✓ lp (first in the profile's lead order), starting here", out.splitlines())
+        self.assertNotIn("opened a", out)
+
+    def test_the_exec_is_the_last_thing_start_does(self):
+        out, seen = Tty(), []
+        code = start.start(self.config, self.state, None, run=FakeRun(), out=out, bw_path=self.bw, env=self.env, now=NOW,
+                           verify=True, update=False, stdin=Tty(), cwd=str(self.repo), width=88, chdir=lambda d: None,
+                           execve=lambda prog, argv, env: seen.append(out.getvalue()))
+        (at_exec,) = seen
+        for part in ("seats: checking in the background", "cockpit: run `bw cockpit`", "registry:", "starting here"):
+            self.assertIn(part, at_exec)  # everything was printed before the process was replaced
+        self.assertTrue(os.path.exists(os.path.join(self.state, "start.json")))
+        self.assertEqual(self.spawn.call_count, 1)  # the seat check was started before the exec
+
+    def test_a_path_inside_the_same_worktree_counts(self):
+        sub = self.repo / "pkg"
+        sub.mkdir()
+        for path in (None, str(self.repo), str(sub)):
+            code, out, calls = self.here_start(path=path, cwd=sub)
+            self.assertEqual(len(calls["execve"]), 1, path)
+            self.assertEqual(calls["chdir"], [str(self.repo)], path)
+
+    def test_another_path_opens_a_tab(self):
+        other = make_repo(self.root / "other")
+        run = FakeRun()
+        code, out, calls = self.here_start(run, path=str(other))
+        self.assertEqual(calls["execve"], [])
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+        self.assertNotIn("starting here", out)
+
+    def test_cwd_in_another_worktree_opens_a_tab(self):
+        other = make_repo(self.root / "other")
+        run = FakeRun()
+        code, out, calls = self.here_start(run, cwd=other, path=str(self.repo))
+        self.assertEqual(calls["execve"], [])
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+
+    def test_not_in_a_git_repository_opens_a_tab(self):
+        plain = self.root / "plain"
+        plain.mkdir()
+        run = FakeRun()
+        code, out, calls = self.here_start(run, cwd=plain, path=str(self.repo))
+        self.assertEqual(calls["execve"], [])
+        self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1)
+
+    def test_without_a_terminal_on_stdin_or_stdout_it_opens_a_tab(self):
+        for stdin_tty, out_tty in ((False, True), (True, False), (False, False)):
+            run = FakeRun()
+            code, out, calls = self.here_start(run, stdin_tty=stdin_tty, out_tty=out_tty)
+            self.assertEqual(calls["execve"], [], (stdin_tty, out_tty))
+            self.assertEqual(len(self.ran(run, ["open", "-a", "Terminal"])), 1, (stdin_tty, out_tty))
+
+    def test_a_worktree_that_has_a_lead_is_not_started_again_here(self):
+        child = subprocess.Popen([sys.executable, "-c", HOLDER, str(ROOT), self.state, runner_key(self.repo)],
+                                 stdout=subprocess.PIPE, text=True)
+        self.addCleanup(child.kill)
+        self.assertEqual(child.stdout.readline().strip(), "ready")
+        code, out, calls = self.here_start()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(calls["execve"], [])
+        self.assertIn("not opening another", " ".join(out.split()))
+        self.assertNotIn("starting here", out)
+
+    def test_a_refused_start_never_execs(self):
+        code, out, calls = self.here_start(path=str(self.root / "nowhere"))
+        self.assertEqual(code, 2)
+        self.assertEqual(calls["execve"], [])
+
+    def test_an_exec_that_fails_says_how_to_run_it_by_hand(self):
+        def boom(prog, argv, env):
+            raise OSError(2, "No such file")
+        out, stdin = Tty(), Tty()
+        code = start.start(self.config, self.state, None, run=FakeRun(), out=out, bw_path=self.bw, env=self.env, now=NOW,
+                           verify=False, update=False, stdin=stdin, cwd=str(self.repo), width=88,
+                           chdir=lambda d: None, execve=boom)
+        self.assertEqual(code, 1)
+        self.assertIn("could not start the lead here (FileNotFoundError", out.getvalue())
+        self.assertIn(f"run it yourself: cd {shlex.quote(str(self.repo))} && ", " ".join(out.getvalue().split()))
+
+    def test_dry_run_says_what_it_would_start_here(self):
+        run = FakeRun()
+        code, out, calls = self.here_start(run, dry_run=True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(calls["execve"], [])
+        cmd = shlex.join(["env", "BALANCEWHEEL_CONFIG=/cfg dir/c.json", f"BW_STATE_DIR={self.state}", self.bw, "lead"])
+        self.assertIn(f"· would start the lead here: {cmd}", " ".join(out.split()))
+        self.assertNotIn("starting here", out)  # a dry run starts nothing
+        self.assertNotIn(".command", out)
+        self.assertEqual({a[0] for a in run.argvs()}, {"git"})
+        self.assertFalse(os.path.exists(self.state))
+
+    def test_dry_run_in_a_pipe_keeps_the_tab_plan(self):
+        code, out, calls = self.here_start(FakeRun(), dry_run=True, out_tty=False)
+        self.assertIn("bw start: would run: open -a Terminal", out)
+        self.assertNotIn("would start the lead here", out)
+
+    def test_plain_here_start_says_so_with_the_prefix(self):
+        out = io.StringIO()
+        out.isatty = lambda: True  # a terminal on stdout, plain layout asked for
+        calls = []
+        code = start.start(self.config, self.state, None, run=FakeRun(), out=out, bw_path=self.bw, env=self.env, now=NOW,
+                           verify=False, update=False, stdin=Tty(), cwd=str(self.repo), tty=False,
+                           chdir=lambda d: None, execve=lambda *a: calls.append(a))
+        self.assertEqual(len(calls), 1)
+        self.assertIn("bw start: lead: lp (first in the profile's lead order), starting here", out.getvalue())
 
 
 HOLDER = """

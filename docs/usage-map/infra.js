@@ -69,7 +69,7 @@ window.USAGE_MAP_INFRA = {
           files: ['lead/guard/broker.py', 'lead/guard/pi_guard.ts', 'lead/guard/hook.py'] },
         { id: 'orca', kind: 'persona', tone: 'ext', title: 'Orca', sub: 'Optional canvas (off by default)',
           wants: 'Settings bw can live with; it is never a control channel for a contained lead.',
-          desc: 'An optional canvas. bw start opens a Terminal tab, or a Ghostty tab with canvas: ghostty. With canvas: orca it opens the lead in an Orca pane, and bw reads Orca\'s cached quota for plans that map it. Every sandbox still denies Orca\'s control channel.',
+          desc: 'An optional canvas. bw start for another path opens a Terminal tab, or a Ghostty tab with canvas: ghostty. With canvas: orca it opens the lead in an Orca pane, and bw reads Orca\'s cached quota for plans that map it. Every sandbox still denies Orca\'s control channel.',
           files: ['lead/orca.py', 'docs/orca.md'] },
         { id: 'ccswitch', kind: 'persona', tone: 'ext', title: 'cc-switch', sub: 'Usage and cost source for the cockpit',
           wants: 'Its proxy, failover and startup behaviours off (bw setup cc-switch).',
@@ -325,7 +325,7 @@ window.USAGE_MAP_INFRA = {
       steps: [
         { node: 'bwstart', text: 'bw start updates the tools in parallel, re-verifies containment, and reads quota.', command: 'bw start ~/code/<project>' },
         { node: 'rotation', text: 'Rotation picks the lead from the profile\'s lead_order, quota and caps.' },
-        { node: 'orca', text: 'The lead opens in a Terminal tab (a Ghostty tab with canvas: ghostty, an Orca pane with canvas: orca).' },
+        { node: 'orca', text: 'With no path (or a path in this worktree) on a terminal, the lead starts in this terminal. Otherwise it opens in a Terminal tab (a Ghostty tab with canvas: ghostty, an Orca pane with canvas: orca).' },
         { node: 'runner', text: 'bw lead holds the worktree lock and the runtime lock for the session. Plain bw in a worktree does the same.', command: 'bw' },
         { node: 'lead', text: 'You work in the lead. It keeps a checkpoint current at every task boundary.' },
         { node: 'inbox', text: 'bw prints a line when the worktree has open asks.', command: 'bw inbox --project' },

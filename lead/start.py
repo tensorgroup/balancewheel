@@ -18,7 +18,10 @@ What it prints (sections on a terminal, `bw start: ` lines elsewhere) is `lead/s
      (`lead.guard.interactive`; Enter skips; not with --no-verify); then, on a terminal only, offer a short
      review of a few unmarked guard decisions, at most once a day (`lead.guard.offer`; Enter skips;
      not with --no-verify);
-  6. open the worktree: a Terminal tab through a `.command` file in the state dir; with
+  6. open the worktree. When stdin and stdout are terminals and the target is the worktree of the
+     current directory (no path, or a path inside it), the lead starts in this terminal: `bw start`
+     does every other step first, then `chdir`s and `exec`s `bw lead` (what the `.command` file runs)
+     as its last act. Otherwise a Terminal tab through a `.command` file in the state dir; with
      `canvas: ghostty`, a Ghostty tab that runs the same file (through Ghostty's AppleScript), else the
      Terminal tab; with `canvas: orca`, an Orca pane when Orca runs, else the Terminal tab; neither → print the command and exit 1. A worktree whose lock is
      held already has a lead and is not opened again;
@@ -238,11 +241,27 @@ def _wait_text(runtime, todo, updated):
             f"because {' and '.join(reasons)}. Please wait.")
 
 
+def _terminal(stream):
+    return bool(getattr(stream, "isatty", lambda: False)())
+
+
+def _in_this_worktree(config, project, run, cwd):
+    """Whether the current directory is in the target's worktree (a path inside it counts)."""
+    try:
+        return resolve_project(cwd or os.getcwd(), config, run).worktree == project.worktree
+    except (ValueError, OSError):
+        return False
+
+
 def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=False, verify=True, update=True,
-          bw_path=None, env=os.environ, fetch=probes._fetch, clock=None, stdin=None, tty=None, width=None) -> int:
+          bw_path=None, env=os.environ, fetch=probes._fetch, clock=None, stdin=None, tty=None, width=None,
+          cwd=None, chdir=os.chdir, execve=os.execve) -> int:
     """`clock` (default time.time; a fixed `now` freezes it) is read at the start, again before
     quota (step 4, after updates and attacks that can take minutes), and again before the registry.
-    `tty` (default: `out` is a terminal) picks the sectioned layout; `width` its line width."""
+    `tty` (default: `out` is a terminal) picks the sectioned layout; `width` its line width.
+    With stdin and stdout on a terminal and the target the worktree of `cwd` (default: the current
+    directory), the lead starts in this process (`chdir`, then `execve`, as the last step) instead of
+    in a new tab."""
     if clock is None:
         clock = time.time if now is None else (lambda: now)
     now = clock()
@@ -252,7 +271,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
 
     # 1. the project, and bw itself outside it
     try:
-        project = resolve_project(path or os.getcwd(), config, run)
+        project = resolve_project(path or cwd or os.getcwd(), config, run)
     except ValueError as e:
         rep.say(str(e))
         return 2
@@ -266,9 +285,10 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
     rt_tool = runtime_tools(config)
     tools = orca.active_tools(config)
     plans = rotation.plans_touched(config, profile, runner.read_pin(state, project.worktree_key))
+    here = (_terminal(out) and _terminal(stdin or sys.stdin) and _in_this_worktree(config, project, run, cwd))
     if dry_run:
         return _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify,
-                        bw, env, rep)
+                        bw, env, rep, here)
     rep.header(project.worktree)
 
     # 2 and 3. updates, and the re-verify pool fed as each tool finishes
@@ -361,7 +381,7 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
             rep.bad("Also", f"guard review offer: failed to run ({type(e).__name__})")
 
     # 6. the workspace
-    code = _workspace(state, project, run, bw, env, rep, orca.canvas(config), decision)
+    code, launch = _workspace(state, project, run, bw, env, rep, orca.canvas(config), decision, here, chdir, execve)
     rep.end("Lead")
 
     # 7. the seats, in the background (after the lead opens; no seat key is read here)
@@ -369,14 +389,13 @@ def start(config, state, path, run=proc.run, out=sys.stdout, now=None, dry_run=F
 
     # 8. pointers and checks
     rep.line("Also", "cockpit: run `bw cockpit` to see all of this in a browser")
-    orca_lines = checks.lines("orca", orca_checks(state, run)) if orca.in_use(config) else []
-    for line in orca_lines + checks.lines("cc-switch", ccswitch.check_settings()):
-        text = line.strip()
-        rep.line("Also", text) if text.endswith(": ok") else rep.bad("Also", text)
+    orca_lines = checks.marked("orca", orca_checks(state, run)) if orca.in_use(config) else []
+    for state_, text in orca_lines + checks.marked("cc-switch", ccswitch.check_settings()):
+        (rep.bad if state_ == "warn" else rep.line)("Also", text)  # only a warning is a failure
     registry_line[0]("Also", registry_line[1])
     for w in config.get("warnings", []):
         rep.line("Also", f"config warning: {w}")
-    return code
+    return launch() if launch else code  # the exec is last: nothing after it would run
 
 
 def _guard_evals(config, runtimes, state, verify, run, rep, profile=None):
@@ -423,25 +442,50 @@ def _quota_and_lead(config, state, project, profile, plans, now, rep):
     return decide(profile, config["leads"], rot, None, pinned, snaps, caps, now, "start")
 
 
-def _announce(rep, d):
-    """The lead decision's lines (the Lead section opens here)."""
+def _announce(rep, d, here=False):
+    """The lead decision's lines (the Lead section opens here). `here`: the lead starts in this terminal."""
     if d.notice:
         rep.line("Lead", d.notice)
     if d.lead:
-        rep.ok("Lead", f"{d.lead} ({LEAD_REASONS.get(d.reason, d.reason)})", label="lead")
+        rep.ok("Lead", f"{d.lead} ({LEAD_REASONS.get(d.reason, d.reason)})" + (", starting here" if here else ""),
+               label="lead")
     else:
         rep.bad("Lead", f"no lead would start — {d.notice or 'no lead available'}")
 
 
-def _workspace(state, project, run, bw, env, rep, canvas, decision):
+def _start_here(project, bw, env, rep, chdir, execve):
+    """The step that replaces this process with the lead: what the .command file does (`cd`, the
+    exported config and state dir, `exec bw lead`). It returns only when `execve` does (a test's)
+    or fails."""
+    def launch():
+        try:
+            chdir(project.worktree)
+            execve(bw, [bw, "lead"], {**os.environ, **dict(_passed(env))})
+        except OSError as e:
+            rep.bad("Lead", f"could not start the lead here ({type(e).__name__}); "
+                            f"run it yourself: cd {shlex.quote(project.worktree)} && {_lead_command(bw, env)}", raw=True)
+            return 1
+        return 0
+    return launch
+
+
+def _workspace(state, project, run, bw, env, rep, canvas, decision, here=False, chdir=os.chdir, execve=os.execve):
+    """Open the worktree. -> (exit code, the launch step when the lead starts in this terminal, else None)."""
     lock = runner.Lock(state, project.worktree_key)
     try:
         if not lock.acquire():
             rep.line("Lead", f"{runner.holder_line(project.worktree, lock.path)}; not opening another")
-            return 0
+            return 0, None
     finally:
         os.close(lock.fd)  # closing releases the flock taken just to test it
-    _announce(rep, decision)
+    _announce(rep, decision, here)
+    if here:
+        return 0, _start_here(project, bw, env, rep, chdir, execve)
+    code = _open_tab(state, project, run, bw, env, rep, canvas)
+    return code, None
+
+
+def _open_tab(state, project, run, bw, env, rep, canvas):
     cmd = _lead_command(bw, env)
     if canvas == "orca":
         up, why = orca.running(run)
@@ -466,11 +510,12 @@ def _workspace(state, project, run, bw, env, rep, canvas, decision):
         rep.ok("Lead", f"opened a Terminal tab for {project.worktree}")
         return 0
     rep.bad("Lead", f"could not open a Terminal tab ({'timed out' if r.timed_out else _detail(r)}); "
-                    f"run it yourself: cd {shlex.quote(project.worktree)} && {cmd}")
+                    f"run it yourself: cd {shlex.quote(project.worktree)} && {cmd}", raw=True)
     return 1
 
 
-def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify, bw, env, rep):
+def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, run, now, update, verify, bw, env, rep,
+             here=False):
     rep.header(project.worktree, dry_profile=project.profile)
     for name, tcfg in tools.items():
         rep.line("Updates", _tool_plan_line(name, tcfg or {}, update))
@@ -485,9 +530,11 @@ def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, r
     decision = _quota_and_lead(config, state, project, profile, plans, now, rep)
     _announce(rep, decision)
     cmd = _lead_command(bw, env)
-    up, why = orca.running(run) if orca.canvas(config) == "orca" else (False, None)
-    if up:
-        rep.line("Lead", f"would run: {shlex.join(_orca_argv(project, cmd))}")
+    up, why = orca.running(run) if orca.canvas(config) == "orca" and not here else (False, None)
+    if here:
+        rep.line("Lead", f"would start the lead here: {cmd}", raw=True)
+    elif up:
+        rep.line("Lead", f"would run: {shlex.join(_orca_argv(project, cmd))}", raw=True)
     else:
         path, content = _command_file(state, project, bw, env)
         rep.line("Lead", f"orca: {why}; would write {path}:" if why else f"would write {path}:")
@@ -495,8 +542,8 @@ def _dry_run(config, state, project, profile, runtimes, rt_tool, tools, plans, r
             rep.detail("Lead", line)
         if orca.canvas(config) == "ghostty":
             rep.line("Lead", f"would open a Ghostty tab: osascript <new-tab script> "
-                             f"{shlex.join([_ghostty_command(path), project.worktree])}")
+                             f"{shlex.join([_ghostty_command(path), project.worktree])}", raw=True)
         else:
-            rep.line("Lead", f"would run: {shlex.join(['open', '-a', 'Terminal', path])}")
+            rep.line("Lead", f"would run: {shlex.join(['open', '-a', 'Terminal', path])}", raw=True)
     rep.line("Also", "would check seats in the background" if verify else "seats: would not check (--no-verify)")
     return 0

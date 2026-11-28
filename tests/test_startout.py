@@ -69,6 +69,15 @@ class Terminal(unittest.TestCase):
                          "\nChecks\n  … testing.\n  ✓ pi sandbox: passed\n  ✗ pi guard: failed\n"
                          "\nLead\n  · pinned\n")
 
+    def test_a_raw_line_keeps_its_absolute_paths_so_the_command_can_be_pasted(self):
+        r, out = report(True)
+        r.line("Lead", "would start the lead here: env X=/home/u/c /home/u/bw lead", raw=True)
+        r.bad("Lead", "run it yourself: cd '/home/u/app' && x", raw=True)
+        r.line("Lead", "log /home/u/l")
+        self.assertEqual(out.getvalue().splitlines()[-3:],
+                         ["  · would start the lead here: env X=/home/u/c /home/u/bw lead",
+                          "  ✗ run it yourself: cd '/home/u/app' && x", "  · log ~/l"])
+
     def test_tilde_only_replaces_a_whole_home_path(self):
         r, _ = report(True)
         self.assertEqual(r.tilde("log: /home/u/.local/x and /home/user/y and /home/u"), "log: ~/.local/x and /home/user/y and ~")
